@@ -14,7 +14,6 @@ from tools.bash import bash, kill_shell
 
 def parse_payload(raw: str) -> dict:
     obj = json.loads(raw)
-    print(1)
     if not isinstance(obj, dict):
         raise AssertionError(f"Invalid payload: {raw}")
     return obj
