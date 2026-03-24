@@ -1,6 +1,7 @@
-"""agent_base - 纯 OpenAI 实现的基础 Agent"""
-from .basic_agent import BasicAgent
-from .config import Config
-from .tools import TOOLS, TOOL_SCHEMAS
+"""agent_base package exports."""
+
+from agent.basic_agent import BasicAgent
+from config.settings import Config
+from tools import TOOLS, TOOL_SCHEMAS
 
 __all__ = ["BasicAgent", "Config", "TOOLS", "TOOL_SCHEMAS"]

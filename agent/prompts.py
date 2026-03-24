@@ -12,7 +12,7 @@ def get_system_info():
 <environment_context>
 Operating System: {system}
 Current Working Directory (Project Root): {cwd}
-Current Time: {now}
+Start Time: {now}
 Shell Type: {'Git Bash / Bash' if system == 'Windows' else 'Bash'}
 </environment_context>
 """
