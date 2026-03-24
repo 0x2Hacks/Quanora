@@ -5,7 +5,7 @@ import shutil
 import re
 from typing import Any
 
-from .base import tool_error, tool_ok
+from ..core.base import tool_error, tool_ok
 
 class ShellSession:
     """

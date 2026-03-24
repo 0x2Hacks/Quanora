@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Callable
 
 from agent.domain import ParsedToolCall, parse_tool_args
-from agent.infrastructure.tools.impl.base import tool_error
+from agent.infrastructure.tools.impl.core.base import tool_error
 
 
 class AgentRuntime:

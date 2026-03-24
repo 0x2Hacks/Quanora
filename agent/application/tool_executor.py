@@ -5,7 +5,7 @@ from __future__ import annotations
 import traceback
 
 from agent.domain import looks_like_tool_payload
-from agent.infrastructure.tools.impl.base import tool_error, tool_ok
+from agent.infrastructure.tools.impl.core.base import tool_error, tool_ok
 
 
 class ToolExecutor:

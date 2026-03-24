@@ -229,15 +229,24 @@ class JsonlSessionStore:
         os.makedirs(self._session_root, exist_ok=True)
         if self.session_id and os.path.isdir(os.path.join(self._session_root, self.session_id)):
             self._load_session(self.session_id)
+            self._export_session_env()
             return
         if self.resume_latest:
             latest_id = self._find_latest_session_id()
             if latest_id and os.path.isdir(os.path.join(self._session_root, latest_id)):
                 self._load_session(latest_id)
+                self._export_session_env()
                 return
         if self.session_id:
             raise ValueError(f"Session not found for id: {self.session_id}")
         self._create_session(self.session_id)
+        self._export_session_env()
+
+    def _export_session_env(self) -> None:
+        if self._session_root:
+            os.environ["AGENT_SESSION_ROOT"] = self._session_root
+        if self.session_id:
+            os.environ["AGENT_SESSION_ID"] = self.session_id
 
     def initialize_history(self) -> None:
         if not self.chat_history:
