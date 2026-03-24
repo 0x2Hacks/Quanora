@@ -16,7 +16,7 @@ The refactor introduces a layered design to improve:
 
 ## 2. New Layered Structure
 
-The project now uses four logical layers under `agent/`:
+The project now uses layered modules fully under `agent/`:
 
 ```text
 agent/
@@ -31,12 +31,19 @@ agent/
     runtime.py                    # Conversation orchestration loop (LLM + tools + session)
 
   infrastructure/
+    config/settings.py            # Runtime config and OpenAI client factory
     llm/openai_chat_client.py     # OpenAI adapter
-    tools/registry.py             # Tool registry adapter over tools.TOOLS / TOOL_SCHEMAS
+    persistence/jsonl_session_store.py  # JSON/JSONL session storage adapter
+    tools/registry.py             # Tool registry adapter
+    tools/impl/                   # Actual tool implementations + schemas
 
   interfaces/
     cli/chat_cli.py               # Terminal interaction flow
+    cli/ui/logo.py                # CLI UI assets/helpers
     api/service.py                # Transport-agnostic API facade (ready for web framework)
+
+  application/ports/
+    session_store.py              # SessionStore protocol (application-side port)
 ```
 
 ## 3. Responsibility Boundaries
@@ -60,12 +67,19 @@ agent/
   - runs chat completion loops (streaming and non-streaming),
   - consumes tool calls,
   - executes tools through `ToolExecutor`,
-  - persists messages/tool records via session manager interface.
+  - persists messages/tool records via session store interface.
+
+### Application Ports
+
+- `agent/application/ports/session_store.py`
+- Defines the session persistence contract (`SessionStore`) used by CLI/runtime-facing flows.
+- Application code depends on this port, not on concrete JSONL filesystem details.
 
 ### Infrastructure Layer
 
 - `OpenAIChatClient`: adapter for `chat.completions.create(...)`.
-- `DefaultToolRegistry`: adapter for existing `tools.TOOLS` and `tools.TOOL_SCHEMAS`.
+- `JsonlSessionStore`: concrete filesystem persistence adapter.
+- `DefaultToolRegistry`: adapter over infrastructure tool implementations.
 - Keeps third-party/external dependency details out of application logic.
 
 ### Interface Layer
@@ -86,6 +100,17 @@ agent/
    - `chat()` for interactive CLI.
 
 This keeps compatibility while removing the old god-class behavior.
+
+## 4.1 Root Cleanup
+
+After migration stabilization, legacy root folders were removed:
+
+- `config/`
+- `session/`
+- `tools/`
+- `utils/`
+
+All runtime imports now resolve directly to `agent/...` layered modules.
 
 ## 5. Current Runtime Flow (CLI)
 

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 
 
-class SessionManager:
+class JsonlSessionStore:
     def __init__(
         self,
         session_dir: str | None = None,
@@ -36,7 +36,7 @@ class SessionManager:
         return datetime.now(timezone.utc).isoformat()
 
     def _default_session_root(self) -> str:
-        return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "sessions"))
+        return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "sessions"))
 
     def _new_session_id(self) -> str:
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")

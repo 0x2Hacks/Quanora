@@ -1,5 +1,5 @@
-from config.settings import Config
 from agent.basic_agent import BasicAgent
+from agent.infrastructure.config import Config
 import argparse
 import os
 

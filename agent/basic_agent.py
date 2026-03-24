@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from config.settings import Config
-from session import SessionManager
+from agent.application.ports import SessionStore
+from agent.infrastructure.config import Config
+from agent.infrastructure.persistence import JsonlSessionStore
 
 from agent.application import AgentRuntime, ToolExecutor
 from agent.domain import looks_like_tool_payload
@@ -43,7 +44,7 @@ class BasicAgent:
             tool_schemas=self._tool_registry.schemas,
             debug=debug,
         )
-        self._session = SessionManager(
+        self._session: SessionStore = JsonlSessionStore(
             session_dir=session_dir,
             session_id=session_id,
             resume_latest=resume_latest,

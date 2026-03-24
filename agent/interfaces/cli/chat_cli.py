@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from utils import print_rainbow_logo
+from agent.interfaces.cli.ui import print_rainbow_logo
 
 
 class ChatCLI:

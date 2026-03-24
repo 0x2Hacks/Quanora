@@ -2,7 +2,7 @@
 from pathlib import Path
 import re
 
-from tools.base import tool_ok, tool_error
+from .base import tool_error, tool_ok
 
 def read_file(file_path: str, offset: int = 1, limit: int = 1000) -> str:
     """

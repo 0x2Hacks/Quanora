@@ -10,7 +10,7 @@ os.chdir(PROJECT_ROOT)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from tools.bash import bash, kill_shell
+from agent.infrastructure.tools.impl.bash import bash, kill_shell
 
 def parse_payload(raw: str) -> dict:
     obj = json.loads(raw)

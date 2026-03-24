@@ -3,12 +3,11 @@
 ## Project Structure & Module Organization
 - Entry point: `main.py` (CLI startup, session options, debug mode).
 - Core agent logic: `agent/` (`basic_agent.py`, `prompts.py`).
-- Tooling layer: `tools/` (`file_ops.py`, `bash.py`, `web.py`, `schemas.py`, `base.py`).
-- Configuration: `config/settings.py` (OpenAI client and env-driven settings).
-- Session persistence: `session/` (manager) and `sessions/` (runtime data, JSON/JSONL).
+- Application layer: `agent/application/` (runtime orchestration, tool execution).
+- Infrastructure layer: `agent/infrastructure/` (`config/`, `llm/`, `persistence/`, `tools/impl/`).
+- Interface layer: `agent/interfaces/` (`cli/`, `api/`, CLI UI assets under `cli/ui/`).
+- Runtime data: `sessions/` (JSON/JSONL persisted session artifacts).
 - Tests: `test/` (current scripted tool tests) plus top-level `test_web.py`.
-- Utility assets: `utils/` (`logo.py`, `logo.txt`).
-- Planning/design notes: `plan/`.
 
 ## Build, Test, and Development Commands
 - `python main.py`  
@@ -26,13 +25,13 @@
 - Language: Python 3.12+ style with 4-space indentation and UTF-8 files.
 - Use `snake_case` for functions/variables, `PascalCase` for classes, `UPPER_SNAKE_CASE` for constants.
 - Keep tool outputs structured via `tool_ok` / `tool_error` patterns.
-- Prefer small, focused functions; keep side effects explicit (especially in `tools/` and `session/`).
+- Prefer small, focused functions; keep side effects explicit (especially in `agent/infrastructure/tools` and persistence adapters).
 - Code design must prioritize **high cohesion, low coupling, clear structure, and readability**.
 - Keep single Python files compact: target **<= 400 lines**; hard limit **<= 800 lines**. If a file grows, split by responsibility.
 
 ## Testing Guidelines
 - Add tests under `test/` using `test_*.py` naming.
-- Mirror module names where possible (example: `tools/bash.py` -> `test/test_bash_tool.py`).
+- Mirror module names where possible (example: `agent/infrastructure/tools/impl/bash.py` -> `test/test_bash_tool.py`).
 - For new tools/features, include:
   - success path,
   - failure path,
