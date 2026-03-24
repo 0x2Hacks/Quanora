@@ -28,29 +28,6 @@ STEP_TRANSITIONS: dict[str, set[str]] = {
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-
-def _project_root() -> Path:
-    return Path(__file__).resolve().parents[5]
-
-
-def _latest_session_id(session_root: Path) -> str | None:
-    index_file = session_root / "index.json"
-    if not index_file.exists():
-        return None
-    try:
-        data = json.loads(index_file.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    sessions = data.get("sessions") if isinstance(data, dict) else None
-    if not isinstance(sessions, list):
-        return None
-    candidates = [item for item in sessions if isinstance(item, dict) and item.get("id") and item.get("updated_at")]
-    if not candidates:
-        return None
-    candidates.sort(key=lambda x: str(x.get("updated_at")))
-    return str(candidates[-1]["id"])
-
-
 def _resolve_session_base() -> tuple[Path, str]:
     env_root = os.getenv("AGENT_SESSION_ROOT")
     env_id = os.getenv("AGENT_SESSION_ID")
@@ -58,15 +35,10 @@ def _resolve_session_base() -> tuple[Path, str]:
         base = Path(env_root) / env_id
         if base.is_dir():
             return base, env_id
-
-    session_root = _project_root() / "sessions"
-    sid = _latest_session_id(session_root)
-    if not sid:
-        raise FileNotFoundError("No active session found. Create or resume a session before using plan tools.")
-    base = session_root / sid
-    if not base.is_dir():
-        raise FileNotFoundError(f"Session directory not found: {base}")
-    return base, sid
+    raise FileNotFoundError(
+        "No active session context found. Ensure session is initialized before using plan tools "
+        "(missing AGENT_SESSION_ROOT / AGENT_SESSION_ID)."
+    )
 
 
 def _plan_paths() -> tuple[Path, Path, str]:
