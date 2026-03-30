@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import traceback
 
-from agent.domain import looks_like_tool_payload
-from agent.infrastructure.tools.impl.core.base import tool_error, tool_ok
+from agent.application.ports import ToolRegistry
+from agent.domain import looks_like_tool_payload, tool_error, tool_ok
 
 
 class ToolExecutor:
     """Runs tool calls with standardized error handling."""
 
-    def __init__(self, registry):
+    def __init__(self, registry: ToolRegistry):
         self._registry = registry
 
     def execute(self, name: str, args: dict, raw_args: str | None = None) -> str:

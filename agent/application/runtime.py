@@ -4,14 +4,20 @@ from __future__ import annotations
 
 from typing import Callable
 
-from agent.domain import ParsedToolCall, parse_tool_args
-from agent.infrastructure.tools.impl.core.base import tool_error
+from agent.application.ports import ChatClient, SessionStore
+from agent.domain import ParsedToolCall, parse_tool_args, tool_error
 
 
 class AgentRuntime:
     """Runs chat-completions loops and executes tool calls."""
 
-    def __init__(self, chat_client, tool_executor, tool_schemas: list[dict], debug: bool = False):
+    def __init__(
+        self,
+        chat_client: ChatClient,
+        tool_executor,
+        tool_schemas: list[dict],
+        debug: bool = False,
+    ):
         self._chat_client = chat_client
         self._tool_executor = tool_executor
         self._tool_schemas = tool_schemas
@@ -37,7 +43,7 @@ class AgentRuntime:
     def process_user_turn(
         self,
         chat_history: list[dict],
-        session,
+        session: SessionStore,
         on_content: Callable[[str], None],
         on_debug: Callable[[str], None] | None = None,
     ) -> None:
@@ -61,13 +67,23 @@ class AgentRuntime:
             if not self._debug:
                 on_content("\n")
 
-    def _persist_assistant_content(self, chat_history: list[dict], session, content_text: str) -> None:
+    def _persist_assistant_content(
+        self,
+        chat_history: list[dict],
+        session: SessionStore,
+        content_text: str,
+    ) -> None:
         if not content_text:
             return
         chat_history.append({"role": "assistant", "content": content_text})
         session.persist_message("assistant", content_text)
 
-    def _persist_assistant_tool_calls(self, chat_history: list[dict], session, tool_calls: list[ParsedToolCall]) -> None:
+    def _persist_assistant_tool_calls(
+        self,
+        chat_history: list[dict],
+        session: SessionStore,
+        tool_calls: list[ParsedToolCall],
+    ) -> None:
         assistant_tool_msg = {
             "role": "assistant",
             "tool_calls": [
@@ -89,7 +105,7 @@ class AgentRuntime:
     def _execute_tool_calls(
         self,
         chat_history: list[dict],
-        session,
+        session: SessionStore,
         tool_calls: list[ParsedToolCall],
         on_debug: Callable[[str], None] | None = None,
     ) -> None:
