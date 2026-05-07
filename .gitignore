@@ -8,3 +8,8 @@ test.txt
 __pycache__/
 src/
 .chainpeer/
+.docs/
+.pytest_cache/
+.claude/
+AGENTS.md
+ARCHITECTURE_REFACTOR_GUIDE.md
