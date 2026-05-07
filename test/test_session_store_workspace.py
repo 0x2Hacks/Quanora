@@ -39,6 +39,14 @@ def test_default_layout_and_workspace_scoped_resume() -> None:
         sid_a1 = a1.session_id
 
         os.chdir(ws_b)
+        try:
+            resume_b = JsonlSessionStore(system_prompt="sys", resume_latest=True)
+            resume_b.ensure_session()
+            raise AssertionError("Expected ValueError when no session exists to resume.")
+        except ValueError as e:
+            if "No existing session found" not in str(e):
+                raise
+
         b1 = JsonlSessionStore(system_prompt="sys")
         b1.ensure_session()
         b1.persist_message("user", "B1")

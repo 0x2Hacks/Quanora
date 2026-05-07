@@ -262,8 +262,7 @@ class JsonlSessionStore:
         self._session_paths = self._get_session_paths(session_id)
         meta = self._load_json(self._session_paths["meta"])
         if not meta:
-            self._create_session(session_id)
-            return
+            raise ValueError(f"Session data corrupted or missing meta.json for id: {session_id}")
         if not isinstance(meta.get("workspace_root"), str) or not meta.get("workspace_root", "").strip():
             raise ValueError(
                 f"Session metadata missing workspace_root for id: {session_id}. "
@@ -309,22 +308,30 @@ class JsonlSessionStore:
             chainpeer_home = self._default_chainpeer_home()
             self._session_root = os.path.join(chainpeer_home, "sessions")
             self._index_path = os.path.join(chainpeer_home, "session_index.json")
-        os.makedirs(self._session_root, exist_ok=True)
-        if self._index_path:
-            os.makedirs(os.path.dirname(self._index_path), exist_ok=True)
-        if self.session_id and os.path.isdir(os.path.join(self._session_root, self.session_id)):
-            self._load_session(self.session_id)
-            self._export_session_env()
-            return
+            
+        try:
+            os.makedirs(self._session_root, exist_ok=True)
+            if self._index_path:
+                os.makedirs(os.path.dirname(self._index_path), exist_ok=True)
+        except PermissionError as e:
+            raise PermissionError(f"Permission denied creating session directory at {self._session_root}. Please check directory permissions.") from e
+
+        if self.session_id:
+            if os.path.isdir(os.path.join(self._session_root, self.session_id)):
+                self._load_session(self.session_id)
+                self._export_session_env()
+                return
+            raise ValueError(f"Session not found for id: {self.session_id}")
+
         if self.resume_latest:
             latest_id = self._find_latest_session_id()
             if latest_id and os.path.isdir(os.path.join(self._session_root, latest_id)):
                 self._load_session(latest_id)
                 self._export_session_env()
                 return
-        if self.session_id:
-            raise ValueError(f"Session not found for id: {self.session_id}")
-        self._create_session(self.session_id)
+            raise ValueError("No existing session found in the current workspace to resume. Start a new session by running without the --resume-latest/-c flag.")
+
+        self._create_session(None)
         self._export_session_env()
 
     def _export_session_env(self) -> None:

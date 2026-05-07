@@ -38,11 +38,13 @@ class ContextManager:
         summary_service: ConversationSummaryService | None = None,
         tool_context_policy: ToolContextPolicy | None = None,
         hot_message_limit: int = 6,
+        summary_step_threshold: int = 6,
     ):
         self._estimator = estimator or ContextEstimator()
         self._summary_service = summary_service or ConversationSummaryService()
         self._tool_context_policy = tool_context_policy or ToolContextPolicy()
         self._hot_message_limit = max(1, int(hot_message_limit))
+        self._summary_step_threshold = max(1, int(summary_step_threshold))
 
     def build_messages(self, session, pending_messages: list[dict] | None = None) -> ContextBuildResult:
         persisted_messages = [dict(message) for message in session.get_messages_slice()]
@@ -200,12 +202,17 @@ class ContextManager:
         try:
             latest_summary = session.get_latest_conversation_summary()
             summary_generated = False
+            reused = False
+            covered_count = 0
             if self._can_reuse_summary(latest_summary, cold_messages):
                 summary = dict(latest_summary)
+                reused = True
+                covered_count = int(summary.get("source_message_count") or 0)
             else:
                 summary = self._summary_service.summarize(cold_messages)
                 session.persist_conversation_summary(summary)
                 summary_generated = True
+                covered_count = len(cold_messages)
             summary_message = self._summary_service.render_summary_message(summary)
         except Exception:
             return list(messages), [], 0, False
@@ -213,14 +220,28 @@ class ContextManager:
         compacted_messages: list[dict] = []
         inserted_summary = False
         cold_index_set = set(cold_indices)
+        
+        # When reusing a summary, we need to skip the messages that are already covered by it,
+        # but keep the newer cold messages that haven't been summarized yet.
+        skipped_cold_messages = 0
+        
         for index, message in enumerate(messages):
             if index in cold_index_set:
                 if not inserted_summary:
                     compacted_messages.append(dict(summary_message))
                     inserted_summary = True
+                
+                # If this cold message is covered by the summary, skip it.
+                if skipped_cold_messages < covered_count:
+                    skipped_cold_messages += 1
+                    continue
+                
+                # If this cold message is NOT covered by the reused summary, append it.
+                compacted_messages.append(dict(message))
                 continue
             compacted_messages.append(dict(message))
-        return compacted_messages, [dict(summary_message)], len(cold_indices), summary_generated
+            
+        return compacted_messages, [dict(summary_message)], covered_count, summary_generated
 
     def _hot_message_indices(self, messages: list[dict]) -> set[int]:
         non_system_indices = [index for index, message in enumerate(messages) if message.get("role") != "system"]
@@ -237,4 +258,14 @@ class ContextManager:
     def _can_reuse_summary(self, summary: dict | None, cold_messages: list[dict]) -> bool:
         if not isinstance(summary, dict):
             return False
-        return int(summary.get("source_message_count") or 0) == len(cold_messages)
+        
+        # We reuse the summary if the number of new cold messages since the last summary
+        # is less than the summary_step_threshold.
+        last_count = int(summary.get("source_message_count") or 0)
+        current_count = len(cold_messages)
+        
+        # Must have at least as many messages as before (we don't reuse if history was deleted somehow)
+        if current_count < last_count:
+            return False
+            
+        return (current_count - last_count) < self._summary_step_threshold
