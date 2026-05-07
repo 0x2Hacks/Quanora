@@ -46,6 +46,8 @@ class RecordingSession:
         self.persisted = []
         self.stored_messages = [{"role": "system", "content": "session-source"}]
         self.latest_snapshot = None
+        self.latest_summary = None
+        self.tool_summaries = {}
 
     def now_iso(self) -> str:
         return "2026-04-01T00:00:00+00:00"
@@ -56,6 +58,21 @@ class RecordingSession:
             allowed = set(roles)
             messages = [message for message in messages if message.get("role") in allowed]
         return messages[slice(start, end)]
+
+    def get_tool_records(self, limit=None, call_ids=None):
+        return []
+
+    def get_tool_summaries(self, call_ids=None):
+        return {}
+
+    def persist_tool_summary(self, summary: dict) -> None:
+        self.tool_summaries[summary["call_id"]] = dict(summary)
+
+    def get_latest_conversation_summary(self):
+        return dict(self.latest_summary) if isinstance(self.latest_summary, dict) else None
+
+    def persist_conversation_summary(self, summary: dict) -> None:
+        self.latest_summary = dict(summary)
 
     def persist_context_snapshot(self, snapshot: dict) -> None:
         self.latest_snapshot = dict(snapshot)
@@ -109,8 +126,31 @@ def test_runtime_uses_session_backed_context_manager_messages() -> None:
         raise AssertionError(f"Expected debug context estimate, got: {debug_messages}")
 
 
+def test_runtime_notifies_assistant_message_completion() -> None:
+    chat_client = RecordingChatClient()
+    runtime = AgentRuntime(
+        chat_client=chat_client,
+        tool_executor=DummyToolExecutor(),
+        tool_schemas=[],
+        context_manager=ContextManager(),
+        debug=True,
+    )
+    session = RecordingSession()
+    completions = []
+
+    runtime.process_user_turn(
+        session=session,
+        on_content=lambda _: None,
+        on_assistant_message_complete=lambda: completions.append("done"),
+    )
+
+    if completions != ["done"]:
+        raise AssertionError(f"Expected one assistant completion notification, got: {completions}")
+
+
 def main() -> int:
     test_runtime_uses_session_backed_context_manager_messages()
+    test_runtime_notifies_assistant_message_completion()
     print("Runtime ContextManager integration tests passed.")
     return 0
 

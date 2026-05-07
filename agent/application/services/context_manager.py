@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
-from .context_estimator import ContextBudget, ContextEstimator
+from .context_estimator import ContextEstimator
+from .conversation_summary_service import ConversationSummaryService
+from .tool_context_policy import ToolContextPolicy
 
 
 @dataclass(slots=True)
@@ -28,65 +30,211 @@ class ContextBuildResult:
 
 
 class ContextManager:
-    """Builds the model-facing message list from persisted session state.
+    """Builds the model-facing message list from persisted session state."""
 
-    Step 1C shifts context assembly away from an in-memory full-history list.
-    The session store is now the primary source of truth, while
-    ``pending_messages`` can provide a small in-memory overlay for messages that
-    have not been persisted yet.
-    """
-
-    def __init__(self, estimator: ContextEstimator | None = None):
+    def __init__(
+        self,
+        estimator: ContextEstimator | None = None,
+        summary_service: ConversationSummaryService | None = None,
+        tool_context_policy: ToolContextPolicy | None = None,
+        hot_message_limit: int = 6,
+    ):
         self._estimator = estimator or ContextEstimator()
+        self._summary_service = summary_service or ConversationSummaryService()
+        self._tool_context_policy = tool_context_policy or ToolContextPolicy()
+        self._hot_message_limit = max(1, int(hot_message_limit))
 
     def build_messages(self, session, pending_messages: list[dict] | None = None) -> ContextBuildResult:
         persisted_messages = [dict(message) for message in session.get_messages_slice()]
         pending = [dict(message) for message in (pending_messages or [])]
-        messages = persisted_messages + pending
+        full_messages = self._apply_tool_context_policy(
+            messages=persisted_messages + pending,
+            session=session,
+        )
 
-        system_message = next((dict(message) for message in messages if message.get("role") == "system"), None)
-        non_system_messages = [dict(message) for message in messages if message.get("role") != "system"]
-        tool_messages = [dict(message) for message in messages if message.get("role") == "tool"]
+        initial_estimate = self._estimator.estimate_messages(full_messages)
+        messages = list(full_messages)
+        summary_messages: list[dict] = []
+        cold_compacted_message_count = 0
+        summary_generated = False
+        hot_message_count = min(
+            self._hot_message_limit,
+            len([message for message in full_messages if message.get("role") != "system"]),
+        )
 
+        if initial_estimate.over_soft_limit:
+            messages, summary_messages, cold_compacted_message_count, summary_generated = self._compact_cold_conversation(
+                messages=full_messages,
+                session=session,
+            )
+
+        final_messages = [self._strip_internal_fields(message) for message in messages]
+        final_estimate = self._estimator.estimate_messages(final_messages)
+        budget = self._estimator.budget
+        system_message = next((dict(message) for message in final_messages if message.get("role") == "system"), None)
+        non_system_messages = [dict(message) for message in final_messages if message.get("role") != "system"]
+        internal_tool_messages = [dict(message) for message in messages if message.get("role") == "tool"]
+        tool_messages = [self._strip_internal_fields(message) for message in internal_tool_messages]
         snapshot = ContextSnapshot(
             system_message=system_message,
             recent_messages=non_system_messages,
+            summary_messages=[dict(message) for message in summary_messages],
             tool_messages=tool_messages,
         )
-        estimate = self._estimator.estimate_messages(messages)
-        budget = self._estimator.budget
+
         stats = {
             "message_count": len(messages),
             "persisted_message_count": len(persisted_messages),
             "pending_message_count": len(pending),
             "tool_message_count": len(tool_messages),
-            "estimated_input_tokens": estimate.estimated_input_tokens,
-            "estimated_chars": estimate.estimated_chars,
+            "hot_tool_message_count": len([message for message in internal_tool_messages if message.get("_tool_temperature") == "hot"]),
+            "warm_tool_message_count": len([message for message in internal_tool_messages if message.get("_tool_temperature") == "warm"]),
+            "cold_tool_message_count": len([message for message in internal_tool_messages if message.get("_tool_temperature") == "cold"]),
+            "summary_message_count": len(summary_messages),
+            "hot_message_count": hot_message_count,
+            "cold_compacted_message_count": cold_compacted_message_count,
+            "estimated_input_tokens": final_estimate.estimated_input_tokens,
+            "estimated_chars": final_estimate.estimated_chars,
+            "pre_compaction_estimated_input_tokens": initial_estimate.estimated_input_tokens,
+            "pre_compaction_estimated_chars": initial_estimate.estimated_chars,
             "budget": budget.to_dict(),
         }
         decisions = {
             "mode": "session_backed",
             "source": "session_queries",
             "uses_pending_overlay": bool(pending),
-            "over_soft_limit": estimate.over_soft_limit,
-            "over_hard_limit": estimate.over_hard_limit,
-            "compact_recommended": estimate.over_soft_limit,
-            "compact_required": estimate.over_hard_limit,
+            "over_soft_limit": final_estimate.over_soft_limit,
+            "over_hard_limit": final_estimate.over_hard_limit,
+            "compact_recommended": initial_estimate.over_soft_limit,
+            "compact_required": initial_estimate.over_hard_limit,
+            "rolling_summary_applied": bool(summary_messages),
+            "rolling_summary_generated": summary_generated,
+            "hot_message_limit": self._hot_message_limit,
+            "tool_policy_applied": True,
         }
-        result = ContextBuildResult(messages=messages, stats=stats, decisions=decisions, snapshot=snapshot)
+        result = ContextBuildResult(messages=final_messages, stats=stats, decisions=decisions, snapshot=snapshot)
         session.persist_context_snapshot(
             {
                 "message_count": len(messages),
+                "final_message_count": len(final_messages),
                 "persisted_message_count": len(persisted_messages),
                 "pending_message_count": len(pending),
                 "tool_message_count": len(tool_messages),
-                "estimated_input_tokens": estimate.estimated_input_tokens,
-                "estimated_chars": estimate.estimated_chars,
-                "over_soft_limit": estimate.over_soft_limit,
-                "over_hard_limit": estimate.over_hard_limit,
+                "hot_tool_message_count": len([message for message in internal_tool_messages if message.get("_tool_temperature") == "hot"]),
+                "warm_tool_message_count": len([message for message in internal_tool_messages if message.get("_tool_temperature") == "warm"]),
+                "cold_tool_message_count": len([message for message in internal_tool_messages if message.get("_tool_temperature") == "cold"]),
+                "summary_message_count": len(summary_messages),
+                "hot_message_count": hot_message_count,
+                "cold_compacted_message_count": cold_compacted_message_count,
+                "estimated_input_tokens": final_estimate.estimated_input_tokens,
+                "estimated_chars": final_estimate.estimated_chars,
+                "pre_compaction_estimated_input_tokens": initial_estimate.estimated_input_tokens,
+                "pre_compaction_estimated_chars": initial_estimate.estimated_chars,
+                "over_soft_limit": final_estimate.over_soft_limit,
+                "over_hard_limit": final_estimate.over_hard_limit,
                 "budget": budget.to_dict(),
                 "snapshot": asdict(snapshot),
                 "decisions": decisions,
             }
         )
         return result
+
+    def _apply_tool_context_policy(self, messages: list[dict], session) -> list[dict]:
+        tool_call_ids = [message.get("tool_call_id") for message in messages if message.get("role") == "tool" and message.get("tool_call_id")]
+        if not tool_call_ids:
+            return [dict(message) for message in messages]
+
+        tool_batches = self._collect_tool_batches(messages)
+        temperatures = self._tool_context_policy.classify_temperatures(tool_batches)
+        tool_records = {
+            record.get("id"): dict(record)
+            for record in session.get_tool_records(call_ids=tool_call_ids)
+            if isinstance(record, dict) and record.get("id")
+        }
+        tool_summaries = session.get_tool_summaries(call_ids=tool_call_ids)
+        rendered_messages: list[dict] = []
+
+        for message in messages:
+            rendered = dict(message)
+            if rendered.get("role") == "tool" and rendered.get("tool_call_id"):
+                call_id = rendered.get("tool_call_id")
+                tool_record = tool_records.get(call_id)
+                temperature = temperatures.get(call_id, "cold")
+                summary_record = tool_summaries.get(call_id)
+                if temperature in {"warm", "cold"} and tool_record and not summary_record:
+                    summary_record = self._tool_context_policy.build_tool_summary_record(tool_record)
+                    session.persist_tool_summary(summary_record)
+                    tool_summaries[call_id] = summary_record
+                rendered["content"] = self._tool_context_policy.render_tool_message(tool_record, summary_record, temperature)
+                rendered["_tool_temperature"] = temperature
+            rendered_messages.append(rendered)
+        return rendered_messages
+
+    def _collect_tool_batches(self, messages: list[dict]) -> list[list[str]]:
+        batches: list[list[str]] = []
+        for message in messages:
+            if message.get("role") != "assistant":
+                continue
+            tool_calls = message.get("tool_calls")
+            if not isinstance(tool_calls, list):
+                continue
+            batch = [item.get("id") for item in tool_calls if isinstance(item, dict) and item.get("id")]
+            if batch:
+                batches.append(batch)
+        return batches
+
+    def _strip_internal_fields(self, message: dict) -> dict:
+        return {key: value for key, value in dict(message).items() if not key.startswith("_")}
+
+    def _compact_cold_conversation(self, messages: list[dict], session) -> tuple[list[dict], list[dict], int, bool]:
+        hot_indices = self._hot_message_indices(messages)
+        cold_indices = [
+            index
+            for index, message in enumerate(messages)
+            if index not in hot_indices and self._is_summarizable_cold_message(message)
+        ]
+        if not cold_indices:
+            return list(messages), [], 0, False
+
+        cold_messages = [dict(messages[index]) for index in cold_indices]
+        try:
+            latest_summary = session.get_latest_conversation_summary()
+            summary_generated = False
+            if self._can_reuse_summary(latest_summary, cold_messages):
+                summary = dict(latest_summary)
+            else:
+                summary = self._summary_service.summarize(cold_messages)
+                session.persist_conversation_summary(summary)
+                summary_generated = True
+            summary_message = self._summary_service.render_summary_message(summary)
+        except Exception:
+            return list(messages), [], 0, False
+
+        compacted_messages: list[dict] = []
+        inserted_summary = False
+        cold_index_set = set(cold_indices)
+        for index, message in enumerate(messages):
+            if index in cold_index_set:
+                if not inserted_summary:
+                    compacted_messages.append(dict(summary_message))
+                    inserted_summary = True
+                continue
+            compacted_messages.append(dict(message))
+        return compacted_messages, [dict(summary_message)], len(cold_indices), summary_generated
+
+    def _hot_message_indices(self, messages: list[dict]) -> set[int]:
+        non_system_indices = [index for index, message in enumerate(messages) if message.get("role") != "system"]
+        return set(non_system_indices[-self._hot_message_limit :])
+
+    def _is_summarizable_cold_message(self, message: dict) -> bool:
+        if message.get("role") not in {"user", "assistant"}:
+            return False
+        if message.get("tool_calls"):
+            return False
+        content = message.get("content", "")
+        return isinstance(content, str) and bool(content.strip())
+
+    def _can_reuse_summary(self, summary: dict | None, cold_messages: list[dict]) -> bool:
+        if not isinstance(summary, dict):
+            return False
+        return int(summary.get("source_message_count") or 0) == len(cold_messages)

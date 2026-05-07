@@ -20,6 +20,8 @@ class _StreamingRenderer:
         self._console = console
         self._pending = ""
         self._in_code_block = False
+        self._line_open = False
+        self._last_output_target = "stdout"
 
     def append(self, text: str) -> None:
         self._pending += text
@@ -30,11 +32,29 @@ class _StreamingRenderer:
             line = self._pending[:newline_index]
             self._pending = self._pending[newline_index + 1 :]
             self._render_line(line, newline=True)
+        self._flush_pending_plain_text()
 
     def flush(self) -> None:
         if not self._pending:
             return
         self._render_line(self._pending, newline=False)
+        self._pending = ""
+
+    def finish_message(self) -> None:
+        if self._pending:
+            self._render_line(self._pending, newline=False)
+            self._pending = ""
+        if not self._line_open:
+            return
+        self._write_message_boundary_newline()
+        self._line_open = False
+
+    def _flush_pending_plain_text(self) -> None:
+        if not self._pending or self._in_code_block:
+            return
+        if not self._is_plain_line(self._pending):
+            return
+        self._write_plain(self._pending, newline=False)
         self._pending = ""
 
     def _render_line(self, line: str, *, newline: bool) -> None:
@@ -53,7 +73,7 @@ class _StreamingRenderer:
                 self._write_plain(line, newline=newline)
                 return
             renderable = self._render_markdownish_line(line)
-        self._console.print(renderable, end="\n" if newline else "", soft_wrap=True, highlight=False)
+        self._print_console(renderable, newline=newline)
 
     def _is_plain_line(self, line: str) -> bool:
         if not line:
@@ -71,6 +91,27 @@ class _StreamingRenderer:
         sys.stdout.write(text)
         if newline:
             sys.stdout.write("\n")
+        self._line_open = bool(text) and not newline
+        if newline:
+            self._line_open = False
+        self._last_output_target = "stdout"
+        sys.stdout.flush()
+
+    def _print_console(self, renderable, *, newline: bool) -> None:
+        self._console.print(renderable, end="\n" if newline else "", soft_wrap=True, highlight=False)
+        if newline:
+            self._line_open = False
+        else:
+            plain = getattr(renderable, "plain", "")
+            if plain:
+                self._line_open = True
+        self._last_output_target = "console"
+
+    def _write_message_boundary_newline(self) -> None:
+        if self._last_output_target == "console":
+            self._console.print("", end="\n", soft_wrap=True, highlight=False)
+            return
+        sys.stdout.write("\n")
         sys.stdout.flush()
 
     def _render_table_line(self, line: str, *, newline: bool) -> None:
@@ -86,7 +127,7 @@ class _StreamingRenderer:
             if index > 0:
                 output.append(" | ", style="dim")
             output.append_text(self._render_inline(cell, base_style="bold cyan" if index == 0 else ""))
-        self._console.print(output, end="\n" if newline else "", soft_wrap=True, highlight=False)
+        self._print_console(output, newline=newline)
 
     def _is_table_line(self, line: str) -> bool:
         stripped = line.strip()
@@ -225,6 +266,7 @@ class ChatCLI:
                     session=self._session,
                     on_content=self._on_content,
                     on_debug=self._on_debug if self._debug else None,
+                    on_assistant_message_complete=self._on_assistant_message_complete,
                 )
                 self._streaming_renderer.flush()
                 print()
@@ -238,4 +280,7 @@ class ChatCLI:
 
     def _on_debug(self, message: str) -> None:
         print(f"\n[Debug] {message}")
+
+    def _on_assistant_message_complete(self) -> None:
+        self._streaming_renderer.finish_message()
 

@@ -10,7 +10,6 @@ if __name__ == "__main__":
     parser.add_argument("--session", type=str, default=None, help="Session ID to load")
     parser.add_argument("-c", "--resume-latest", action="store_true", help="Resume the latest session if available")
     parser.add_argument("--session-dir", type=str, default=None, help="Session storage directory")
-    parser.add_argument("--resume-mode", type=str, default="summary", choices=["summary", "full", "none"], help="Resume backfill mode")
     args = parser.parse_args()
 
     Config.validate()
@@ -21,6 +20,5 @@ if __name__ == "__main__":
         session_dir=args.session_dir,
         session_id=args.session,
         resume_latest=args.resume_latest,
-        resume_mode=args.resume_mode,
     )
     agent.chat()

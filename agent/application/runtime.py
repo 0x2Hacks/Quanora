@@ -48,6 +48,7 @@ class AgentRuntime:
         session: SessionStore,
         on_content: Callable[[str], None],
         on_debug: Callable[[str], None] | None = None,
+        on_assistant_message_complete: Callable[[], None] | None = None,
     ) -> None:
         while True:
             context = self._context_manager.build_messages(session=session)
@@ -64,11 +65,13 @@ class AgentRuntime:
                 if on_debug:
                     on_debug(str(assistant_msg))
                 self._persist_assistant_content(session, assistant_msg.content or "")
+                self._notify_assistant_message_complete(assistant_msg.content or "", on_assistant_message_complete)
                 tool_calls = self._parse_tool_calls_from_message(assistant_msg)
             else:
                 response = self._chat_client.create(messages=context.messages, tools=self._tool_schemas, stream=True)
                 content_text, tool_calls = self._consume_stream_response(response, on_content)
                 self._persist_assistant_content(session, content_text)
+                self._notify_assistant_message_complete(content_text, on_assistant_message_complete)
 
             if not tool_calls:
                 break
@@ -79,6 +82,15 @@ class AgentRuntime:
         if not content_text or not content_text.strip():
             return
         session.persist_message("assistant", content_text)
+
+    def _notify_assistant_message_complete(
+        self,
+        content_text: str,
+        on_assistant_message_complete: Callable[[], None] | None,
+    ) -> None:
+        if not on_assistant_message_complete or not content_text or not content_text.strip():
+            return
+        on_assistant_message_complete()
 
     def _persist_assistant_tool_calls(self, session: SessionStore, tool_calls: list[ParsedToolCall]) -> None:
         session.persist_message(

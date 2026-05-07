@@ -21,7 +21,6 @@ def build_basic_agent_dependencies(
     session_dir: str | None = None,
     session_id: str | None = None,
     resume_latest: bool = False,
-    resume_mode: str = "summary",
 ) -> dict[str, object]:
     model = Config.DEFAULT_MODEL
     client = Config.get_client()
@@ -40,7 +39,6 @@ def build_basic_agent_dependencies(
         session_dir=session_dir,
         session_id=session_id,
         resume_latest=resume_latest,
-        resume_mode=resume_mode,
         model=model,
         system_prompt=SYSTEM_PROMPT,
         looks_like_tool_payload=looks_like_tool_payload,

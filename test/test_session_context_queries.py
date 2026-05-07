@@ -1,6 +1,7 @@
 import os
 import shutil
 import sys
+import json
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -8,7 +9,7 @@ os.chdir(PROJECT_ROOT)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from agent.application.services import ContextManager
+from agent.application.services import ContextBudget, ContextEstimator, ContextManager
 from agent.infrastructure.persistence import JsonlSessionStore
 
 
@@ -79,8 +80,17 @@ def test_context_query_interfaces() -> None:
         if len(filtered_tool_records) != 1 or filtered_tool_records[0].get("name") != "bash":
             raise AssertionError(f"Unexpected filtered tool records: {filtered_tool_records}")
 
+        if store.get_tool_summaries(call_ids=["call_1"]) != {}:
+            raise AssertionError("Expected no tool summaries before Step 4 persistence.")
+
+        meta_path = temp_root / store.session_id / "meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        cli_args = meta.get("cli_args") or {}
+        if "resume_mode" in cli_args:
+            raise AssertionError(f"Did not expect resume_mode in session metadata: {meta}")
+
         if store.get_latest_conversation_summary() is not None:
-            raise AssertionError("Expected no conversation summary in Step 1B.")
+            raise AssertionError("Expected no conversation summary before Step 3 compaction.")
         if store.get_latest_context_snapshot() is not None:
             raise AssertionError("Expected no context snapshot before Step 2 build.")
     finally:
@@ -107,9 +117,63 @@ def test_context_snapshot_persistence() -> None:
         shutil.rmtree(temp_root, ignore_errors=True)
 
 
+def test_conversation_summary_persistence() -> None:
+    temp_root = PROJECT_ROOT / "test" / "__session_conversation_summary__"
+    if temp_root.exists():
+        shutil.rmtree(temp_root, ignore_errors=True)
+    temp_root.mkdir(parents=True, exist_ok=True)
+    try:
+        store = _make_store(temp_root)
+        for index in range(1, 7):
+            store.persist_message("user", f"user message {index} with enough text to push context higher")
+            store.persist_message("assistant", f"assistant reply {index} with enough text to push context higher")
+        manager = ContextManager(
+            estimator=ContextEstimator(
+                ContextBudget(max_input_tokens=100, reserve_output_tokens=10, soft_limit_tokens=20, hard_limit_tokens=90)
+            ),
+            hot_message_limit=4,
+        )
+
+        result = manager.build_messages(session=store)
+        summary = store.get_latest_conversation_summary()
+
+        if not summary:
+            raise AssertionError("Expected persisted conversation summary.")
+        if summary.get("kind") != "rolling_conversation_summary":
+            raise AssertionError(f"Unexpected summary payload: {summary}")
+        if not (result.decisions or {}).get("rolling_summary_applied"):
+            raise AssertionError(f"Expected rolling summary decision, got: {result.decisions}")
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def test_tool_summary_persistence() -> None:
+    temp_root = PROJECT_ROOT / "test" / "__session_tool_summary__"
+    if temp_root.exists():
+        shutil.rmtree(temp_root, ignore_errors=True)
+    temp_root.mkdir(parents=True, exist_ok=True)
+    try:
+        store = _make_store(temp_root)
+        summary = {
+            "call_id": "call_1",
+            "tool_name": "bash",
+            "summary_for_resume": {"tool": "bash", "ok": True, "data": "trimmed"},
+        }
+        store.persist_tool_summary(summary)
+        loaded = store.get_tool_summaries(call_ids=["call_1"])
+        if "call_1" not in loaded:
+            raise AssertionError(f"Expected persisted tool summary, got: {loaded}")
+        if loaded["call_1"].get("summary_for_resume", {}).get("data") != "trimmed":
+            raise AssertionError(f"Unexpected persisted tool summary payload: {loaded}")
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
 def main() -> int:
     test_context_query_interfaces()
     test_context_snapshot_persistence()
+    test_conversation_summary_persistence()
+    test_tool_summary_persistence()
     print("Session context query tests passed.")
     return 0
 

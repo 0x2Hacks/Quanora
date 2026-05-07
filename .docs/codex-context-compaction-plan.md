@@ -25,7 +25,7 @@
 - [`agent/application/runtime.py`](e:\code\agent\agent_base\agent\application\runtime.py)
   `process_user_turn()` 直接拿 `chat_history` 送给 `chat_client.create(...)`。
 - [`agent/infrastructure/persistence/jsonl_session_store.py`](e:\code\agent\agent_base\agent\infrastructure\persistence\jsonl_session_store.py)
-  `_load_session()` 负责从 `messages.jsonl + tool_calls.jsonl` 重建 `chat_history`；`resume_mode=summary` 只是对 tool result 做截断，不是真正的上下文预算与压缩。
+  `_load_session()` 负责从 `messages.jsonl + tool_calls.jsonl` 重建消息视图；tool 内容目前仍使用统一的截断/轻摘要回放，不是真正的上下文预算与压缩。
 
 ### 核心问题
 
@@ -513,7 +513,7 @@ Conversation summary so far:
   "progress_summary": "已经确定需要将模型输入上下文与 chat_history 脱钩，并规划了 estimator、rolling summary、tool 温度策略与 context/compact 命令。",
   "important_facts": [
     "当前 chat_history 与实际送模上下文仍强耦合",
-    "resume_mode=summary 目前仅对 tool result 做截断",
+    "当前 tool result 回放仍主要依赖统一截断/轻摘要逻辑",
     "rolling summary 只应压缩冷区，不碰最近热区"
   ],
   "important_decisions": [
@@ -609,7 +609,7 @@ Conversation summary:
 
 ### 这一步要解决什么
 
-当前 `resume_mode=summary` 只会把所有 tool result 做统一截断。我们需要把 tool 结果按时间和价值分层，而不是一刀切。
+当前 tool result 回放仍是统一截断/轻摘要。我们需要把 tool 结果按时间和价值分层，而不是一刀切。
 
 ### 策略定义
 
@@ -670,9 +670,8 @@ def render_tool_message_for_context(tool_record: dict, temperature: str) -> str:
 1. 新增 tool temperature policy 模块，例如：
    - `agent/application/services/tool_context_policy.py`
 2. 让 `JsonlSessionStore` 提供读取 tool summary sidecar 的能力。
-3. 在 `ContextManager` 构建时，对 tool 消息分层渲染，而不是只依赖 `resume_mode`。
-4. 保留 `resume_mode`，但把它从“唯一策略”降级为“fallback / override 配置”。
-5. `resume_mode=full` 可作为调试保底模式继续存在。
+3. 在 `ContextManager` 构建时，对 tool 消息分层渲染，而不是依赖 store 内部固定截断。
+4. 让 tool temperature policy 成为唯一上下文策略来源，不再保留恢复模式分支。
 
 ### 推荐文件变更
 

@@ -43,12 +43,29 @@ class RecordingSession:
     def __init__(self):
         self.persisted = []
         self.latest_snapshot = None
+        self.latest_summary = None
+        self.tool_summaries = {}
 
     def now_iso(self) -> str:
         return "2026-04-01T00:00:00+00:00"
 
     def get_messages_slice(self, start=None, end=None, roles=None):
         return [{"role": "system", "content": "sys"}]
+
+    def get_tool_records(self, limit=None, call_ids=None):
+        return []
+
+    def get_tool_summaries(self, call_ids=None):
+        return {}
+
+    def persist_tool_summary(self, summary: dict) -> None:
+        self.tool_summaries[summary["call_id"]] = dict(summary)
+
+    def get_latest_conversation_summary(self):
+        return dict(self.latest_summary) if isinstance(self.latest_summary, dict) else None
+
+    def persist_conversation_summary(self, summary: dict) -> None:
+        self.latest_summary = dict(summary)
 
     def persist_context_snapshot(self, snapshot: dict) -> None:
         self.latest_snapshot = dict(snapshot)

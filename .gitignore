@@ -7,3 +7,4 @@ test_web.py
 test.txt
 __pycache__/
 src/
+.chainpeer/

@@ -20,7 +20,6 @@ class BasicAgent:
         session_dir: str | None = None,
         session_id: str | None = None,
         resume_latest: bool = False,
-        resume_mode: str = "summary",
     ):
         dependencies = build_basic_agent_dependencies(
             tools=tools,
@@ -28,7 +27,6 @@ class BasicAgent:
             session_dir=session_dir,
             session_id=session_id,
             resume_latest=resume_latest,
-            resume_mode=resume_mode,
         )
         self._tool_registry = dependencies["tool_registry"]
         self._tool_executor = dependencies["tool_executor"]

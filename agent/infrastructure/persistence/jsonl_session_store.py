@@ -10,7 +10,6 @@ class JsonlSessionStore:
         session_dir: str | None = None,
         session_id: str | None = None,
         resume_latest: bool = False,
-        resume_mode: str = "summary",
         model: str | None = None,
         system_prompt: str = "",
         looks_like_tool_payload=None,
@@ -18,7 +17,6 @@ class JsonlSessionStore:
         self.session_dir = session_dir
         self.session_id = session_id
         self.resume_latest = resume_latest
-        self.resume_mode = resume_mode
         self.model = model
         self.system_prompt = system_prompt
         self._looks_like_tool_payload = looks_like_tool_payload
@@ -78,6 +76,8 @@ class JsonlSessionStore:
             "meta": os.path.join(base, "meta.json"),
             "messages": os.path.join(base, "messages.jsonl"),
             "tool_calls": os.path.join(base, "tool_calls.jsonl"),
+            "tool_call_summaries": os.path.join(base, "tool_call_summaries.jsonl"),
+            "conversation_summaries": os.path.join(base, "conversation_summaries.jsonl"),
             "snapshots": os.path.join(base, "snapshots"),
         }
 
@@ -165,6 +165,8 @@ class JsonlSessionStore:
         os.makedirs(self._session_paths["snapshots"], exist_ok=True)
         open(self._session_paths["messages"], "a", encoding="utf-8").close()
         open(self._session_paths["tool_calls"], "a", encoding="utf-8").close()
+        open(self._session_paths["tool_call_summaries"], "a", encoding="utf-8").close()
+        open(self._session_paths["conversation_summaries"], "a", encoding="utf-8").close()
         now = self.now_iso()
         self._message_count = 0
         self._tool_call_count = 0
@@ -178,7 +180,6 @@ class JsonlSessionStore:
             "cwd": os.getcwd(),
             "workspace_root": self._current_workspace_root,
             "cli_args": {
-                "resume_mode": self.resume_mode,
                 "session_id": self.session_id,
                 "resume_latest": self.resume_latest,
                 "session_dir": self.session_dir,
@@ -201,6 +202,16 @@ class JsonlSessionStore:
             return []
         return self._read_jsonl(self._session_paths["tool_calls"])
 
+    def _load_tool_summaries(self) -> list[dict]:
+        if not self._session_paths:
+            return []
+        return self._read_jsonl(self._session_paths["tool_call_summaries"])
+
+    def _load_conversation_summaries(self) -> list[dict]:
+        if not self._session_paths:
+            return []
+        return self._read_jsonl(self._session_paths["conversation_summaries"])
+
     def _load_tool_map(self) -> dict[str, dict]:
         tool_map: dict[str, dict] = {}
         for item in self._load_tool_records():
@@ -219,8 +230,6 @@ class JsonlSessionStore:
                 continue
             role = msg.get("role")
             if role == "tool":
-                if self.resume_mode == "none":
-                    continue
                 tool_call_id = msg.get("tool_call_id")
                 content = self._build_tool_content(tool_map.get(tool_call_id))
                 built_messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": content})
@@ -369,8 +378,52 @@ class JsonlSessionStore:
             records = records[-limit:]
         return records
 
+    def get_tool_summaries(self, call_ids: list[str] | None = None) -> dict[str, dict]:
+        summaries = [dict(item) for item in self._load_tool_summaries() if isinstance(item, dict) and item.get("call_id")]
+        if call_ids:
+            allowed_ids = set(call_ids)
+            summaries = [item for item in summaries if item.get("call_id") in allowed_ids]
+        return {item["call_id"]: item for item in summaries}
+
+    def persist_tool_summary(self, summary: dict) -> None:
+        if not self._session_paths:
+            return
+        record = dict(summary)
+        if not record.get("call_id"):
+            return
+        record.setdefault("id", uuid.uuid4().hex)
+        record.setdefault("created_at", self.now_iso())
+        record.setdefault("version", "1")
+        self._append_jsonl(self._session_paths["tool_call_summaries"], record)
+        if self._session_meta:
+            self._session_meta["updated_at"] = self.now_iso()
+            self._write_json(self._session_paths["meta"], self._session_meta)
+        self._update_index()
+
     def get_latest_conversation_summary(self) -> dict | None:
-        return None
+        summaries = [item for item in self._load_conversation_summaries() if isinstance(item, dict)]
+        if not summaries:
+            return None
+        return dict(summaries[-1])
+
+    def persist_conversation_summary(self, summary: dict) -> None:
+        if not self._session_paths:
+            return
+        record = dict(summary)
+        record.setdefault("id", uuid.uuid4().hex)
+        record.setdefault("created_at", self.now_iso())
+        record.setdefault("version", "1")
+        self._append_jsonl(self._session_paths["conversation_summaries"], record)
+        if self._session_meta:
+            self._session_meta["updated_at"] = self.now_iso()
+            self._session_meta["latest_conversation_summary"] = {
+                "id": record.get("id"),
+                "created_at": record.get("created_at"),
+                "covered_turns": record.get("covered_turns"),
+                "source_message_count": record.get("source_message_count"),
+            }
+            self._write_json(self._session_paths["meta"], self._session_meta)
+        self._update_index()
 
     def get_latest_context_snapshot(self) -> dict | None:
         if not self._session_meta:
@@ -415,12 +468,6 @@ class JsonlSessionStore:
         if not tool_record:
             return ""
         result = tool_record.get("result")
-        if self.resume_mode == "full":
-            if isinstance(result, str):
-                return result
-            return json.dumps(result, ensure_ascii=False)
-        if self.resume_mode == "none":
-            return ""
         summarized = self._summarize_tool_result(result)
         if isinstance(summarized, str):
             return summarized
@@ -519,5 +566,14 @@ class JsonlSessionStore:
             self._session_meta["updated_at"] = self.now_iso()
             self._write_json(self._session_paths["meta"], self._session_meta)
         self._update_index()
+
+
+
+
+
+
+
+
+
 
 

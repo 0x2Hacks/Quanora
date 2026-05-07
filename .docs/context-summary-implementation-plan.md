@@ -343,10 +343,7 @@ Modify `JsonlSessionStore._build_tool_content()`:
 
 Behavior priority:
 
-1. `resume_mode == "full"` -> return full raw result
 2. if `summary_for_resume` exists -> return serialized semantic summary or formatted compact text
-3. else if `resume_mode == "summary"` -> current truncation behavior
-4. `resume_mode == "none"` -> return empty string
 
 Important:
 
