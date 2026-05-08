@@ -11,7 +11,8 @@ os.chdir(PROJECT_ROOT)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from agent.infrastructure.tools.impl.tools.bash import ShellSession, bash, kill_shell
+from agent.infrastructure.tools.impl.tools.bash import bash, kill_shell
+from agent.infrastructure.tools.impl.tools.bash_session_pool import BashSessionPool
 
 @pytest.fixture
 def temp_dir(tmp_path: Path) -> Path:
@@ -83,12 +84,12 @@ def run_with_input(input_text: str, func):
         sys.stdin = original_stdin
 
 def test_confirmable_requires_confirmation() -> None:
-    def call():
-        return parse_payload(bash("rm __bash_tool_should_not_run__"))
-    payload = assert_ok(run_with_input("n\n", call))
-    data = payload.get("data") or {}
-    if data.get("exit_code") != 1:
-        raise AssertionError(f"Expected exit_code=1, got: {data}")
+    # In Phase 2, confirmable commands without unsafe mode will return an error 
+    # instead of blocking with input().
+    set_env(None)
+    payload = assert_error(parse_payload(bash("rm __bash_tool_should_not_run__")), "CommandRequiresApproval")
+    if payload.get("tool") != "bash":
+        raise AssertionError(f"Expected tool=bash, got: {payload}")
 
 def test_forbidden_blocked() -> None:
     payload = assert_error(parse_payload(bash("shutdown -h now")), "DangerousCommandBlocked")

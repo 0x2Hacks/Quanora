@@ -2,7 +2,7 @@ import json
 import pytest
 import subprocess
 from unittest.mock import MagicMock
-from agent.infrastructure.tools.impl.tools.bash import bash, _SESSION
+from agent.infrastructure.tools.impl.tools.bash import bash, _RUNNER
 
 def test_bash_truncation_large_output(monkeypatch):
     """
@@ -32,8 +32,8 @@ def test_bash_truncation_large_output(monkeypatch):
 def test_bash_timeout(monkeypatch):
     """Test that a stuck process is killed after timeout."""
     # Temporarily reduce timeout for the test
-    original_timeout = _SESSION.timeout
-    _SESSION.timeout = 1
+    original_timeout = _RUNNER.timeout
+    _RUNNER.timeout = 1
     
     try:
         # Sleep for 3 seconds, which exceeds the 1 second timeout
@@ -43,4 +43,4 @@ def test_bash_timeout(monkeypatch):
         assert parsed["ok"] is True
         assert "PROCESS TERMINATED: Command timed out" in parsed["data"]["stderr"]
     finally:
-        _SESSION.timeout = original_timeout
+        _RUNNER.timeout = original_timeout

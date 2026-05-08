@@ -90,7 +90,20 @@ class ToolExecutor:
         # Here we just run it synchronously to bridge the gap, but update job store.
         self._job_service.update_status(handle.job_id, "running")
         
+        # If it's bash, we can pass a callback to append output incrementally
+        def _output_callback(chunk, stream_type):
+            self._job_service.append_output(handle.job_id, chunk, stream_type)
+
+        if name == "bash":
+            # For bash, we pass the callback in args.
+            args["_output_callback"] = _output_callback
+            
         result = self.execute_sync(name, args, raw_args)
+        
+        # Remove the callback from args so it doesn't break JSON serialization
+        # when the upper layer (ToolCallProcessor) tries to persist the `args` dictionary
+        if name == "bash" and "_output_callback" in args:
+            del args["_output_callback"]
         
         if result.status == "ok":
             self._job_service.append_output(handle.job_id, result.result_str)
