@@ -14,7 +14,7 @@ from agent.infrastructure.config import Config
 from agent.infrastructure.llm import OpenAIChatClient
 from agent.infrastructure.llm.openai_async_chat_client import AsyncOpenAIChatClient
 from agent.infrastructure.persistence import JsonlSessionStore, JobStoreJsonl, TaskOutputStoreFile
-from agent.infrastructure.persistence.async_jsonl_session_store import AsyncJsonlSessionStoreFacade
+from agent.infrastructure.persistence.async_jsonl_session_store import AsyncJsonlSessionStore
 from agent.infrastructure.tools import DefaultToolRegistry
 from agent.interfaces.api import AgentAPIService
 from agent.interfaces.cli import ChatCLI
@@ -41,7 +41,13 @@ def build_basic_agent_dependencies(
         system_prompt=SYSTEM_PROMPT,
         looks_like_tool_payload=looks_like_tool_payload,
     )
-    session: AsyncSessionStore = AsyncJsonlSessionStoreFacade(sync_store=sync_session)
+    session: AsyncSessionStore = AsyncJsonlSessionStore(
+        session_dir=session_dir,
+        session_id=session_id,
+        resume_latest=resume_latest,
+        model=model,
+        system_prompt=SYSTEM_PROMPT,
+    )
     
     store_dir = sync_session.session_dir or getattr(sync_session, "_default_session_root", lambda: "sessions")()
     job_store = JobStoreJsonl(directory=store_dir)

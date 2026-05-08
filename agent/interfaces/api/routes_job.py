@@ -4,15 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, HTTPException
 from pydantic import BaseModel
+from agent.interfaces.api.dependencies import get_job_service
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 class CancelRequest(BaseModel):
     reason: str = "API Cancellation"
-
-def get_job_service(request: Request):
-    return request.app.state.job_service
-
 
 @router.get("/{job_id}")
 async def get_job(job_id: str, job_service=Depends(get_job_service)):

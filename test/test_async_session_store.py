@@ -5,7 +5,7 @@ import tempfile
 import asyncio
 
 from agent.infrastructure.persistence.jsonl_session_store import JsonlSessionStore
-from agent.infrastructure.persistence.async_jsonl_session_store import AsyncJsonlSessionStoreFacade
+from agent.infrastructure.persistence.async_jsonl_session_store import AsyncJsonlSessionStore
 
 @pytest.fixture
 def temp_session_dir():
@@ -15,8 +15,7 @@ def temp_session_dir():
 
 @pytest.mark.asyncio
 async def test_async_session_store_facade(temp_session_dir):
-    sync_store = JsonlSessionStore(session_dir=temp_session_dir)
-    async_store = AsyncJsonlSessionStoreFacade(sync_store)
+    async_store = AsyncJsonlSessionStore(session_dir=temp_session_dir)
     
     await async_store.initialize()
     
@@ -27,10 +26,9 @@ async def test_async_session_store_facade(temp_session_dir):
     
     # Load and verify
     messages = await async_store.load_messages()
-    assert len(messages) == 2  # 1 system + 1 user
-    assert messages[0]["role"] == "system"
-    assert messages[1]["role"] == "user"
-    assert messages[1]["content"] == "Hello World"
+    assert len(messages) == 1
+    assert messages[0]["role"] == "user"
+    assert messages[0]["content"] == "Hello World"
     
     # Test concurrency isolation informally
     async def write_msgs(role, n):
@@ -43,4 +41,4 @@ async def test_async_session_store_facade(temp_session_dir):
     )
     
     messages = await async_store.load_messages()
-    assert len(messages) == 12 # 1 system (initial) + 1 user + 5 assistant + 5 system
+    assert len(messages) == 11 # 1 user + 5 assistant + 5 system
