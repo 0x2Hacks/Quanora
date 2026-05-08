@@ -66,3 +66,32 @@ class AsyncSessionStore(Protocol):
     async def list_recent_sessions(self, limit: int = 10) -> list[dict[str, Any]]:
         """List recently updated sessions asynchronously."""
         ...
+
+    async def get_messages_slice(
+        self,
+        start: int | None = None,
+        end: int | None = None,
+        roles: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get a slice of messages asynchronously."""
+        ...
+
+    async def get_tool_records(self, limit: int | None = None, call_ids: list[str] | None = None) -> list[dict[str, Any]]:
+        """Get tool records asynchronously."""
+        ...
+
+    async def get_tool_summaries(self, call_ids: list[str] | None = None) -> dict[str, dict[str, Any]]:
+        """Get tool summaries asynchronously."""
+        ...
+
+    async def persist_tool_summary(self, summary: dict[str, Any]) -> None:
+        """Persist a tool summary asynchronously."""
+        ...
+
+    async def get_latest_conversation_summary(self) -> dict[str, Any] | None:
+        """Get the latest conversation summary asynchronously."""
+        ...
+
+    async def persist_context_snapshot(self, snapshot: dict[str, Any]) -> None:
+        """Persist a context snapshot asynchronously."""
+        ...

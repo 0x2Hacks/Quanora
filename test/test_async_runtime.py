@@ -39,11 +39,22 @@ async def test_async_turn_runner_stream():
     mock_parser = MagicMock()
     mock_parser.parse_tool_calls_from_message.return_value = []
     
+    # We must mock consume_async_stream because AsyncTurnRunner uses it
+    async def mock_consume(*args, **kwargs):
+        on_content_async = args[1]
+        await on_content_async("Hello ")
+        await on_content_async("World!")
+        return "Hello World!", []
+    mock_parser.consume_async_stream = mock_consume
+    
     mock_context = MagicMock()
-    mock_context.build_messages.return_value = MagicMock(messages=[])
+    mock_context_async_method = AsyncMock()
+    mock_context_async_method.return_value = MagicMock(messages=[])
+    mock_context.build_messages_async = mock_context_async_method
     
     mock_session = MagicMock()
     mock_session.now_iso.return_value = "2026-05-08T00:00:00Z"
+    mock_session.persist_message = AsyncMock()
     
     runner = AsyncTurnRunner(
         chat_client=mock_client,

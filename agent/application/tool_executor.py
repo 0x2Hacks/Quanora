@@ -84,34 +84,6 @@ class ToolExecutor:
             metadata={"args": args, "raw_args": raw_args}
         )
         
-        # For Phase 1, we simulate job execution synchronously in start_job 
-        # or we just run it and update the status immediately for short tasks.
-        # For bash, Phase 2 will introduce real background running.
-        # Here we just run it synchronously to bridge the gap, but update job store.
-        self._job_service.update_status(handle.job_id, "running")
-        
-        # If it's bash, we can pass a callback to append output incrementally
-        def _output_callback(chunk, stream_type):
-            self._job_service.append_output(handle.job_id, chunk, stream_type)
-
-        if name == "bash":
-            # For bash, we pass the callback in args.
-            args["_output_callback"] = _output_callback
-            
-        result = self.execute_sync(name, args, raw_args)
-        
-        # Remove the callback from args so it doesn't break JSON serialization
-        # when the upper layer (ToolCallProcessor) tries to persist the `args` dictionary
-        if name == "bash" and "_output_callback" in args:
-            del args["_output_callback"]
-        
-        if result.status == "ok":
-            self._job_service.append_output(handle.job_id, result.result_str)
-            self._job_service.update_status(handle.job_id, "completed")
-        else:
-            self._job_service.append_output(handle.job_id, f"Error: {result.error_msg}")
-            self._job_service.update_status(handle.job_id, "failed", error=result.error_msg)
-            
         return handle
 
     async def stream_job_events(self, job_id: str) -> AsyncIterator[RuntimeEvent]:
@@ -123,10 +95,8 @@ class ToolExecutor:
         if not job:
             return
             
-        # In Phase 1, since jobs are actually executed synchronously during start_job,
-        # by the time we stream events, the job is likely already completed.
-        # We just yield the final result event.
-        # In Phase 2, this will poll or await real-time events.
+        # Real streaming will be implemented in Alignment B tool execution layer
+        # For now, just yield what we have
         content, _ = self._job_service.read_output(job_id)
         
         if content:

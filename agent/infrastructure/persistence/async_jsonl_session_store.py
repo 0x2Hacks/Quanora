@@ -34,12 +34,17 @@ class AsyncJsonlSessionStoreFacade(AsyncSessionStore):
         return self._store.now_iso()
 
     async def initialize(self) -> None:
-        # In the current implementation, JsonlSessionStore might do its initialization in __init__
-        # or it creates session via _create_session. We ensure session is created here.
-        if hasattr(self._store, "initialize"):
+        # We ensure session is created or loaded here.
+        if hasattr(self._store, "ensure_session"):
+            await asyncio.to_thread(self._store.ensure_session)
+        elif hasattr(self._store, "initialize"):
             await asyncio.to_thread(self._store.initialize)
         else:
             await asyncio.to_thread(self._store._create_session, self._store.session_id)
+            
+        # Also ensure history is initialized
+        if hasattr(self._store, "initialize_history"):
+            await asyncio.to_thread(self._store.initialize_history)
 
     async def persist_message(
         self,
@@ -99,3 +104,26 @@ class AsyncJsonlSessionStoreFacade(AsyncSessionStore):
 
     async def list_recent_sessions(self, limit: int = 10) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._store.list_recent_sessions, limit)
+
+    async def get_messages_slice(
+        self,
+        start: int | None = None,
+        end: int | None = None,
+        roles: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._store.get_messages_slice, start, end, roles)
+
+    async def get_tool_records(self, limit: int | None = None, call_ids: list[str] | None = None) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._store.get_tool_records, limit, call_ids)
+
+    async def get_tool_summaries(self, call_ids: list[str] | None = None) -> dict[str, dict[str, Any]]:
+        return await asyncio.to_thread(self._store.get_tool_summaries, call_ids)
+
+    async def persist_tool_summary(self, summary: dict[str, Any]) -> None:
+        await asyncio.to_thread(self._store.persist_tool_summary, summary)
+
+    async def get_latest_conversation_summary(self) -> dict[str, Any] | None:
+        return await asyncio.to_thread(self._store.get_latest_conversation_summary)
+
+    async def persist_context_snapshot(self, snapshot: dict[str, Any]) -> None:
+        await asyncio.to_thread(self._store.persist_context_snapshot, snapshot)

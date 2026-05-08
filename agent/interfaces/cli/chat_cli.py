@@ -221,13 +221,19 @@ class ChatCLI:
 
     def start(self) -> None:
         self._render_banner()
-        try:
-            self._session.ensure_session()
-        except Exception as exc:
-            print(str(exc))
+        
+        import asyncio
+        async def _init_session():
+            try:
+                await self._session.initialize()
+            except Exception as exc:
+                print(str(exc))
+                return False
+            return True
+
+        if not asyncio.run(_init_session()):
             return
 
-        self._session.initialize_history()
         self._render_loaded_messages()
         self._loop()
 
@@ -241,10 +247,16 @@ class ChatCLI:
         print("-" * 50)
 
     def _render_loaded_messages(self) -> None:
-        if not self._session.loaded_existing:
+        import asyncio
+        async def _load_messages():
+            return await self._session.get_messages_slice()
+            
+        messages = asyncio.run(_load_messages())
+        if len(messages) <= 1:
             return
+            
         print("\n[历史会话]")
-        for message in self._session.get_messages_slice():
+        for message in messages:
             role = message.get("role")
             content = message.get("content", "")
             if role in ("user", "assistant") and content:
@@ -252,9 +264,9 @@ class ChatCLI:
                 render_markdown(content)
 
     def _loop(self) -> None:
-        # Connect the retry callback
-        if hasattr(self._runtime._chat_client, 'on_retry'):
-            self._runtime._chat_client.on_retry = self._on_retry
+        # Connect the retry callback if possible
+        if hasattr(self._runtime, "_turn_runner") and hasattr(self._runtime._turn_runner._chat_client, 'on_retry'):
+            self._runtime._turn_runner._chat_client.on_retry = self._on_retry
             
         while True:
             try:
@@ -272,16 +284,10 @@ class ChatCLI:
             print("\nAgent:")
             self._assistant_buffer = []
             self._streaming_renderer = _StreamingRenderer(self._console)
-            self._session.persist_message("user", user_input)
 
             try:
-                self._runtime.process_user_turn(
-                    session=self._session,
-                    on_content=self._on_content,
-                    on_debug=self._on_debug if self._debug else None,
-                    on_assistant_message_complete=self._on_assistant_message_complete,
-                    on_event=self._on_event,
-                )
+                import asyncio
+                asyncio.run(self._run_turn_async(user_input))
                 self._streaming_renderer.flush()
                 print()
             except KeyboardInterrupt:
@@ -291,16 +297,34 @@ class ChatCLI:
                 self._streaming_renderer.flush()
                 print(f"\nError: {exc}")
 
+    async def _run_turn_async(self, user_input: str) -> None:
+        # Pass user_input directly to the runtime facade
+        async for event in self._runtime.run_turn(query=user_input):
+            self._on_event(event)
+            
     def _on_event(self, event: RuntimeEvent) -> None:
-        if isinstance(event, ToolCallStartedEvent):
-            self._console.print(f"[dim italic]🚀 任务启动: {event.tool_name} (ID: {event.tool_call_id})[/dim italic]")
+        from agent.domain.events import AssistantDeltaEvent, AssistantMessageCompletedEvent, ToolCallStartedEvent, ToolProgressEvent, ToolResultEvent, TurnFailedEvent, TurnCancelledEvent
+        
+        if isinstance(event, AssistantDeltaEvent):
+            self._assistant_buffer.append(event.text)
+            self._streaming_renderer.append(event.text)
+        elif isinstance(event, AssistantMessageCompletedEvent):
+            self._streaming_renderer.finish_message()
+        elif isinstance(event, ToolCallStartedEvent):
+            self._console.print(f"[dim italic]🚀 任务启动: {getattr(event, 'tool_name', 'unknown')} (ID: {getattr(event, 'tool_call_id', 'unknown')})[/dim italic]")
         elif isinstance(event, ToolProgressEvent):
-            if event.payload and "stdout" in event.payload:
-                pass # Usually we let tool output print via bash thread, but for phase 1 we can ignore or print
+            pass # We let tool output print via bash thread for now
         elif isinstance(event, ToolResultEvent):
-            self._console.print(f"[dim italic]✅ 任务完成: {event.tool_name}[/dim italic]")
+            self._console.print(f"[dim italic]✅ 任务完成: {getattr(event, 'tool_name', 'unknown')}[/dim italic]")
+        elif isinstance(event, TurnFailedEvent):
+            self._streaming_renderer.flush()
+            print(f"\n[Error] Turn failed: {getattr(event, 'reason', 'unknown')}")
+        elif isinstance(event, TurnCancelledEvent):
+            self._streaming_renderer.flush()
+            print(f"\n[Cancelled] Turn cancelled: {getattr(event, 'reason', 'unknown')}")
 
     def _on_content(self, text: str) -> None:
+        # Candidate for dead code
         self._assistant_buffer.append(text)
         self._streaming_renderer.append(text)
         

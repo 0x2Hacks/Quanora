@@ -54,7 +54,10 @@ class AgentRuntime:
         on_assistant_message_complete: Callable[[], None] | None = None,
         on_event: Callable[[RuntimeEvent], None] | None = None,
     ) -> None:
-        """Delegates to TurnRunner to process a conversation turn."""
+        """
+        Delegates to TurnRunner to process a conversation turn.
+        NOTE: This is a candidate for dead code removal as the CLI now uses AsyncRuntimeFacade.
+        """
         self._turn_runner.process_user_turn(
             session=session,
             on_content=on_content,
