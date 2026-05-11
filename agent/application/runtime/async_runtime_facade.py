@@ -48,7 +48,7 @@ class AsyncRuntimeFacade:
         ):
             yield event
 
-    def run_query_sync(self, session_id: str, query: str) -> str:
+    def run_query_sync(self, query: str, session_id: str | None = None) -> str:
         """
         Synchronous compatibility layer for running a query.
         Returns the final assistant response string.

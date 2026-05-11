@@ -63,51 +63,5 @@ class ToolExecutor:
                 metadata=meta
             )
 
-    def start_job(
-        self,
-        session_id: str,
-        request_id: str,
-        tool_call_id: str,
-        name: str,
-        args: dict,
-        raw_args: str | None = None
-    ) -> JobHandle:
-        """Start a tool execution job."""
-        if not self._job_service:
-            raise RuntimeError("JobService is required to start a job")
-            
-        handle = self._job_service.create_job(
-            session_id=session_id,
-            request_id=request_id,
-            tool_call_id=tool_call_id,
-            tool_name=name,
-            metadata={"args": args, "raw_args": raw_args}
-        )
-        
-        return handle
-
-    async def stream_job_events(self, job_id: str) -> AsyncIterator[RuntimeEvent]:
-        """Stream events for a running job."""
-        if not self._job_service:
-            raise RuntimeError("JobService is required to stream job events")
-            
-        job = self._job_service.get_job(job_id)
-        if not job:
-            return
-            
-        # Real streaming will be implemented in Alignment B tool execution layer
-        # For now, just yield what we have
-        content, _ = self._job_service.read_output(job_id)
-        
-        if content:
-            yield ToolProgressEvent(
-                tool_call_id=job.tool_call_id,
-                tool_name=job.tool_name,
-                payload={"stdout": content}
-            )
-            
-        yield ToolResultEvent(
-            tool_call_id=job.tool_call_id,
-            tool_name=job.tool_name,
-            result=content
-        )
+    # Alignment D: `start_job` and `stream_job_events` were transition stubs and have been
+    # fully replaced by `AsyncToolCallProcessor`. This class is now strictly an execution bridge.

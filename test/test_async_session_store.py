@@ -1,10 +1,9 @@
 import pytest
-import os
 import shutil
 import tempfile
+import pytest
+import os
 import asyncio
-
-from agent.infrastructure.persistence.jsonl_session_store import JsonlSessionStore
 from agent.infrastructure.persistence.async_jsonl_session_store import AsyncJsonlSessionStore
 
 @pytest.fixture

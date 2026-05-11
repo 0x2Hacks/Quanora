@@ -323,17 +323,9 @@ class ChatCLI:
             self._streaming_renderer.flush()
             print(f"\n[Cancelled] Turn cancelled: {getattr(event, 'reason', 'unknown')}")
 
-    def _on_content(self, text: str) -> None:
-        # Candidate for dead code
-        self._assistant_buffer.append(text)
-        self._streaming_renderer.append(text)
-        
     def _on_retry(self, attempt: int, exception: Exception) -> None:
         self._streaming_renderer.show_retry(attempt, exception)
 
     def _on_debug(self, message: str) -> None:
         print(f"\n[Debug] {message}")
-
-    def _on_assistant_message_complete(self) -> None:
-        self._streaming_renderer.finish_message()
 
