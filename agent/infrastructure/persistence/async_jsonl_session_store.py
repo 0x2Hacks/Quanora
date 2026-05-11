@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import uuid
 from pathlib import Path
@@ -323,7 +324,6 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
     def _build_tool_content(self, tool_record: dict | None) -> str:
         if not tool_record:
             return ""
-        import json
         result = tool_record.get("result")
         summarized = self._summarize_tool_result(result)
         if isinstance(summarized, str):
@@ -339,8 +339,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
         def _get():
             messages = self._msg_repo.load_messages() if self._msg_repo else []
             tool_records = self._tool_repo.load_tool_calls() if self._tool_repo else []
-            import json
-            
+
             tool_map = {}
             for item in tool_records:
                 if isinstance(item, dict) and item.get("id"):

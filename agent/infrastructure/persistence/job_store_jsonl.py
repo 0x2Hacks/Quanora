@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
+import time
 from pathlib import Path
 from filelock import FileLock
 
@@ -56,7 +58,6 @@ class JobStoreJsonl(JobStore):
         return jobs
 
     def create(self, job: JobRecord) -> None:
-        import dataclasses
         self._append_jsonl(dataclasses.asdict(job))
 
     def get(self, job_id: str) -> JobRecord | None:
@@ -80,8 +81,7 @@ class JobStoreJsonl(JobStore):
             
         if metadata:
             update_data["metadata"] = metadata
-            
-        import time
+
         if status == "running":
             update_data["started_at"] = str(time.time())
         elif status in ("completed", "failed", "cancelled"):

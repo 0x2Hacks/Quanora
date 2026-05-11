@@ -11,13 +11,13 @@ os.chdir(PROJECT_ROOT)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from agent.interfaces.cli.chat_cli import _StreamingRenderer
+from agent.interfaces.cli.ui import StreamingRenderer
 
 
 def test_plain_text_without_newline_renders_immediately() -> None:
     stdout_buffer = io.StringIO()
     console_buffer = io.StringIO()
-    renderer = _StreamingRenderer(Console(file=console_buffer, force_terminal=False, color_system=None))
+    renderer = StreamingRenderer(Console(file=console_buffer, force_terminal=False, color_system=None))
 
     with redirect_stdout(stdout_buffer):
         renderer.append("好的，我来搜索今天的热点新闻。")
@@ -31,7 +31,7 @@ def test_plain_text_without_newline_renders_immediately() -> None:
 def test_markdown_without_newline_stays_buffered_until_flush() -> None:
     stdout_buffer = io.StringIO()
     console_buffer = io.StringIO()
-    renderer = _StreamingRenderer(Console(file=console_buffer, force_terminal=False, color_system=None))
+    renderer = StreamingRenderer(Console(file=console_buffer, force_terminal=False, color_system=None))
 
     with redirect_stdout(stdout_buffer):
         renderer.append("**重点**")
@@ -50,7 +50,7 @@ def test_markdown_without_newline_stays_buffered_until_flush() -> None:
 def test_separate_assistant_plain_messages_end_with_newlines() -> None:
     stdout_buffer = io.StringIO()
     console_buffer = io.StringIO()
-    renderer = _StreamingRenderer(Console(file=console_buffer, force_terminal=False, color_system=None))
+    renderer = StreamingRenderer(Console(file=console_buffer, force_terminal=False, color_system=None))
 
     with redirect_stdout(stdout_buffer):
         renderer.append("第一句说明")
@@ -70,7 +70,7 @@ def test_separate_assistant_plain_messages_end_with_newlines() -> None:
 def test_markdown_message_boundary_uses_console_newline() -> None:
     stdout_buffer = io.StringIO()
     console_buffer = io.StringIO()
-    renderer = _StreamingRenderer(Console(file=console_buffer, force_terminal=False, color_system=None))
+    renderer = StreamingRenderer(Console(file=console_buffer, force_terminal=False, color_system=None))
 
     with redirect_stdout(stdout_buffer):
         renderer.append("**重点**")
