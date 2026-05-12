@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pymupdf
-
 from agent.domain import tool_error, tool_ok
 
 _MAX_PAGES_PER_CALL = 30
 _TEXT_THRESHOLD = 50  # chars — below this, page is considered scanned/image
+_IMAGE_THRESHOLD = 10  # images — above this, page is treated as scanned even with text
 
 
 def read_pdf(
@@ -27,6 +26,8 @@ def read_pdf(
     :param force_ocr: Force OCR even for text pages
     """
     try:
+        import pymupdf
+
         path = Path(file_path)
         if not path.exists():
             return tool_error("read_pdf", f"文件不存在: {file_path}", "NotFound")
@@ -35,32 +36,40 @@ def read_pdf(
         if path.suffix.lower() != ".pdf":
             return tool_error("read_pdf", f"仅支持PDF文件, 收到: {path.suffix}", "InvalidFormat")
 
-        total_pages, page_types = _classify_pages(path)
+        with pymupdf.open(str(path)) as doc:
+            total_pages = len(doc)
 
-        # Validate and clamp page range
-        start = max(1, start_page)
-        if start > total_pages:
-            return tool_error(
-                "read_pdf",
-                f"起始页 {start_page} 超出总页数 ({total_pages})",
-                "PageOutOfRange",
-                meta={"total_pages": total_pages},
-            )
+            # Validate and clamp page range
+            start = max(1, start_page)
+            if start > total_pages:
+                return tool_error(
+                    "read_pdf",
+                    f"起始页 {start_page} 超出总页数 ({total_pages})",
+                    "PageOutOfRange",
+                    meta={"total_pages": total_pages},
+                )
 
-        max_end = min(start + _MAX_PAGES_PER_CALL - 1, total_pages)
-        end = min(end_page or total_pages, max_end)
-        if end < start:
-            end = start
+            max_end = min(start + _MAX_PAGES_PER_CALL - 1, total_pages)
+            end = min(end_page or total_pages, max_end)
+            if end < start:
+                end = start
 
-        requested_pages = list(range(start - 1, end))  # 0-indexed
+            requested_pages = list(range(start - 1, end))  # 0-indexed
 
-        # Choose extraction engine
-        scanned_count = sum(1 for p in requested_pages if page_types.get(p, "text") == "scanned")
-        needs_ocr = force_ocr or scanned_count > len(requested_pages) * 0.5
+            # Classify only the requested slice (text length + image count)
+            page_types: dict[int, str] = {}
+            for i in requested_pages:
+                text = doc[i].get_text().strip()
+                image_count = len(doc[i].get_images(full=True))
+                is_scanned = len(text) < _TEXT_THRESHOLD or image_count > _IMAGE_THRESHOLD
+                page_types[i] = "scanned" if is_scanned else "text"
 
-        markdown_parts = _extract_pages(path, requested_pages, force_ocr=needs_ocr)
+            scanned_count = sum(1 for p in requested_pages if page_types.get(p, "text") == "scanned")
+            needs_ocr = force_ocr or scanned_count > len(requested_pages) * 0.5
 
-        # Enhance text pages with pdfplumber tables
+            markdown_parts = _extract_pages(doc, requested_pages, force_ocr=needs_ocr)
+
+        # Enhance text pages with pdfplumber tables (separate context)
         text_page_indices = [p for p in requested_pages if page_types.get(p, "text") == "text" and not needs_ocr]
         if text_page_indices:
             table_md = _extract_tables(path, text_page_indices)
@@ -96,39 +105,29 @@ def read_pdf(
         return tool_error("read_pdf", f"解析错误: {e}", type(e).__name__)
 
 
-def _classify_pages(path: Path) -> tuple[int, dict[int, str]]:
-    """Classify each page as 'text' or 'scanned' using text length heuristic."""
-    doc = pymupdf.open(str(path))
-    total = len(doc)
-    types: dict[int, str] = {}
-    for i in range(total):
-        text = doc[i].get_text().strip()
-        types[i] = "scanned" if len(text) < _TEXT_THRESHOLD else "text"
-    doc.close()
-    return total, types
-
-
-def _extract_pages(path: Path, page_indices: list[int], *, force_ocr: bool = False) -> list[str]:
+def _extract_pages(doc, page_indices: list[int], *, force_ocr: bool = False) -> list[str]:
     """Extract markdown text for specified pages, one at a time to isolate failures."""
     results: list[str] = []
     for page_idx in page_indices:
         try:
-            text = _extract_single_page(path, page_idx, force_ocr=force_ocr)
+            text = _extract_single_page(doc, page_idx, force_ocr=force_ocr)
             results.append(text)
         except Exception:
             results.append(f"[第{page_idx + 1}页: 解析失败]")
     return results
 
 
-def _extract_single_page(path: Path, page_idx: int, *, force_ocr: bool = False) -> str:
+def _extract_single_page(doc, page_idx: int, *, force_ocr: bool = False) -> str:
     """Extract text from a single page. Uses fast render+OCR for scanned pages."""
-    import pymupdf4llm
+    page = doc[page_idx]
+    image_count = len(page.get_images(full=True))
 
-    if not force_ocr:
-        # Try fast path first: text-based extraction via PyMuPDF4LLM (no OCR)
+    # Pages with many image fragments are scanned — skip slow pymupdf4llm
+    if not force_ocr and image_count <= _IMAGE_THRESHOLD:
         try:
+            import pymupdf4llm
             pages = pymupdf4llm.to_markdown(
-                str(path),
+                doc.name,
                 page_chunks=True,
                 pages=[page_idx],
                 force_ocr=False,
@@ -139,21 +138,16 @@ def _extract_single_page(path: Path, page_idx: int, *, force_ocr: bool = False) 
         except Exception:
             pass
 
-    # OCR path: render page to a single image, then OCR it (much faster than
-    # processing hundreds of small image fragments individually)
-    return _ocr_page(path, page_idx)
+    return _ocr_page(doc, page_idx)
 
 
-def _ocr_page(path: Path, page_idx: int) -> str:
+def _ocr_page(doc, page_idx: int) -> str:
     """Render a page to image and run RapidOCR on it. One image, one OCR call."""
     from rapidocr_onnxruntime import RapidOCR
     import numpy as np
 
-    doc = pymupdf.open(str(path))
     page = doc[page_idx]
-    # 200 DPI is a good balance of speed vs quality for text OCR
-    pix = page.get_pixmap(dpi=200)
-    doc.close()
+    pix = page.get_pixmap(dpi=150)
 
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
 
@@ -163,7 +157,6 @@ def _ocr_page(path: Path, page_idx: int) -> str:
     if not result:
         return f"[第{page_idx + 1}页: OCR解析失败，该页可能为纯图片或空白页]"
 
-    # result is list of [bbox, text, confidence]
     lines = [item[1] for item in result if item[1]]
     return "\n\n".join(lines)
 

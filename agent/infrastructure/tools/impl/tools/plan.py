@@ -392,8 +392,9 @@ def plan_reorder(step_orders: list[str], expected_version: int) -> str:
         if set(step_orders) != set(step_by_id.keys()):
             return tool_error("plan_reorder", "step_orders must include each step exactly once.", "ValidationError")
         for idx, sid in enumerate(step_orders):
-            step_by_id[sid]["order"] = idx
-            step_by_id[sid]["updated_at"] = _now_iso()
+            if step_by_id[sid].get("order") != idx:
+                step_by_id[sid]["order"] = idx
+                step_by_id[sid]["updated_at"] = _now_iso()
         _persist_plan_update(
             plan=plan,
             plan_file=plan_file,

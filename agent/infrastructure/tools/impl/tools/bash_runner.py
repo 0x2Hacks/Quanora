@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import os
 from collections import deque
 
@@ -89,12 +90,28 @@ class BashRunner:
             stderr_len = [0]
 
             async def read_stream(stream, head_list, tail_deque, length_counter, is_stdout=True):
+                decoder = codecs.getincrementaldecoder('utf-8')('replace')
                 while True:
                     chunk_bytes = await stream.read(4096)
                     if not chunk_bytes:
+                        # Flush any remaining bytes in the decoder buffer
+                        chunk = decoder.decode(b'', True)
+                        if chunk:
+                            chunk_len = len(chunk)
+                            current_len = length_counter[0]
+                            length_counter[0] += chunk_len
+                            head_space = self.HEAD_LIMIT - current_len
+                            if head_space > 0:
+                                if chunk_len <= head_space:
+                                    head_list.append(chunk)
+                                else:
+                                    head_list.append(chunk[:head_space])
+                                    tail_deque.extend(chunk[head_space:])
+                            else:
+                                tail_deque.extend(chunk)
                         break
 
-                    chunk = chunk_bytes.decode('utf-8', errors='replace')
+                    chunk = decoder.decode(chunk_bytes, False)
 
                     chunk_len = len(chunk)
                     current_len = length_counter[0]
