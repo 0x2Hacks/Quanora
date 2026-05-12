@@ -135,7 +135,7 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
     "plan_next": {
         "description": "获取下一步建议或并行可执行集合。",
         "param_descriptions": {
-            "mode": "ready|focus|blocked_report",
+            "mode": {"description": "ready|focus|blocked_report", "enum": ["ready", "focus", "blocked_report"]},
             "expected_version": "可选版本号，用于一致性校验",
         },
     },

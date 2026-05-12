@@ -48,3 +48,36 @@ class ToolExecutor:
                 error_type=type(exc).__name__,
                 metadata=meta
             )
+
+    async def execute_async(self, name: str, args: dict, raw_args: str | None = None) -> ToolExecutionResult:
+        """Async execution for coroutine-based tools (e.g. bash)."""
+        if not self._registry.has(name):
+            return ToolExecutionResult(
+                status="error",
+                error_msg=f"Unknown tool: {name}",
+                error_type="ToolNotFound"
+            )
+        try:
+            result = await self._registry.call_async(name, args)
+            return ToolExecutionResult(
+                status="ok",
+                result_str=result if isinstance(result, str) else str(result)
+            )
+        except TypeError as exc:
+            meta = {"raw_args": (raw_args or "")[:2000]} if raw_args else {}
+            return ToolExecutionResult(
+                status="error",
+                error_msg=str(exc),
+                error_type=type(exc).__name__,
+                metadata=meta
+            )
+        except Exception as exc:
+            meta = {"traceback": traceback.format_exc()[-4000:]}
+            if raw_args:
+                meta["raw_args"] = raw_args[:2000]
+            return ToolExecutionResult(
+                status="error",
+                error_msg=str(exc),
+                error_type=type(exc).__name__,
+                metadata=meta
+            )

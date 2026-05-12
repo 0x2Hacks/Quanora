@@ -31,20 +31,19 @@ class AsyncToolCallProcessor:
     ) -> AsyncIterator[RuntimeEvent]:
         """
         Execute multiple tool calls asynchronously.
-        Currently defaults to sequential execution, but respects the async event loop.
-        In the future, concurrency_safe and exclusive rules can be applied here.
+        Async tools (like bash) are awaited directly; sync tools run in a thread.
         """
         request_id = session.now_iso()
-        
+
         for call in tool_calls:
             if cancellation_token and cancellation_token.is_cancelled:
                 break
-                
+
             yield ToolCallStartedEvent(tool_call_id=call.call_id, tool_name=call.name)
 
             parsed_args, parse_error = parse_tool_args(call.raw_args)
             ts_start = session.now_iso()
-            
+
             if parse_error:
                 tool_result_str = tool_error(
                     call.name,
@@ -65,10 +64,15 @@ class AsyncToolCallProcessor:
                     )
                     await asyncio.to_thread(self._job_service.update_status, handle.job_id, "running")
 
-                    def _sync_run():
-                        return self._tool_executor.execute_sync(call.name, parsed_args, call.raw_args)
-
-                    result = await asyncio.to_thread(_sync_run)
+                    if self._tool_executor._registry.is_async(call.name):
+                        # Inject _cancellation_token for tools that accept it (e.g. bash)
+                        if call.name == "bash":
+                            parsed_args = {**parsed_args, "_cancellation_token": cancellation_token}
+                        result = await self._tool_executor.execute_async(call.name, parsed_args, call.raw_args)
+                    else:
+                        def _sync_run():
+                            return self._tool_executor.execute_sync(call.name, parsed_args, call.raw_args)
+                        result = await asyncio.to_thread(_sync_run)
 
                     if result.status == "ok":
                         await asyncio.to_thread(self._job_service.append_output, handle.job_id, result.result_str)
@@ -79,7 +83,7 @@ class AsyncToolCallProcessor:
 
                     content, _ = await asyncio.to_thread(self._job_service.read_output, handle.job_id)
                     job = await asyncio.to_thread(self._job_service.get_job, handle.job_id)
-                    
+
                     if job and job.status == "failed":
                         tool_result_str = tool_error(call.name, job.metadata.get("error", "Unknown error"), "JobFailed")
                     else:
@@ -88,10 +92,10 @@ class AsyncToolCallProcessor:
                             tool_result_str = content
                         else:
                             tool_result_str = tool_ok(call.name, content)
-                            
+
                 except Exception as exc:
                     tool_result_str = tool_error(call.name, str(exc), type(exc).__name__)
-                    
+
                 yield ToolResultEvent(tool_call_id=call.call_id, tool_name=call.name, result=tool_result_str)
 
             ts_end = session.now_iso()
