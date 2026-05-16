@@ -22,6 +22,21 @@ from .tools import (
     read_file,
     search_web,
     write_file,
+    # WorldQuant Brain
+    wq_build_generation_prompt,
+    wq_crossover_alpha,
+    wq_distill_insight,
+    wq_evaluate_alpha,
+    wq_list_data_fields,
+    wq_list_directions,
+    wq_list_library,
+    wq_list_my_alphas,
+    wq_list_operators,
+    wq_login,
+    wq_memory_snapshot,
+    wq_mutate_alpha,
+    wq_simulate_alpha,
+    wq_submit_alpha,
 )
 
 TOOLS: dict[str, Callable] = {
@@ -41,6 +56,21 @@ TOOLS: dict[str, Callable] = {
     "plan_close": plan_close,
     "search_web": search_web,
     "fetch_web_page": fetch_web_page,
+    # WorldQuant Brain — 自动挖因子
+    "wq_login": wq_login,
+    "wq_list_operators": wq_list_operators,
+    "wq_list_data_fields": wq_list_data_fields,
+    "wq_list_directions": wq_list_directions,
+    "wq_memory_snapshot": wq_memory_snapshot,
+    "wq_build_generation_prompt": wq_build_generation_prompt,
+    "wq_simulate_alpha": wq_simulate_alpha,
+    "wq_evaluate_alpha": wq_evaluate_alpha,
+    "wq_distill_insight": wq_distill_insight,
+    "wq_list_library": wq_list_library,
+    "wq_list_my_alphas": wq_list_my_alphas,
+    "wq_submit_alpha": wq_submit_alpha,
+    "wq_mutate_alpha": wq_mutate_alpha,
+    "wq_crossover_alpha": wq_crossover_alpha,
 }
 
 _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
@@ -142,6 +172,128 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
     "fetch_web_page": {
         "description": "抓取并读取网页内容 (转换为 Markdown)。通常在 search_web 返回 URL 后使用，以获取详细信息。",
         "param_descriptions": {"url": "网页 URL"},
+    },
+    # ──────────────────────────────────────────────────────────────────
+    # WorldQuant Brain 自动挖因子工具集
+    # ──────────────────────────────────────────────────────────────────
+    "wq_login": {
+        "description": "登录 WorldQuant Brain 平台。凭证解析优先级:函数参数 > 环境变量(WQ_BRAIN_EMAIL/WQ_BRAIN_PASSWORD) > 工作目录下的 credential.txt。首次使用任何 wq_* 工具前必须调用。",
+        "param_descriptions": {
+            "email": "Brain 注册邮箱(留空则走环境变量/凭证文件)",
+            "password": "Brain 登录密码(留空则走环境变量/凭证文件)",
+        },
+    },
+    "wq_list_operators": {
+        "description": "列出 Brain 平台支持的算子。use_cache=True 返回内置精选清单(零网络/即时返回),False 则在线查询完整列表。",
+        "param_descriptions": {"use_cache": "是否使用内置缓存(默认 True)"},
+    },
+    "wq_list_data_fields": {
+        "description": "列出 Brain 平台的数据字段(open/high/low/close/volume/vwap/cap 等)。use_cache=True 返回常用字段精选,False 在线查询完整字段池。",
+        "param_descriptions": {
+            "region": "区域(USA/CHN/GLB 等,默认 USA)",
+            "universe": "股票池(TOP3000/TOP1000 等,默认 TOP3000)",
+            "delay": "信号延迟,默认 1",
+            "search": "字段名搜索关键字",
+            "use_cache": "是否使用内置缓存",
+            "limit": "最多返回多少条",
+        },
+    },
+    "wq_list_directions": {
+        "description": "列出内置的因子研究方向库(reversal_short_term / momentum_mid_term / volatility_regime / volume_price_divergence / high_order_moments / intraday_microstructure)。用于 diversified planning。",
+        "param_descriptions": {},
+    },
+    "wq_memory_snapshot": {
+        "description": "读取 Experience Memory 当前快照,返回 P_succ(成功模板) / P_fail(禁区) / I(策略洞察) / 因子库 Top10。生成新因子前**强烈建议**先调此工具。",
+        "param_descriptions": {
+            "tags": "按标签过滤(如 ['volume','short_term'])",
+            "succ_k": "返回 Top-K 成功模板,默认 5",
+            "fail_k": "返回 Top-K 禁区,默认 5",
+            "insight_k": "返回 Top-K 洞察,默认 3",
+        },
+    },
+    "wq_build_generation_prompt": {
+        "description": "为指定研究方向构造一份带记忆注入的 alpha 生成 prompt。LLM 拿到 prompt 后**在自己后续的思考中**直接输出 alpha 表达式 JSON 数组,再调 wq_evaluate_alpha 验证。",
+        "param_descriptions": {
+            "direction_key": "wq_list_directions 中的 key,如 'reversal_short_term'",
+            "hypothesis": "本轮要验证的假设(自然语言,可空)",
+            "n": "希望生成的表达式数量,默认 5",
+            "custom_direction": "自定义方向 dict,覆盖 direction_key",
+        },
+    },
+    "wq_simulate_alpha": {
+        "description": "在 Brain 平台执行单条 alpha 的回测(IS 模拟)。默认等待结果返回完整 IS 指标 + checks。该工具**不写本地库**,仅做模拟。",
+        "param_descriptions": {
+            "expression": "FASTEXPR 表达式,如 'rank(ts_delta(close, 5))'",
+            "region": "区域,默认 USA",
+            "universe": "股票池,默认 TOP3000",
+            "delay": "信号延迟,默认 1",
+            "decay": "线性衰减天数,默认 0",
+            "neutralization": "中性化方式 NONE/MARKET/INDUSTRY/SUBINDUSTRY/SECTOR",
+            "truncation": "权重截断,默认 0.08",
+            "wait": "是否同步等待结果(默认 True)",
+            "max_wait_seconds": "轮询最长等待秒数,默认 600",
+        },
+    },
+    "wq_evaluate_alpha": {
+        "description": "完整 4 阶段评估管线(本地语法 + Brain 模拟 + checks + 阈值)。通过则可选自动写入因子库 + 成功模板。失败时若是高自相关,自动写入禁区。这是日常挖因子最常用的工具。",
+        "param_descriptions": {
+            "expression": "FASTEXPR 表达式",
+            "direction_tag": "所属研究方向标签(用于记忆 tag)",
+            "region": "区域",
+            "universe": "股票池",
+            "delay": "信号延迟",
+            "decay": "线性衰减",
+            "neutralization": "中性化方式",
+            "truncation": "截断",
+            "min_sharpe": "Sharpe 阈值,默认 1.25",
+            "min_fitness": "Fitness 阈值,默认 1.0",
+            "max_turnover": "Turnover 阈值,默认 0.7",
+            "admit_to_library": "通过后是否自动入库(默认 True)",
+        },
+    },
+    "wq_distill_insight": {
+        "description": "把本轮挖掘得到的策略级教训沉淀到 Experience Memory(I 区)。例如 'ts_rank 窗口超过 60 时容易出现 NaN'。这是 Ralph Loop 中 Distill 阶段的核心动作。",
+        "param_descriptions": {
+            "insight": "教训内容(自然语言)",
+            "category": "operator|data_field|regime|general",
+            "severity": "info|warning|critical",
+            "tags": "关联方向标签",
+        },
+    },
+    "wq_list_library": {
+        "description": "列出本地 alpha 库内容(含 Brain 返回的 metrics),按 sharpe 降序排列。",
+        "param_descriptions": {
+            "min_sharpe": "最低 sharpe 过滤(默认 0 不过滤)",
+            "limit": "返回数量上限,默认 50",
+        },
+    },
+    "wq_list_my_alphas": {
+        "description": "查询当前 Brain 账户上的 alpha 列表(已通过 simulate 留痕的所有 alpha)。",
+        "param_descriptions": {
+            "status": "状态过滤,如 UNSUBMITTED / SUBMITTED",
+            "limit": "返回数量",
+            "offset": "翻页偏移",
+        },
+    },
+    "wq_submit_alpha": {
+        "description": "把一个已通过质量检查的 alpha 正式提交到 Brain 比赛/Alphathon。注意每日有提交配额限制(Pre-Consultant 通常每日 1 条)。",
+        "param_descriptions": {"alpha_id": "Brain 返回的 alpha_id"},
+    },
+    "wq_mutate_alpha": {
+        "description": "对一个种子 alpha 做参数扰动,生成 N 个 mutation 候选(主要扰动数值常量/窗口期)。对应 QuantaAlpha 的 Mutation 进化算子。",
+        "param_descriptions": {
+            "seed_expression": "种子 FASTEXPR 表达式",
+            "window_candidates": "数值候选集,如 [5,10,20,30,60]",
+            "max_variants": "最多生成变体数,默认 6",
+        },
+    },
+    "wq_crossover_alpha": {
+        "description": "对两个 alpha 做交叉,生成新的杂交表达式。对应 QuantaAlpha 的 Crossover 进化算子。strategy 取值:wrap_b_in_a | rank_pair | add_pair | corr_pair。",
+        "param_descriptions": {
+            "expression_a": "表达式 A",
+            "expression_b": "表达式 B",
+            "strategy": "交叉策略",
+        },
     },
 }
 
