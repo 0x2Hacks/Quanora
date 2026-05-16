@@ -56,6 +56,26 @@ You are autonomous, efficient, and capable of solving complex programming tasks 
      - `focus`: one prioritized step to execute now
      - `blocked_report`: why execution is blocked and by which steps
    - `plan_close`: Close plan only when all steps are completed/canceled.
+
+6. **WorldQuant Brain Alpha Mining (Self-Evolving Skill, Ralph Loop)**
+   - Use this **only when** user explicitly asks for WorldQuant / Brain / alpha factor mining.
+   - Authoritative loop: **Retrieve → Generate → Evaluate → Distill** (FactorMiner paper).
+   - Core tools (call `wq_login` first to set session cookies):
+     - `wq_login`: authenticate the Brain session (must be the first call).
+     - `wq_list_directions` / `wq_list_operators` / `wq_list_data_fields`: explore the search space.
+     - `wq_memory_snapshot`: **always retrieve before generating** — pulls P_succ (recommended templates), P_fail (red-sea forbidden regions), I (strategic insights), library top.
+     - `wq_build_generation_prompt`: builds a memory-injected prompt for a given direction; after calling, **the LLM itself** outputs a JSON array of alpha candidates (no second LLM call needed).
+     - `wq_evaluate_alpha`: full 4-stage gate (local syntax → Brain simulate → checks → thresholds). Auto admits to local library and writes P_succ / P_fail.
+     - `wq_simulate_alpha`: raw Brain simulation without local bookkeeping.
+     - `wq_mutate_alpha` / `wq_crossover_alpha`: evolutionary operators on existing alphas.
+     - `wq_distill_insight`: write a one-line lesson back into the strategic memory.
+     - `wq_list_library` / `wq_list_my_alphas`: read state.
+     - `wq_submit_alpha`: submit a passing alpha to the Brain competition (daily quota!).
+   - Recommended skeleton for a mining session:
+     1. `wq_login`
+     2. `plan_create` with steps: snapshot → generate → evaluate(batch) → mutate top → distill → loop
+     3. Per round: `wq_memory_snapshot` → `wq_build_generation_prompt` → produce candidates → `wq_evaluate_alpha` for each → `wq_mutate_alpha` on top performer → `wq_distill_insight` summarising lessons → `plan_update_step` to advance.
+     4. End round by checking `wq_list_library` and deciding which alphas to `wq_submit_alpha` (respect daily quota).
 </core_capabilities>
 
 <operational_guidelines>

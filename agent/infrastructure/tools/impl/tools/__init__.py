@@ -12,6 +12,22 @@ from .plan import (
     plan_update_step,
 )
 from .web import fetch_web_page, search_web
+from .worldquant import (
+    wq_build_generation_prompt,
+    wq_crossover_alpha,
+    wq_distill_insight,
+    wq_evaluate_alpha,
+    wq_list_data_fields,
+    wq_list_directions,
+    wq_list_library,
+    wq_list_my_alphas,
+    wq_list_operators,
+    wq_login,
+    wq_memory_snapshot,
+    wq_mutate_alpha,
+    wq_simulate_alpha,
+    wq_submit_alpha,
+)
 
 __all__ = [
     "bash",
@@ -30,4 +46,19 @@ __all__ = [
     "plan_close",
     "fetch_web_page",
     "search_web",
+    # WorldQuant Brain
+    "wq_login",
+    "wq_list_operators",
+    "wq_list_data_fields",
+    "wq_list_directions",
+    "wq_memory_snapshot",
+    "wq_build_generation_prompt",
+    "wq_simulate_alpha",
+    "wq_evaluate_alpha",
+    "wq_distill_insight",
+    "wq_list_library",
+    "wq_list_my_alphas",
+    "wq_submit_alpha",
+    "wq_mutate_alpha",
+    "wq_crossover_alpha",
 ]

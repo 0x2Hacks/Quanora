@@ -95,6 +95,7 @@ The agent is equipped with a powerful arsenal of tools to interact with your cod
 - **`bash`**: Executes shell commands with robust timeout, cwd awareness, and auto-fallback decoding for Windows `gbk`/`utf-8` issues.
 - **`file_ops`**: Reads, edits, and creates files.
 - **`web`**: Fetches and parses web pages for documentation and search.
+- **`wq_*` (WorldQuant Brain)**: Self-evolving alpha factor mining toolkit inspired by *FactorMiner* (paper 2602.14670) and *QuantaAlpha* (arXiv 2602.07085). Implements the **Ralph Loop** (Retrieve → Generate → Evaluate → Distill) with persistent **Experience Memory** (`P_succ` / `P_fail` / strategic insights). See [docs/worldquant_brain_mining.md](docs/worldquant_brain_mining.md) for a full walkthrough.
 
 ---
 
