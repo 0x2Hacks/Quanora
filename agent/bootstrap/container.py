@@ -13,6 +13,7 @@ from agent.infrastructure.config import Config
 from agent.infrastructure.llm.openai_async_chat_client import AsyncOpenAIChatClient
 from agent.infrastructure.persistence import JobStoreJsonl, TaskOutputStoreFile
 from agent.infrastructure.persistence.async_jsonl_session_store import AsyncJsonlSessionStore
+from agent.infrastructure.plans import PlanContextProvider
 from agent.infrastructure.skills import SkillRepository
 from agent.infrastructure.tools import DefaultToolRegistry
 from agent.interfaces.cli import ChatCLI
@@ -47,6 +48,7 @@ def build_basic_agent_dependencies(
     tool_executor = ToolExecutor(registry=tool_registry, job_service=job_service)
     
     async_chat_client = AsyncOpenAIChatClient(async_client=async_client, model=model)
+    plan_context_provider = PlanContextProvider(char_limit=2200)
     skill_repository = SkillRepository()
     skill_selector = SkillSelector(max_active_skills=2)
     
@@ -64,6 +66,7 @@ def build_basic_agent_dependencies(
         context_manager=ContextManager(
             skill_repository=skill_repository,
             skill_selector=skill_selector,
+            plan_context_provider=plan_context_provider,
         ),
         debug=debug,
     )
@@ -81,4 +84,5 @@ def build_basic_agent_dependencies(
         "job_service": job_service,
         "skill_repository": skill_repository,
         "skill_selector": skill_selector,
+        "plan_context_provider": plan_context_provider,
     }

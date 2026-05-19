@@ -11,12 +11,15 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from agent.infrastructure.tools.impl.tools.plan import (
+    plan_add_step,
     plan_close,
     plan_create,
     plan_get,
     plan_link_dependency,
     plan_next,
+    plan_record_observation,
     plan_reorder,
+    plan_update_meta,
     plan_update_step,
 )
 
@@ -61,14 +64,30 @@ def _steps() -> list[dict]:
     ]
 
 
-def test_create_and_next() -> tuple[str, int]:
-    payload = assert_ok(parse_payload(plan_create("P1", "goal", _steps())))
+def create_and_next() -> tuple[str, int]:
+    payload = assert_ok(
+        parse_payload(
+            plan_create(
+                "P1",
+                "goal",
+                _steps(),
+                objectives=[{"metric": "sharpe", "operator": ">=", "target": 3.0}],
+                constraints=[{"metric": "max_drawdown", "operator": "<=", "target": 0.12}],
+                metrics={"sharpe": 1.8, "max_drawdown": 0.16},
+            )
+        )
+    )
     data = payload.get("data") or {}
     if data.get("version") != 1:
         raise AssertionError(f"Expected version=1, got: {data}")
     plan_id = data.get("plan_id")
     if not isinstance(plan_id, str) or not plan_id:
         raise AssertionError(f"Invalid plan_id: {data}")
+    if data.get("metrics", {}).get("sharpe") != 1.8:
+        raise AssertionError(f"Expected metrics on create, got: {data}")
+    objective = (data.get("objectives") or [{}])[0]
+    if objective.get("current") != 1.8:
+        raise AssertionError(f"Expected objective current sync, got: {objective}")
 
     ready = assert_ok(parse_payload(plan_next("ready"))).get("data") or []
     ready_ids = {item.get("step_id") for item in ready}
@@ -81,7 +100,7 @@ def test_create_and_next() -> tuple[str, int]:
     return plan_id, int(data["version"])
 
 
-def test_dependency_and_blocked(version: int) -> int:
+def dependency_and_blocked(version: int) -> int:
     payload = parse_payload(plan_update_step("s2", {"status": "in_progress"}, expected_version=version))
     assert_error(payload, "DependencyViolation")
 
@@ -94,7 +113,7 @@ def test_dependency_and_blocked(version: int) -> int:
     return int(blocked["version"])
 
 
-def test_version_conflict(version: int) -> int:
+def version_conflict(version: int) -> int:
     ok = assert_ok(parse_payload(plan_update_step("s1", {"status": "pending"}, expected_version=version)))
     new_version = int((ok.get("meta") or {}).get("version"))
     conflict = parse_payload(plan_update_step("s3", {"status": "in_progress"}, expected_version=version))
@@ -102,7 +121,7 @@ def test_version_conflict(version: int) -> int:
     return new_version
 
 
-def test_reorder_link_and_close(version: int) -> None:
+def reorder_link_and_close(version: int) -> None:
     payload = assert_ok(parse_payload(plan_reorder(["s3", "s1", "s2"], expected_version=version)))
     version = int((payload.get("meta") or {}).get("version"))
 
@@ -134,6 +153,106 @@ def test_reorder_link_and_close(version: int) -> None:
         raise AssertionError(f"Expected summary updated, got: {current}")
 
 
+def test_plan_tool_flow() -> None:
+    _, version = create_and_next()
+    version = dependency_and_blocked(version)
+    version = version_conflict(version)
+    reorder_link_and_close(version)
+
+
+def test_iterative_plan_tools(tmp_path: Path) -> None:
+    payload = assert_ok(parse_payload(plan_create("Iter", "Optimize strategy", [{"step_id": "s1", "title": "baseline"}])))
+    version = int(payload["data"]["version"])
+
+    added = assert_ok(
+        parse_payload(
+            plan_add_step(
+                title="test volatility filter",
+                depends_on=["s1"],
+                priority=4,
+                acceptance="Sharpe improves without drawdown breach",
+                expected_version=version,
+            )
+        )
+    )
+    version = int(added["meta"]["version"])
+    if (added.get("data") or {}).get("step_id") != "step_2":
+        raise AssertionError(f"Expected generated step_2, got: {added}")
+
+    duplicate = parse_payload(plan_add_step(title="duplicate", step_id="s1", expected_version=version))
+    assert_error(duplicate, "ValidationError")
+
+    unknown_dep = parse_payload(plan_add_step(title="unknown", depends_on=["missing"], expected_version=version))
+    assert_error(unknown_dep, "DependencyViolation")
+
+    meta = assert_ok(
+        parse_payload(
+            plan_update_meta(
+                expected_version=version,
+                goal="Optimize to CAGR >= 10% and Sharpe >= 3",
+                objectives=[{"metric": "sharpe", "operator": ">=", "target": 3.0}],
+                constraints=[{"metric": "max_drawdown", "operator": "<=", "target": 0.12}],
+                metrics={"sharpe": 2.1, "max_drawdown": 0.15},
+            )
+        )
+    )
+    version = int(meta["meta"]["version"])
+    data = meta.get("data") or {}
+    if data.get("metrics", {}).get("sharpe") != 2.1:
+        raise AssertionError(f"Expected metric merge, got: {data}")
+    if (data.get("objectives") or [{}])[0].get("current") != 2.1:
+        raise AssertionError(f"Expected objective current sync, got: {data}")
+
+    observation = assert_ok(
+        parse_payload(
+            plan_record_observation(
+                "Volatility filter improved Sharpe but drawdown worsened.",
+                expected_version=version,
+                step_id="step_2",
+                metrics={"sharpe": 2.2, "max_drawdown": 0.17},
+                hypothesis="Use position sizing instead of hard filtering.",
+                next_action="Add position sizing experiment.",
+                tags=["backtest"],
+            )
+        )
+    )
+    version = int(observation["meta"]["version"])
+    obs = (observation.get("data") or {}).get("observation") or {}
+    if not str(obs.get("observation_id", "")).startswith("obs_"):
+        raise AssertionError(f"Expected observation id, got: {obs}")
+
+    for index in range(25):
+        payload = assert_ok(parse_payload(plan_record_observation(f"obs {index}", expected_version=version)))
+        version = int(payload["meta"]["version"])
+
+    current = assert_ok(parse_payload(plan_get())).get("data") or {}
+    if len(current.get("observations") or []) != 20:
+        raise AssertionError(f"Expected recent 20 observations, got: {len(current.get('observations') or [])}")
+
+    events = tmp_path / "test_plan_session" / "plan_events.jsonl"
+    content = events.read_text(encoding="utf-8")
+    if "observation_recorded" not in content or "step_added" not in content:
+        raise AssertionError(f"Expected iterative events, got: {content}")
+
+
+def test_plan_next_all_steps_terminal() -> None:
+    payload = assert_ok(parse_payload(plan_create("Terminal", "goal", [{"step_id": "s1", "title": "one"}])))
+    version = int(payload["data"]["version"])
+    payload = assert_ok(parse_payload(plan_update_step("s1", {"status": "in_progress"}, expected_version=version)))
+    version = int(payload["meta"]["version"])
+    payload = assert_ok(parse_payload(plan_update_step("s1", {"status": "completed"}, expected_version=version)))
+    version = int(payload["meta"]["version"])
+
+    focus = assert_ok(parse_payload(plan_next("focus", expected_version=version)))
+    if (focus.get("meta") or {}).get("reason") != "all_steps_terminal":
+        raise AssertionError(f"Expected terminal reason, got: {focus}")
+
+    closed = assert_ok(parse_payload(plan_close("done", expected_version=version)))
+    version = int(closed["meta"]["version"])
+    rejected = parse_payload(plan_add_step(title="after close", expected_version=version))
+    assert_error(rejected, "ValidationError")
+
+
 def main() -> int:
     temp_root = PROJECT_ROOT / "test" / "__plan_tool_tmp_sessions__"
     sid = "sid_test_plan"
@@ -148,10 +267,10 @@ def main() -> int:
         os.environ["AGENT_SESSION_ROOT"] = str(temp_root)
         os.environ["AGENT_SESSION_ID"] = sid
 
-        _, version = test_create_and_next()
-        version = test_dependency_and_blocked(version)
-        version = test_version_conflict(version)
-        test_reorder_link_and_close(version)
+        _, version = create_and_next()
+        version = dependency_and_blocked(version)
+        version = version_conflict(version)
+        reorder_link_and_close(version)
 
         events = base / "plan_events.jsonl"
         if not events.exists():

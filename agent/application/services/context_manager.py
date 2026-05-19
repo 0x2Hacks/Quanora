@@ -43,6 +43,7 @@ class ContextManager:
         summary_step_threshold: int = 6,
         skill_repository=None,
         skill_selector=None,
+        plan_context_provider=None,
         skill_index_char_limit: int = 3000,
         active_skill_char_limit: int = 12000,
     ):
@@ -53,6 +54,7 @@ class ContextManager:
         self._summary_step_threshold = max(1, int(summary_step_threshold))
         self._skill_repository = skill_repository
         self._skill_selector = skill_selector
+        self._plan_context_provider = plan_context_provider
         self._skill_index_char_limit = max(0, int(skill_index_char_limit))
         self._active_skill_char_limit = max(0, int(active_skill_char_limit))
 
@@ -70,9 +72,11 @@ class ContextManager:
             session=session,
             tool_char_budget=budget.tool_budget_tokens * 4,
         )
+        plan_messages, plan_stats, plan_decisions = self._build_plan_messages()
         skill_messages, skill_stats, skill_decisions = self._build_skill_messages(active_skill_matches)
-        if skill_messages:
-            full_messages = self._insert_after_first_system(full_messages, skill_messages)
+        extra_messages = plan_messages + skill_messages
+        if extra_messages:
+            full_messages = self._insert_after_first_system(full_messages, extra_messages)
 
         initial_estimate = self._estimator.estimate_messages(full_messages)
         messages = list(full_messages)
@@ -134,6 +138,7 @@ class ContextManager:
             "pre_compaction_conversation_tokens": initial_estimate.conversation_tokens,
             "pre_compaction_tool_tokens": initial_estimate.tool_tokens,
             "budget": budget.to_dict(),
+            **plan_stats,
             **skill_stats,
         }
         decisions = {
@@ -150,6 +155,7 @@ class ContextManager:
             "rolling_summary_generated": summary_generated,
             "hot_message_limit": self._hot_message_limit,
             "tool_policy_applied": True,
+            **plan_decisions,
             **skill_decisions,
         }
         result = ContextBuildResult(messages=final_messages, stats=stats, decisions=decisions, snapshot=snapshot)
@@ -180,6 +186,7 @@ class ContextManager:
                 "budget": budget.to_dict(),
                 "snapshot": asdict(snapshot),
                 "decisions": decisions,
+                **plan_stats,
                 **skill_stats,
             }
         )
@@ -301,6 +308,27 @@ class ContextManager:
             return list(self._skill_selector.select(user_message, skills))
         except Exception:
             return []
+
+    def _build_plan_messages(self) -> tuple[list[dict], dict, dict]:
+        stats = {
+            "plan_summary_chars": 0,
+            "plan_open": False,
+            "plan_step_count": 0,
+            "plan_unfinished_step_count": 0,
+        }
+        decisions = {
+            "plan_summary_injected": False,
+            "plan_id": None,
+            "plan_version": None,
+            "plan_state": "none",
+        }
+        if not self._plan_context_provider:
+            return [], stats, decisions
+        try:
+            return self._plan_context_provider.build_context()
+        except Exception:
+            decisions["plan_state"] = "error"
+            return [], stats, decisions
 
     def _build_skill_messages(self, active_skill_matches: list | None = None) -> tuple[list[dict], dict, dict]:
         stats = {
