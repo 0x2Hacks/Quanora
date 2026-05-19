@@ -10,8 +10,8 @@ _POOL = BashSessionPool()
 _RUNNER = BashRunner(timeout=120)
 
 
-async def bash(command: str, session_id: str = "default", _cancellation_token: CancellationToken | None = None) -> str:
-    """Execute a bash command in a session-scoped isolated shell."""
+async def bash(command: str, session_id: str = "default", run_in_background: bool = False, _cancellation_token: CancellationToken | None = None) -> str:
+    """Execute a bash command. Use run_in_background=true for long-running commands like servers."""
     status, reason = BashPolicy.classify(command)
 
     if status == "deny":
@@ -31,7 +31,11 @@ async def bash(command: str, session_id: str = "default", _cancellation_token: C
         )
 
     state = _POOL.get_state(session_id)
-    result = await _RUNNER.run(command, state, cancellation_token=_cancellation_token)
+
+    if run_in_background:
+        result = await _RUNNER.run_background(command, state, session_id=session_id)
+    else:
+        result = await _RUNNER.run(command, state, cancellation_token=_cancellation_token)
 
     if result.status == "ok":
         return result.result_str
@@ -39,7 +43,25 @@ async def bash(command: str, session_id: str = "default", _cancellation_token: C
         return tool_error("bash", result.error_msg, result.error_type)
 
 
+def bash_output(bg_id: str, kill: bool = False) -> str:
+    """
+    Read output from a background process, or terminate it.
+    :param bg_id: Background process ID returned by bash(run_in_background=true)
+    :param kill: Set to true to terminate the process (default false = read only)
+    """
+    if kill:
+        result = _RUNNER.kill_background(bg_id)
+    else:
+        result = _RUNNER.read_background(bg_id)
+
+    if result.status == "ok":
+        return result.result_str
+    else:
+        return tool_error("bash_output", result.error_msg, result.error_type)
+
+
 def kill_shell(session_id: str = "default") -> str:
-    """Reset the Shell session for the given session_id."""
+    """Reset the Shell session and kill all its background processes."""
+    _RUNNER.kill_session_backgrounds(session_id)
     _POOL.reset_state(session_id)
-    return tool_ok("kill_shell", "Shell session reset successfully.")
+    return tool_ok("kill_shell", "Shell session reset. All background processes killed.")

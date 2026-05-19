@@ -7,6 +7,7 @@ from typing import Any, Callable
 from .core import build_tool_schemas
 from .tools import (
     bash,
+    bash_output,
     edit_file,
     fetch_web_page,
     grep,
@@ -33,6 +34,7 @@ TOOLS: dict[str, Callable] = {
     "list_files": list_files,
     "grep": grep,
     "bash": bash,
+    "bash_output": bash_output,
     "kill_shell": kill_shell,
     "plan_create": plan_create,
     "plan_get": plan_get,
@@ -95,8 +97,18 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
         },
     },
     "bash": {
-        "description": "执行 Shell 命令 (支持 cd 保持目录状态；部分危险命令需要用户确认或本地启用不安全模式)",
-        "param_descriptions": {"command": "要执行的命令 (如: ls -la, git status)"},
+        "description": "执行 Shell 命令。支持 cd 保持目录状态。设置 run_in_background=true 可启动后台进程（如 npm start、uvicorn），用 bash_output 查看输出。",
+        "param_descriptions": {
+            "command": "要执行的命令",
+            "run_in_background": "以后台模式运行（不等待完成，适合启动服务器等长期命令）。默认 False。",
+        },
+    },
+    "bash_output": {
+        "description": "读取后台进程的输出，或终止它。用于查看 bash(run_in_background=true) 启动的后台进程。",
+        "param_descriptions": {
+            "bg_id": "后台进程 ID（bash 返回的 bg_id）",
+            "kill": "设为 true 可终止该进程。默认 False（仅读取输出）。",
+        },
     },
     "kill_shell": {"description": "重置 Shell 会话状态"},
     "plan_create": {

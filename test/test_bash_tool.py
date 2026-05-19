@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import shutil
@@ -18,6 +19,10 @@ from agent.infrastructure.tools.impl.tools.bash_session_pool import BashSessionP
 def temp_dir(tmp_path: Path) -> Path:
     """Provides a temporary directory for tests to run in."""
     return tmp_path
+
+def run(coro):
+    """Run an async bash call synchronously in tests."""
+    return asyncio.run(coro)
 
 def parse_payload(raw: str) -> dict:
     obj = json.loads(raw)
@@ -44,7 +49,7 @@ def set_env(value: str | None) -> None:
         os.environ["AGENT_ALLOW_UNSAFE_BASH"] = value
 
 def test_echo() -> None:
-    payload = assert_ok(parse_payload(bash("echo hello")))
+    payload = assert_ok(parse_payload(run(bash("echo hello"))))
     data = payload.get("data") or {}
     stdout = (data.get("stdout") or "").lower()
     if "hello" not in stdout:
@@ -53,23 +58,23 @@ def test_echo() -> None:
         raise AssertionError(f"Expected cwd in data, got: {data}")
 
 def test_cd_and_cwd(temp_dir: Path) -> None:
-    payload = assert_ok(parse_payload(bash(f"cd {str(temp_dir)}")))
+    payload = assert_ok(parse_payload(run(bash(f"cd {str(temp_dir)}"))))
     data = payload.get("data") or {}
     expected = os.path.abspath(str(temp_dir))
     if data.get("cwd") != expected:
         raise AssertionError(f"Expected cwd={expected}, got: {data}")
-    payload = assert_ok(parse_payload(bash("cd ..")))
+    payload = assert_ok(parse_payload(run(bash("cd .."))))
     data = payload.get("data") or {}
     expected_parent = os.path.abspath(str(temp_dir.parent))
     if data.get("cwd") != expected_parent:
         raise AssertionError(f"Expected cwd={expected_parent}, got: {data}")
 
 def test_kill_shell_resets(temp_dir: Path) -> None:
-    assert_ok(parse_payload(bash(f"cd {str(temp_dir)}")))
+    assert_ok(parse_payload(run(bash(f"cd {str(temp_dir)}"))))
     payload = assert_ok(parse_payload(kill_shell()))
     if payload.get("tool") != "kill_shell":
         raise AssertionError(f"Expected tool=kill_shell, got: {payload}")
-    payload = assert_ok(parse_payload(bash("cd .")))
+    payload = assert_ok(parse_payload(run(bash("cd ."))))
     data = payload.get("data") or {}
     expected = os.path.abspath(os.getcwd())
     if data.get("cwd") != expected:
@@ -87,18 +92,18 @@ def test_confirmable_requires_confirmation() -> None:
     # In Phase 2, confirmable commands without unsafe mode will return an error 
     # instead of blocking with input().
     set_env(None)
-    payload = assert_error(parse_payload(bash("rm __bash_tool_should_not_run__")), "CommandRequiresApproval")
+    payload = assert_error(parse_payload(run(bash("rm __bash_tool_should_not_run__"))), "CommandRequiresApproval")
     if payload.get("tool") != "bash":
         raise AssertionError(f"Expected tool=bash, got: {payload}")
 
 def test_forbidden_blocked() -> None:
-    payload = assert_error(parse_payload(bash("shutdown -h now")), "DangerousCommandBlocked")
+    payload = assert_error(parse_payload(run(bash("shutdown -h now"))), "DangerousCommandBlocked")
     if payload.get("tool") != "bash":
         raise AssertionError(f"Expected tool=bash, got: {payload}")
 
 def test_dangerous_allowed(temp_dir: Path) -> None:
     def call():
-        return parse_payload(bash(f"rm -rf {str(temp_dir)}"))
+        return parse_payload(run(bash(f"rm -rf {str(temp_dir)}")))
     os.environ["AGENT_ALLOW_UNSAFE_BASH"] = "1"
     try:
         payload = assert_ok(call())
