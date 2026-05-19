@@ -6,6 +6,8 @@ import asyncio
 
 from agent.domain.events import RuntimeEvent, ToolCallStartedEvent, ToolProgressEvent, ToolResultEvent
 from agent.interfaces.cli.ui import print_rainbow_logo, render_markdown, StreamingRenderer
+from prompt_toolkit import PromptSession
+from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 
 
@@ -19,6 +21,7 @@ class ChatCLI:
         self._assistant_buffer: list[str] = []
         self._console = Console()
         self._streaming_renderer = StreamingRenderer(self._console)
+        self._prompt_session: PromptSession | None = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
 
     def start(self) -> None:
@@ -78,7 +81,7 @@ class ChatCLI:
             
         while True:
             try:
-                user_input = input("\n> ").strip()
+                user_input = self._read_user_input()
             except (KeyboardInterrupt, EOFError):
                 print("\n再见！👋")
                 break
@@ -103,6 +106,34 @@ class ChatCLI:
             except Exception as exc:
                 self._streaming_renderer.flush()
                 print(f"\nError: {exc}")
+
+    def _read_user_input(self) -> str:
+        if self._prompt_session is None:
+            self._prompt_session = PromptSession(key_bindings=self._build_input_key_bindings(), multiline=True)
+        return self._prompt_session.prompt("\n> ").strip()
+
+    def _build_input_key_bindings(self) -> KeyBindings:
+        bindings = KeyBindings()
+
+        @bindings.add("c-m")
+        def _(event):
+            event.app.exit(result=event.app.current_buffer.text)
+
+        @bindings.add("c-j")
+        def _(event):
+            event.app.current_buffer.insert_text("\n")
+
+        for sequence in (
+            ("escape", "c-m"),
+            ("escape", "c-j"),
+            ("escape", "[", "1", "3", ";", "2", "u"),
+            ("escape", "[", "1", "3", ";", "2", "~"),
+        ):
+            @bindings.add(*sequence)
+            def _(event):
+                event.app.current_buffer.insert_text("\n")
+
+        return bindings
 
     async def _run_turn_async(self, user_input: str) -> None:
         # Pass user_input directly to the runtime facade
