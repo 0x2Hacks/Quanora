@@ -352,7 +352,13 @@ class ContextManager:
             {
                 "skills_available": True,
                 "active_skills": [
-                    {"name": match.skill.name, "reason": match.reason, "score": match.score}
+                    {
+                        "name": match.skill.name,
+                        "reason": match.reason,
+                        "score": match.score,
+                        "source": match.skill.source,
+                        "path": match.skill.path,
+                    }
                     for match in active_matches
                 ],
                 "skill_injection_applied": bool(messages),

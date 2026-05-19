@@ -110,13 +110,15 @@ class ChatCLI:
             self._on_event(event)
             
     def _on_event(self, event: RuntimeEvent) -> None:
-        from agent.domain.events import AssistantDeltaEvent, AssistantMessageCompletedEvent, ToolCallStartedEvent, ToolProgressEvent, ToolResultEvent, TurnFailedEvent, TurnCancelledEvent
+        from agent.domain.events import AssistantDeltaEvent, AssistantMessageCompletedEvent, SkillActivatedEvent, ToolCallStartedEvent, ToolProgressEvent, ToolResultEvent, TurnFailedEvent, TurnCancelledEvent
         
         if isinstance(event, AssistantDeltaEvent):
             self._assistant_buffer.append(event.text)
             self._streaming_renderer.append(event.text)
         elif isinstance(event, AssistantMessageCompletedEvent):
             self._streaming_renderer.finish_message()
+        elif isinstance(event, SkillActivatedEvent):
+            self._console.print(f"[dim italic]🧩 技能启用: {getattr(event, 'skill_name', 'unknown')} ({getattr(event, 'reason', 'unknown')})[/dim italic]")
         elif isinstance(event, ToolCallStartedEvent):
             self._console.print(f"[dim italic]🚀 任务启动: {getattr(event, 'tool_name', 'unknown')} (ID: {getattr(event, 'tool_call_id', 'unknown')})[/dim italic]")
         elif isinstance(event, ToolProgressEvent):
@@ -135,4 +137,3 @@ class ChatCLI:
 
     def _on_debug(self, message: str) -> None:
         print(f"\n[Debug] {message}")
-

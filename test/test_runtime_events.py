@@ -1,10 +1,19 @@
 import unittest
 import json
 import dataclasses
+import os
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+os.chdir(PROJECT_ROOT)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from agent.domain.events import (
     RuntimeEvent,
     AssistantDeltaEvent,
+    SkillActivatedEvent,
     ToolProgressEvent,
     TurnCompletedEvent
 )
@@ -35,6 +44,25 @@ class TestRuntimeEvents(unittest.TestCase):
         event = TurnCompletedEvent()
         self.assertTrue(isinstance(event, RuntimeEvent))
         self.assertEqual(event.type, "turn_completed")
+
+    def test_skill_activated_event_round_trip(self):
+        event = SkillActivatedEvent(
+            ts="2026-05-19T00:00:00Z",
+            skill_name="demo",
+            reason="explicit_dollar_name",
+            score=100,
+            source="project",
+            path="/tmp/demo/SKILL.md",
+        )
+
+        event_dict = event.to_dict()
+        self.assertEqual(event_dict["type"], "skill_activated")
+        self.assertEqual(event_dict["skill_name"], "demo")
+        restored = RuntimeEvent.from_dict(event_dict)
+
+        self.assertTrue(isinstance(restored, SkillActivatedEvent))
+        self.assertEqual(restored.skill_name, "demo")
+        self.assertEqual(restored.reason, "explicit_dollar_name")
 
 
 if __name__ == "__main__":

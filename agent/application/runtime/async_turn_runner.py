@@ -15,6 +15,7 @@ from agent.domain.events import (
     RuntimeEvent,
     AssistantDeltaEvent,
     AssistantMessageCompletedEvent,
+    SkillActivatedEvent,
     TurnCompletedEvent,
     TurnFailedEvent,
     TurnCancelledEvent
@@ -55,12 +56,28 @@ class AsyncTurnRunner:
         """Run the main conversation loop for a user turn asynchronously, yielding events."""
         
         try:
+            emitted_skill_names: set[str] = set()
             while True:
                 if cancellation_token and cancellation_token.is_cancelled:
                     yield TurnCancelledEvent(ts=session.now_iso(), reason=cancellation_token.reason)
                     return
                 
                 context = await self._context_manager.build_messages_async(session=session)
+                context_decisions = context.decisions if isinstance(getattr(context, "decisions", None), dict) else {}
+                for item in context_decisions.get("active_skills") or []:
+                    skill_name = str(item.get("name") or "")
+                    skill_key = skill_name.lower()
+                    if not skill_key or skill_key in emitted_skill_names:
+                        continue
+                    emitted_skill_names.add(skill_key)
+                    yield SkillActivatedEvent(
+                        ts=session.now_iso(),
+                        skill_name=skill_name,
+                        reason=str(item.get("reason") or ""),
+                        score=int(item.get("score") or 0),
+                        source=str(item.get("source") or ""),
+                        path=str(item.get("path") or ""),
+                    )
                 
                 try:
                     # We always use stream=True for the async runner to provide real-time events
