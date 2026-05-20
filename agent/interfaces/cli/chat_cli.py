@@ -158,7 +158,8 @@ class ChatCLI:
             self._console.print(f"[dim italic]✅ 任务完成: {getattr(event, 'tool_name', 'unknown')}[/dim italic]")
         elif isinstance(event, TurnFailedEvent):
             self._streaming_renderer.flush()
-            print(f"\n[Error] Turn failed: {getattr(event, 'reason', 'unknown')}")
+            message = getattr(event, "error", "") or getattr(event, "reason", "") or "unknown"
+            print(f"\n[Error] Turn failed: {message}")
         elif isinstance(event, TurnCancelledEvent):
             self._streaming_renderer.flush()
             print(f"\n[Cancelled] Turn cancelled: {getattr(event, 'reason', 'unknown')}")

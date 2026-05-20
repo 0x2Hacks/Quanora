@@ -5,16 +5,36 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+_ACTIVE_SESSION_ROOT: ContextVar[str | None] = ContextVar("chainpeer_plan_session_root", default=None)
+_ACTIVE_SESSION_ID: ContextVar[str | None] = ContextVar("chainpeer_plan_session_id", default=None)
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def set_active_session_context(session_root: str, session_id: str) -> None:
+    root = str(session_root or "").strip()
+    sid = str(session_id or "").strip()
+    if not root or not sid:
+        return
+    _ACTIVE_SESSION_ROOT.set(root)
+    _ACTIVE_SESSION_ID.set(sid)
+
+
 def resolve_session_base() -> tuple[Path, str]:
+    context_root = _ACTIVE_SESSION_ROOT.get()
+    context_id = _ACTIVE_SESSION_ID.get()
+    if context_root and context_id:
+        base = Path(context_root) / context_id
+        if base.is_dir():
+            return base, context_id
+
     env_root = os.getenv("AGENT_SESSION_ROOT")
     env_id = os.getenv("AGENT_SESSION_ID")
     if env_root and env_id:
@@ -23,7 +43,7 @@ def resolve_session_base() -> tuple[Path, str]:
             return base, env_id
     raise FileNotFoundError(
         "No active session context found. Ensure session is initialized before using plan tools "
-        "(missing AGENT_SESSION_ROOT / AGENT_SESSION_ID)."
+        "(missing task-local plan session context or AGENT_SESSION_ROOT / AGENT_SESSION_ID)."
     )
 
 
