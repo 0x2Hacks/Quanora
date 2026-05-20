@@ -394,16 +394,11 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
             
         return await asyncio.to_thread(_get)
 
-    async def persist_conversation_summary(self, summary_text: str, range_start_idx: int, range_end_idx: int) -> None:
+    async def persist_conversation_summary(self, summary: dict[str, Any]) -> None:
         async with self._write_lock:
             def _persist():
                 if not self._summary_repo:
                     return
-                summary = {
-                    "summary": summary_text,
-                    "covered_turns": range_end_idx - range_start_idx,
-                    "source_message_count": range_end_idx - range_start_idx
-                }
                 record = self._summary_repo.persist_conversation_summary(self.now_iso(), summary)
                 if self._session_meta:
                     self._session_meta["updated_at"] = self.now_iso()

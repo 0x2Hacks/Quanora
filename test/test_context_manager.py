@@ -10,6 +10,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import pytest
 
 from agent.application.services import ContextBudget, ContextEstimator, ContextManager, ToolContextPolicy
+from agent.infrastructure.persistence.async_jsonl_session_store import AsyncJsonlSessionStore
 
 
 class QueryOnlySession:
@@ -166,6 +167,36 @@ async def test_context_manager_compacts_only_cold_conversation_zone() -> None:
 
 
 @pytest.mark.asyncio
+async def test_context_manager_compacts_with_real_session_store(tmp_path) -> None:
+    session = AsyncJsonlSessionStore(session_dir=str(tmp_path), system_prompt="sys")
+    await session.initialize()
+    for index in range(1, 7):
+        await session.persist_message("user", f"user message {index} " + ("x" * 80))
+        await session.persist_message("assistant", f"assistant reply {index} " + ("y" * 80))
+
+    manager = ContextManager(
+        estimator=ContextEstimator(
+            ContextBudget(hard_limit_tokens=2000, conversation_budget_tokens=20, tool_budget_tokens=80)
+        ),
+        hot_message_limit=4,
+    )
+
+    result = await manager.build_messages_async(session=session)
+    latest_summary = await session.get_latest_conversation_summary()
+
+    if not result.decisions.get("rolling_summary_applied"):
+        raise AssertionError(f"Expected real session compaction, got: {result.decisions}")
+    if result.stats.get("summary_message_count") != 1:
+        raise AssertionError(f"Expected one summary message, got: {result.stats}")
+    if result.stats.get("cold_compacted_message_count", 0) <= 0:
+        raise AssertionError(f"Expected compacted cold messages, got: {result.stats}")
+    if not isinstance(latest_summary, dict) or latest_summary.get("source_message_count", 0) <= 0:
+        raise AssertionError(f"Expected persisted summary dict, got: {latest_summary}")
+    if not any(message.get("content", "").startswith("Conversation summary:") for message in result.messages):
+        raise AssertionError(f"Expected rendered summary in messages, got: {result.messages}")
+
+
+@pytest.mark.asyncio
 async def test_context_manager_applies_tool_temperature_policy() -> None:
     session_messages = [
         {"role": "system", "content": "sys"},
@@ -251,6 +282,9 @@ def main() -> int:
         await test_context_manager_builds_from_session_queries()
         await test_context_manager_appends_pending_messages()
         await test_context_manager_compacts_only_cold_conversation_zone()
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            await test_context_manager_compacts_with_real_session_store(Path(tmp))
         await test_context_manager_applies_tool_temperature_policy()
         await test_context_manager_prioritizes_hot_tool_budget()
     asyncio.run(_run_all())

@@ -64,7 +64,7 @@ class AsyncSessionStore(Protocol):
         """Load all raw messages asynchronously."""
         ...
 
-    async def persist_conversation_summary(self, summary_text: str, range_start_idx: int, range_end_idx: int) -> None:
+    async def persist_conversation_summary(self, summary: dict[str, Any]) -> None:
         """Persist a conversation summary asynchronously."""
         ...
 
