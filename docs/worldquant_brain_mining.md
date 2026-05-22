@@ -1,6 +1,6 @@
 # 🧬 WorldQuant Brain 自动挖因子使用指南
 
-> ChainPeer Agent 集成的"自我进化挖因子"能力,融合了:
+> Quanora Agent 集成的"自我进化挖因子"能力,融合了:
 > - **FactorMiner**(论文 2602.14670v1):Ralph Loop + Skills/Experience Memory
 > - **QuantaAlpha**(arXiv 2602.07085):Planning → Hypothesis → Code → Backtest → Evolution
 > - **WorldQuant Brain** 平台:`api.worldquantbrain.com` 的真实回测后端
@@ -62,7 +62,7 @@
 └── ...
 ```
 
-> 路径可通过环境变量 `WQ_MEMORY_ROOT` 改写。每个文件都是 append-only JSONL,完全对齐 ChainPeer 整体的事件溯源风格,支持任意时刻 `Ctrl+C` + 续跑。
+> 路径可通过环境变量 `WQ_MEMORY_ROOT` 改写。每个文件都是 append-only JSONL,完全对齐 Quanora 整体的事件溯源风格,支持任意时刻 `Ctrl+C` + 续跑。
 
 ---
 
@@ -117,7 +117,7 @@ python main.py --debug
 
 ### 3.1 单条手工验证(熟悉 API)
 
-进入 ChainPeer CLI 后,直接对它说:
+进入 Quanora CLI 后,直接对它说:
 
 ```
 请帮我用 wq_login 登录 Brain,然后用 wq_evaluate_alpha 评估
@@ -202,7 +202,7 @@ Agent 会逐步推进,你可以中途 `Ctrl+C`,下次 `python main.py -c` 继续
 
 ## 5. 关键设计决策(对应论文)
 
-| 论文/项目概念 | ChainPeer 中的实现 |
+| 论文/项目概念 | Quanora 中的实现 |
 |---|---|
 | FactorMiner: **Skills Memory** | 一组 `wq_*` 工具函数,模块化技能,LLM 通过 tool_call 调用而非自己计算(避免幻觉) |
 | FactorMiner: **Experience Memory** = (S, P, I) | `ExperienceMemory` 类,4 个 JSONL + 1 个 state.json |
@@ -212,8 +212,8 @@ Agent 会逐步推进,你可以中途 `Ctrl+C`,下次 `python main.py -c` 继续
 | QuantaAlpha: **Diversified Planning** | `DIRECTION_LIBRARY` 6 个内置方向 + LLM 通过 `plan_create` 自由组合 |
 | QuantaAlpha: **Mutation/Crossover** | `wq_mutate_alpha` / `wq_crossover_alpha`(4 种策略) |
 | QuantaAlpha: **Quality Gate** | 阈值参数化:`min_sharpe` / `min_fitness` / `max_turnover` |
-| ChainPeer: **DAG plan** | 复用 `plan_create` 等工具,挖因子流程被组织成 DAG |
-| ChainPeer: **Event Sourcing** | `ExperienceMemory` 的 JSONL append-only 完全对齐整体风格 |
+| Quanora: **DAG plan** | 复用 `plan_create` 等工具,挖因子流程被组织成 DAG |
+| Quanora: **Event Sourcing** | `ExperienceMemory` 的 JSONL append-only 完全对齐整体风格 |
 
 ---
 
@@ -264,15 +264,15 @@ DIRECTION_LIBRARY["alt_data_seasonality"] = {
 
 ## 8. 与传统 worldquant-miner 项目的差异
 
-| 维度 | worldquant-miner (zhutoutoutousan) | ChainPeer + WQ Skill |
+| 维度 | worldquant-miner (zhutoutoutousan) | Quanora + WQ Skill |
 |---|---|---|
 | LLM | Ollama 本地 / Kimi API | 任意 OpenAI 兼容(GPT/DeepSeek/Claude/Qwen) |
 | 架构 | 多脚本松耦合 (alpha_generator.py / alpha_miner.py 各自跑) | 单一 Agent + 统一 tool_call,DAG plan 调度 |
 | 记忆机制 | 无(每次冷启动) | **Experience Memory**:成功/失败模板 + 策略洞察(论文核心创新) |
 | 因子去重 | 简单字符串去重 | 模板正则化 (`normalize_template`) + Brain 平台 SELF_CORR + 库内相关性 |
 | 进化算子 | 仅参数扰动 | Mutation + 4 种 Crossover 策略 |
-| 断点续传 | 无 | 复用 ChainPeer JSONL event sourcing,`-c` 即可恢复 |
-| 上下文管理 | 无 | 复用 ChainPeer 的 Hot/Warm/Cold 三温区预算 |
+| 断点续传 | 无 | 复用 Quanora JSONL event sourcing,`-c` 即可恢复 |
+| 上下文管理 | 无 | 复用 Quanora 的 Hot/Warm/Cold 三温区预算 |
 
 ---
 

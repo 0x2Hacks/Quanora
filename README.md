@@ -1,4 +1,4 @@
-# 🤖 ChainPeer Agent
+# ❄️ Quanora Agent
 
 ![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)
 ![Architecture](https://img.shields.io/badge/Architecture-Hexagonal-success.svg)
@@ -8,9 +8,11 @@ A highly robust, context-aware, and production-ready Autonomous Coding Agent. De
 
 ---
 
-## ✨ Why ChainPeer?
+## ✨ Why Quanora?
 
-Most open-source agents suffer from two fatal flaws: they crash when tool outputs are too large, and they lose state if interrupted. ChainPeer solves this with enterprise-grade engineering:
+> *quantitative · autonomous · alpha*
+
+Quanora is an autonomous quant-research agent. Most open-source agents suffer from two fatal flaws: they crash when tool outputs are too large, and they lose state if interrupted. Quanora solves this with enterprise-grade engineering:
 
 - 🧠 **Infinite Context Illusion**: Utilizes a "Three-Tier Budget" (System/Conversation/Tools). Massive tool outputs are dynamically truncated (Hot/Warm/Cold), and long conversations are transparently summarized in the background. You never hit the `ContextLengthExceeded` wall.
 - 💾 **Event Sourcing & Fail-Safe Resume**: Every message and tool output is appended to a `.jsonl` stream. You can hit `Ctrl+C` anytime. Run `python main.py -c` and the agent will reconstruct its memory exactly where you left off.
@@ -27,8 +29,8 @@ Most open-source agents suffer from two fatal flaws: they crash when tool output
 
 ### 2. Installation
 ```bash
-git clone https://github.com/your-username/chainpeer.git
-cd chainpeer
+git clone https://github.com/your-username/quanora.git
+cd quanora
 
 # Create and activate a virtual environment
 python -m venv venv
@@ -56,7 +58,7 @@ python main.py
 
 ## 🛠️ CLI Usage
 
-ChainPeer comes with a powerful CLI interface for managing sessions and debugging.
+Quanora comes with a powerful CLI interface for managing sessions and debugging.
 
 | Command | Description |
 |---|---|
@@ -70,7 +72,7 @@ ChainPeer comes with a powerful CLI interface for managing sessions and debuggin
 
 ## 🏗️ Architecture at a Glance
 
-ChainPeer strictly follows the Dependency Inversion Principle.
+Quanora strictly follows the Dependency Inversion Principle.
 
 ```text
 agent/

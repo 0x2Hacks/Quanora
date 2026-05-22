@@ -1,6 +1,6 @@
 """WorldQuant Brain 自动挖因子 — 暴露给 LLM 的工具函数。
 
-每个函数都返回 ChainPeer 标准的 tool_ok / tool_error 字符串载荷。
+每个函数都返回 Quanora 标准的 tool_ok / tool_error 字符串载荷。
 这些函数会被 `agent/infrastructure/tools/impl/__init__.py` 注册到 TOOLS 字典。
 """
 

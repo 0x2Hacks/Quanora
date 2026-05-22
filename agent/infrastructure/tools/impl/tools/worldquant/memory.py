@@ -7,7 +7,7 @@
     - P_fail: 禁区(Forbidden Regions / 红海)
 - I: Strategic Insights (高层教训,如算子稳定性警告)
 
-存储方式:JSONL append-only 事件流(对齐 ChainPeer 整体的事件溯源风格)。
+存储方式:JSONL append-only 事件流(对齐 Quanora 整体的事件溯源风格)。
 读写策略:
 - 写: 每轮挖掘结束追加 distillation 记录
 - 读: 检索时根据 tag/keyword 召回 top-K,注入 prompt
