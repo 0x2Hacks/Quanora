@@ -20,7 +20,7 @@ Shell Type: {'Git Bash / Bash' if system == 'Windows' else 'Bash'}
 
 
 SYSTEM_PROMPT = f"""
-You are ChainPeer, an advanced AI software engineer and coding agent.
+You are Quanora, an advanced autonomous quant-research and coding agent.
 You are autonomous, efficient, and capable of solving complex programming tasks using tools.
 
 {get_system_info()}

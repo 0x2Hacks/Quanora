@@ -34,14 +34,35 @@ class JsonlSessionStore:
     def now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def _default_chainpeer_home(self) -> str:
-        custom_home = os.getenv("CHAINPEER_HOME")
+    def _default_quanora_home(self) -> str:
+        """Resolve the agent's persistent home directory.
+
+        Resolution order (first match wins):
+        1. ``QUANORA_HOME`` env var (new, preferred)
+        2. ``CHAINPEER_HOME`` env var (legacy, kept for backward compatibility)
+        3. ``~/.quanora`` if it already exists
+        4. ``~/.chainpeer`` if it already exists (legacy on-disk migration path)
+        5. ``~/.quanora`` (new default for fresh installs)
+        """
+        custom_home = os.getenv("QUANORA_HOME") or os.getenv("CHAINPEER_HOME")
         if custom_home:
             return os.path.abspath(os.path.expanduser(custom_home))
-        return os.path.abspath(os.path.join(os.path.expanduser("~"), ".chainpeer"))
+
+        home = os.path.expanduser("~")
+        new_default = os.path.abspath(os.path.join(home, ".quanora"))
+        legacy_default = os.path.abspath(os.path.join(home, ".chainpeer"))
+
+        if os.path.isdir(new_default):
+            return new_default
+        if os.path.isdir(legacy_default):
+            return legacy_default
+        return new_default
+
+    # Backwards-compatible alias for code/tests that still call the old name.
+    _default_chainpeer_home = _default_quanora_home
 
     def _default_session_root(self) -> str:
-        return os.path.join(self._default_chainpeer_home(), "sessions")
+        return os.path.join(self._default_quanora_home(), "sessions")
 
     def _normalize_path(self, path: str | None) -> str:
         if not path:
@@ -305,9 +326,9 @@ class JsonlSessionStore:
             self._session_root = os.path.abspath(self.session_dir)
             self._index_path = os.path.join(self._session_root, "index.json")
         else:
-            chainpeer_home = self._default_chainpeer_home()
-            self._session_root = os.path.join(chainpeer_home, "sessions")
-            self._index_path = os.path.join(chainpeer_home, "session_index.json")
+            quanora_home = self._default_quanora_home()
+            self._session_root = os.path.join(quanora_home, "sessions")
+            self._index_path = os.path.join(quanora_home, "session_index.json")
             
         try:
             os.makedirs(self._session_root, exist_ok=True)

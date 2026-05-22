@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import sys
 
-from agent.interfaces.cli.ui import print_rainbow_logo, render_markdown
+from agent.interfaces.cli.ui import print_quanora_logo, render_markdown
 from rich.console import Console
 from rich.text import Text
 
@@ -223,11 +223,11 @@ class ChatCLI:
         self._loop()
 
     def _render_banner(self) -> None:
-        print_rainbow_logo()
+        print_quanora_logo()
         if self._debug:
-            print("Chain Peer v0.1 (Debug Mode: True) 输入 'quit' 退出")
+            print("Quanora v0.1 (Debug Mode: True)  type 'quit' to exit")
         else:
-            print("Chain Peer v0.1")
+            print("Quanora v0.1")
             print("Welcome back!")
         print("-" * 50)
 
