@@ -16,6 +16,7 @@ from .events import (
 )
 from .jobs import JobStatus, JobRecord, ToolExecutionResult, JobHandle
 from .skills import Skill, SkillMatch, parse_skill_markdown, render_active_skill_instructions, render_skill_index
+from .workspace import WorkspaceConfig, WorkspaceGuard, WorkspaceViolation, PathStatus
 
 __all__ = [
     "ParsedToolCall",
@@ -42,4 +43,8 @@ __all__ = [
     "parse_skill_markdown",
     "render_active_skill_instructions",
     "render_skill_index",
+    "WorkspaceConfig",
+    "WorkspaceGuard",
+    "WorkspaceViolation",
+    "PathStatus",
 ]

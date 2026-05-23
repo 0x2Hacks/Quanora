@@ -7,6 +7,8 @@ import platform
 import shutil
 from dataclasses import dataclass, field
 
+from agent.infrastructure.config.settings import get_workspace_guard
+
 
 @dataclass
 class ShellState:
@@ -38,10 +40,21 @@ class BashSessionPool:
             return shutil.which("bash") or "bash"
 
     def get_state(self, session_id: str) -> ShellState:
-        """Get or create the shell state for a session."""
+        """Get or create the shell state for a session.
+
+        New sessions start in the **project workspace root** (not the
+        process cwd), so any relative-path command the agent runs lands
+        inside the user's project rather than alongside Quanora's own
+        source code.
+        """
         if session_id not in self._states:
+            try:
+                default_cwd = str(get_workspace_guard().root)
+            except Exception:
+                # Defensive: fall back to process cwd if settings aren't ready.
+                default_cwd = os.getcwd()
             self._states[session_id] = ShellState(
-                cwd=os.getcwd(),
+                cwd=default_cwd,
                 env=os.environ.copy(),
                 shell_executable=self._default_executable
             )

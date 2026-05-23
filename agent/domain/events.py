@@ -136,6 +136,25 @@ class PlanSnapshotEvent(RuntimeEvent):
 
 
 @dataclass(slots=True)
+class WorkspaceViolationEvent(RuntimeEvent):
+    """Fired when the framework rejects a write that escapes the project workspace
+    or targets the agent's own protected source code.
+
+    This is a **framework-level guarantee**: the violation is enforced by the
+    write tools themselves (they call WorkspaceGuard.check_write before any
+    disk I/O) and the rejection is broadcast to the CLI so the user can see
+    that the agent tried to write somewhere it should not, even if the agent
+    later glosses over the error in its narration.
+    """
+    type: Literal["workspace_violation"] = "workspace_violation"
+    tool_name: str = ""
+    path: str = ""
+    status: Literal["outside", "protected"] = "outside"
+    reason: str = ""
+    suggested_fix: str = ""
+
+
+@dataclass(slots=True)
 class DataIntegrityWarningEvent(RuntimeEvent):
     """Fired when a tool result looks like a data-source failure that the
     agent must report rather than fabricate.

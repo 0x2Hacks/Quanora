@@ -177,6 +177,12 @@ def parse_tool_result(tool_name: str, payload_str: str) -> dict[str, Any]:
         result["status"] = "error"
         err = obj.get("error") or obj.get("error_type") or "unknown error"
         result["summary"] = _shorten(f"Error: {err}")
+        # Forward error_type and meta so downstream detectors (workspace
+        # violation, data integrity, etc.) can branch on structured fields.
+        if obj.get("error_type"):
+            result["error_type"] = obj["error_type"]
+        if isinstance(obj.get("meta"), dict):
+            result["meta"] = obj["meta"]
     else:
         result["summary"] = _shorten(payload_str)
     return result
@@ -373,3 +379,42 @@ def _suggested_remediation(tool_name: str) -> str:
             "fabricated alpha metrics are worse than no metrics."
         )
     return "Report the failure to the user; do not fabricate the missing data."
+
+
+# ---------------------------------------------------------------------------
+# Workspace boundary detection
+# ---------------------------------------------------------------------------
+
+def detect_workspace_violation(
+    tool_name: str, parsed_result: dict[str, Any]
+) -> dict[str, str] | None:
+    """If a write tool rejected a path for boundary reasons, return a dict
+    suitable for a WorkspaceViolationEvent. Otherwise None.
+
+    We detect this by looking for the standardized ``WorkspaceViolation``
+    error type that ``write_file`` / ``edit_file`` raise — see
+    ``agent/infrastructure/tools/impl/tools/file_ops.py``. The meta payload
+    carries ``violation_status`` (``outside`` | ``protected``), ``path``
+    and ``suggested_fix`` so the CLI can render a structured banner.
+    """
+    if parsed_result.get("status") != "error":
+        return None
+
+    meta = parsed_result.get("meta") or {}
+    # The processor surfaces error_type on the parsed payload as well.
+    error_type = parsed_result.get("error_type") or meta.get("error_type") or ""
+    if error_type != "WorkspaceViolation":
+        return None
+
+    status = meta.get("violation_status") or "outside"
+    if status not in ("outside", "protected"):
+        status = "outside"
+    reason = str(parsed_result.get("summary") or "workspace boundary violation").lstrip("Error: ").strip()
+
+    return {
+        "tool_name": tool_name,
+        "path": str(meta.get("path") or ""),
+        "status": status,
+        "reason": _shorten(reason, 240),
+        "suggested_fix": _shorten(str(meta.get("suggested_fix") or ""), 240),
+    }

@@ -1,9 +1,121 @@
 """配置模块"""
 import os
+from pathlib import Path
+
 from dotenv import load_dotenv
 from openai import OpenAI, AsyncOpenAI
 
+from agent.domain import WorkspaceConfig, WorkspaceGuard
+
 load_dotenv()
+
+
+# ---------------------------------------------------------------------------
+# Workspace boundary
+# ---------------------------------------------------------------------------
+#
+# Quanora is an autonomous coding agent: when it writes code for a user's
+# project, that code MUST land in the user's project directory — never in
+# Quanora's own source tree.
+#
+# Two paths matter:
+#
+#   * QUANORA_WORKSPACE  — the project directory the agent is working on.
+#                          Default: ./workspace (resolved relative to the
+#                          process cwd). All writes are confined here.
+#   * QUANORA_HOME       — Quanora's own install root (defaults to the
+#                          directory containing this file's grandparent's
+#                          parent, i.e. the repo root). Marked PROTECTED so
+#                          the agent cannot modify it.
+
+_QUANORA_REPO_ROOT = Path(__file__).resolve().parents[3]  # .../webapp
+
+
+def _resolve_workspace_root() -> Path:
+    raw = os.getenv("QUANORA_WORKSPACE")
+    if raw:
+        return Path(raw).expanduser().resolve()
+    # Default: a sibling "workspace" directory next to Quanora itself. We
+    # deliberately do NOT default to the repo root — that's where Quanora's
+    # own code lives.
+    return (_QUANORA_REPO_ROOT / "workspace").resolve()
+
+
+def _resolve_protected_paths(workspace_root: Path) -> tuple[Path, ...]:
+    """Return paths the agent must never write into.
+
+    Quanora's own source code (``agent/``, ``test/``, ``.quanora/``,
+    ``scripts/``) is always protected. If the user happens to point
+    ``QUANORA_WORKSPACE`` at the repo root, these still hold — the agent
+    can write to new sibling files but cannot touch the existing source.
+    """
+    protected = [
+        _QUANORA_REPO_ROOT / "agent",
+        _QUANORA_REPO_ROOT / "test",
+        _QUANORA_REPO_ROOT / ".quanora",
+        _QUANORA_REPO_ROOT / "scripts",
+        _QUANORA_REPO_ROOT / "docs",
+        _QUANORA_REPO_ROOT / ".git",
+        _QUANORA_REPO_ROOT / "main.py",
+        _QUANORA_REPO_ROOT / "requirements.txt",
+        _QUANORA_REPO_ROOT / ".env",
+        _QUANORA_REPO_ROOT / ".env.example",
+    ]
+    # Honour an optional, comma-separated env override that adds extra
+    # protected paths (e.g. another in-house library the user mounts but
+    # does not want touched).
+    extra = os.getenv("QUANORA_PROTECTED_PATHS", "").strip()
+    if extra:
+        for entry in extra.split(","):
+            entry = entry.strip()
+            if entry:
+                protected.append(Path(entry).expanduser().resolve())
+    # De-dupe and resolve. Skip entries that don't exist on disk so we don't
+    # accidentally protect random typos.
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for p in protected:
+        try:
+            rp = p.resolve()
+        except OSError:
+            continue
+        if rp in seen:
+            continue
+        seen.add(rp)
+        out.append(rp)
+    return tuple(out)
+
+
+_WORKSPACE_ROOT = _resolve_workspace_root()
+# Create the workspace dir on first import so the agent has somewhere to write
+# from the moment it boots. We do NOT touch protected paths.
+try:
+    _WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+except OSError:
+    # Read-only filesystem or permission issue — leave to the guard to report.
+    pass
+
+_WORKSPACE_CONFIG = WorkspaceConfig(
+    root=_WORKSPACE_ROOT,
+    protected_paths=_resolve_protected_paths(_WORKSPACE_ROOT),
+    allow_outside_reads=True,
+)
+_WORKSPACE_GUARD = WorkspaceGuard(_WORKSPACE_CONFIG)
+
+
+def get_workspace_guard() -> WorkspaceGuard:
+    """Return the process-wide workspace guard.
+
+    Tools call this to validate paths before any write. Tests may replace
+    the guard via :func:`set_workspace_guard` for isolation.
+    """
+    return _WORKSPACE_GUARD
+
+
+def set_workspace_guard(guard: WorkspaceGuard) -> None:
+    """Override the process-wide guard (test-only seam)."""
+    global _WORKSPACE_GUARD
+    _WORKSPACE_GUARD = guard
 
 
 class Config:
@@ -12,6 +124,10 @@ class Config:
     DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-4o-mini")
     TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
     MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2000"))
+
+    # Workspace boundary (resolved at import time).
+    WORKSPACE_ROOT = _WORKSPACE_ROOT
+    QUANORA_HOME = _QUANORA_REPO_ROOT
 
     @classmethod
     def validate(cls):

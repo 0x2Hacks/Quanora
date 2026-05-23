@@ -14,6 +14,7 @@ from agent.domain.events import (
     ToolBatchStartedEvent,
     PlanSnapshotEvent,
     DataIntegrityWarningEvent,
+    WorkspaceViolationEvent,
 )
 from agent.interfaces.cli.ui import print_rainbow_logo, render_markdown, StreamingRenderer
 from prompt_toolkit import PromptSession
@@ -188,6 +189,7 @@ class ChatCLI:
             ToolBatchStartedEvent,
             PlanSnapshotEvent,
             DataIntegrityWarningEvent,
+            WorkspaceViolationEvent,
         )
 
         if isinstance(event, TurnStartedEvent):
@@ -273,6 +275,25 @@ class ChatCLI:
             self._console.print(f"[red]    原因: {reason}[/red]")
             if action:
                 self._console.print(f"[yellow]    建议: {action}[/yellow]")
+        elif isinstance(event, WorkspaceViolationEvent):
+            # Loud banner — the agent tried to write outside the project
+            # workspace (or into Quanora's own protected source tree). The
+            # framework already blocked the write; this just makes the
+            # attempt visible so the user can see the agent's intent.
+            tool_name = getattr(event, "tool_name", "?")
+            path = getattr(event, "path", "?")
+            status = getattr(event, "status", "outside")
+            reason = getattr(event, "reason", "workspace boundary violation")
+            fix = getattr(event, "suggested_fix", "")
+            label = "保护区写入" if status == "protected" else "越界写入"
+            self._console.print(
+                "\n[bold white on red] ⛔ 工作区边界违规 [/bold white on red]"
+                f" [red]{tool_name} → {label}[/red]"
+            )
+            self._console.print(f"[red]    路径: {path}[/red]")
+            self._console.print(f"[yellow]    原因: {reason}[/yellow]")
+            if fix:
+                self._console.print(f"[yellow]    建议: {fix}[/yellow]")
         elif isinstance(event, TurnFailedEvent):
             self._streaming_renderer.flush()
             message = getattr(event, "error", "") or getattr(event, "reason", "") or "unknown"
