@@ -102,6 +102,11 @@ _WORKSPACE_CONFIG = WorkspaceConfig(
 )
 _WORKSPACE_GUARD = WorkspaceGuard(_WORKSPACE_CONFIG)
 
+# Self-dev mode flag. When True the workspace is rebuilt to point at the
+# Quanora repo root, with only .git protected — so the agent can edit its
+# own source code, run its own tests, and commit/push the result.
+_SELF_DEV_MODE: bool = False
+
 
 def get_workspace_guard() -> WorkspaceGuard:
     """Return the process-wide workspace guard.
@@ -116,6 +121,85 @@ def set_workspace_guard(guard: WorkspaceGuard) -> None:
     """Override the process-wide guard (test-only seam)."""
     global _WORKSPACE_GUARD
     _WORKSPACE_GUARD = guard
+
+
+def is_self_dev_mode() -> bool:
+    """Return True when the agent is running in self-development mode."""
+    return _SELF_DEV_MODE
+
+
+def enable_self_dev_mode() -> WorkspaceGuard:
+    """Switch the agent into self-development mode.
+
+    Effects:
+
+    * Workspace root → the Quanora repo root. All file writes now land
+      in Quanora's own source tree by default.
+    * Protected paths → reduced to ``.git/`` only. The agent can now edit
+      ``agent/``, ``test/``, ``main.py``, ``.quanora/skills/``, prompts,
+      docs, etc. ``.git/`` stays protected so the agent uses ``git``
+      commands (via ``bash``) rather than tampering with git internals.
+    * Global flag :func:`is_self_dev_mode` returns True so other layers
+      (system prompt, CLI banner, skills) can branch on it.
+
+    Returns the new workspace guard so callers can verify the swap.
+
+    This is intentionally a runtime switch (not a separate process or
+    config file) so the same Python process boots either way. Tests
+    can call this in setup and reset with :func:`disable_self_dev_mode`.
+    """
+    global _SELF_DEV_MODE, _WORKSPACE_GUARD
+    _SELF_DEV_MODE = True
+
+    # In self-dev mode .git is the only thing that stays off-limits. We
+    # protect a few read-only files (.env containing secrets) as well, to
+    # avoid the agent accidentally rewriting credentials.
+    protected: list[Path] = []
+    for candidate in (
+        _QUANORA_REPO_ROOT / ".git",
+        _QUANORA_REPO_ROOT / ".env",
+    ):
+        try:
+            rp = candidate.resolve()
+        except OSError:
+            continue
+        if rp.exists():
+            protected.append(rp)
+
+    # Honour optional extra protected paths from the environment.
+    extra = os.getenv("QUANORA_PROTECTED_PATHS", "").strip()
+    if extra:
+        for entry in extra.split(","):
+            entry = entry.strip()
+            if entry:
+                try:
+                    rp = Path(entry).expanduser().resolve()
+                except OSError:
+                    continue
+                if rp not in protected:
+                    protected.append(rp)
+
+    new_cfg = WorkspaceConfig(
+        root=_QUANORA_REPO_ROOT,
+        protected_paths=tuple(protected),
+        allow_outside_reads=True,
+    )
+    _WORKSPACE_GUARD = WorkspaceGuard(new_cfg)
+    return _WORKSPACE_GUARD
+
+
+def disable_self_dev_mode() -> WorkspaceGuard:
+    """Restore the default (non-self-dev) workspace guard. Test-only."""
+    global _SELF_DEV_MODE, _WORKSPACE_GUARD
+    _SELF_DEV_MODE = False
+    _WORKSPACE_GUARD = WorkspaceGuard(
+        WorkspaceConfig(
+            root=_WORKSPACE_ROOT,
+            protected_paths=_resolve_protected_paths(_WORKSPACE_ROOT),
+            allow_outside_reads=True,
+        )
+    )
+    return _WORKSPACE_GUARD
 
 
 class Config:

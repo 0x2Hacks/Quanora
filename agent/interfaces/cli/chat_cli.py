@@ -25,10 +25,11 @@ from rich.console import Console
 class ChatCLI:
     """Interactive CLI that delegates core behavior to application runtime."""
 
-    def __init__(self, runtime, session, debug: bool = False):
+    def __init__(self, runtime, session, debug: bool = False, self_dev: bool = False):
         self._runtime = runtime
         self._session = session
         self._debug = debug
+        self._self_dev = self_dev
         self._assistant_buffer: list[str] = []
         self._console = Console()
         self._streaming_renderer = StreamingRenderer(self._console)
@@ -72,6 +73,24 @@ class ChatCLI:
         else:
             print("Quanora v0.1")
             print("Welcome back!")
+        if self._self_dev:
+            # Loud, persistent banner so the user can never forget the agent
+            # is currently authorised to edit its own source.
+            try:
+                from agent.infrastructure.config.settings import get_workspace_guard
+                ws = str(get_workspace_guard().root)
+            except Exception:
+                ws = "(unknown)"
+            self._console.print(
+                "[bold white on red]"
+                " 🛠  SELF-DEVELOPMENT MODE ACTIVE "
+                "[/bold white on red]"
+            )
+            self._console.print(
+                f"[yellow]    workspace = {ws}[/yellow]\n"
+                "[yellow]    Quanora can now edit its own code, run its own tests,[/yellow]\n"
+                "[yellow]    commit, push, and open pull requests. .git/ and .env stay protected.[/yellow]"
+            )
         print("-" * 50)
 
     def _render_loaded_messages(self) -> None:
