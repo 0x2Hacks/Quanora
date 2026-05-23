@@ -43,15 +43,35 @@ class WorkspaceConfig:
         disk) but must never be modified by the agent — typically the
         directories that contain the Quanora agent's own source code
         (``agent/``, ``test/``, ``.quanora/``…). Reads are still allowed.
+        Files whose extension matches ``protected_write_extensions`` are
+        exempt from this ban (see below).
     allow_outside_reads :
         Reads outside the workspace are allowed (the agent legitimately
         needs to read system files, libraries, etc.). This flag exists
         only to make the policy explicit.
+    protected_write_extensions :
+        File extensions that are **exempt** from the protected-path write
+        ban. If a file's suffix matches one of these (e.g. ``".md"``),
+        it can be written even inside a protected subtree — **unless**
+        that subtree is also listed in ``fully_protected_paths``. This
+        enables ``self-doc`` mode where the agent may edit documentation
+        but not source code inside the Quanora repo. Extensions are
+        compared case-insensitively.
+    fully_protected_paths :
+        Paths that are **always protected, regardless of file extension**.
+        No extension whitelist applies here — even ``.md`` files inside
+        a fully-protected path cannot be written. Typical entries:
+        ``.git/`` and ``.env``. These paths must also appear in
+        ``protected_paths`` (the overlap is intentional — classify()
+        checks ``fully_protected_paths`` *before* the extension whitelist
+        logic).
     """
 
     root: Path
     protected_paths: tuple[Path, ...] = field(default_factory=tuple)
     allow_outside_reads: bool = True
+    protected_write_extensions: tuple[str, ...] = field(default_factory=tuple)
+    fully_protected_paths: tuple[Path, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:  # pragma: no cover - dataclass guard
         if not self.root.is_absolute():
@@ -112,14 +132,37 @@ class WorkspaceGuard:
 
         Returns one of:
 
-        * ``"allowed"`` — path is inside the workspace and not protected.
-        * ``"protected"`` — path is inside a protected subtree.
+        * ``"allowed"`` — path is inside the workspace and not protected,
+          **or** inside a protected subtree but its extension matches one
+          of ``protected_write_extensions`` (e.g. ``.md`` in self-doc mode)
+          and the subtree is not in ``fully_protected_paths``.
+        * ``"protected"`` — path is inside a protected subtree and its
+          extension is not whitelisted, **or** the subtree is in
+          ``fully_protected_paths`` (extension whitelist does not apply).
         * ``"outside"`` — path is not inside the workspace at all.
         """
         resolved = self._resolve(path)
 
+        # Step 1: fully_protected_paths — NO extension whitelist applies.
+        # .git/ and .env are always fully protected, even for .md files.
+        for fp in self._cfg.fully_protected_paths:
+            if _is_under(resolved, fp):
+                return "protected"
+
+        # Step 2: protected_paths — extension whitelist may exempt .md
+        # files in self-doc mode (but fully_protected_paths were already
+        # checked above, so .git/.env won't be bypassed).
         for prot in self._cfg.protected_paths:
             if _is_under(resolved, prot):
+                # Check extension whitelist — .md files in protected areas
+                # are allowed in self-doc mode.
+                if self._cfg.protected_write_extensions:
+                    suffix = resolved.suffix.lower()
+                    allowed_exts = tuple(
+                        e.lower() for e in self._cfg.protected_write_extensions
+                    )
+                    if suffix in allowed_exts:
+                        return "allowed"
                 return "protected"
 
         if _is_under(resolved, self._cfg.root):

@@ -28,6 +28,7 @@ def build_basic_agent_dependencies(
     session_id: str | None = None,
     resume_latest: bool = False,
     self_dev: bool = False,
+    self_doc: bool = False,
 ) -> dict[str, object]:
     """Wire layered dependencies.
 
@@ -40,11 +41,22 @@ def build_basic_agent_dependencies(
         ``settings.enable_self_dev_mode()`` before calling this function —
         the prompt addendum only tells the model about the new permissions;
         the actual filesystem boundary is enforced by the guard.
+    self_doc :
+        When True, the session is bootstrapped with the self-documentation
+        addendum appended to the system prompt. ``self_dev`` and
+        ``self_doc`` are mutually exclusive; if both are True,
+        ``self_dev`` takes precedence. The caller should have ALSO switched
+        the workspace guard via ``settings.enable_self_doc_mode()`` before
+        calling this function.
     """
     model = Config.DEFAULT_MODEL
     async_client = Config.get_async_client()
 
-    system_prompt = build_system_prompt(self_dev=self_dev)
+    # self_dev takes precedence over self_doc if both are True.
+    system_prompt = build_system_prompt(
+        self_dev=self_dev,
+        self_doc=self_doc and not self_dev,
+    )
 
     session: AsyncSessionStore = AsyncJsonlSessionStore(
         session_dir=session_dir,
