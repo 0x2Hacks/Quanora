@@ -119,6 +119,12 @@ _WORKSPACE_GUARD = WorkspaceGuard(_WORKSPACE_CONFIG)
 # own source code, run its own tests, and commit/push the result.
 _SELF_DEV_MODE: bool = False
 
+# Self-doc mode flag. When True the workspace points at the Quanora repo
+# root, with the full repo tree protected — but ``.md`` files are exempt
+# via the ``protected_write_extensions`` whitelist. This allows the agent
+# to read and improve its own documentation without touching source code.
+_SELF_DOC_MODE: bool = False
+
 
 def get_workspace_guard() -> WorkspaceGuard:
     """Return the process-wide workspace guard.
@@ -204,6 +210,99 @@ def disable_self_dev_mode() -> WorkspaceGuard:
     """Restore the default (non-self-dev) workspace guard. Test-only."""
     global _SELF_DEV_MODE, _WORKSPACE_GUARD
     _SELF_DEV_MODE = False
+    _WORKSPACE_GUARD = WorkspaceGuard(
+        WorkspaceConfig(
+            root=_WORKSPACE_ROOT,
+            protected_paths=_resolve_protected_paths(_WORKSPACE_ROOT),
+            allow_outside_reads=True,
+        )
+    )
+    return _WORKSPACE_GUARD
+
+
+# ---------------------------------------------------------------------------
+# Self-doc mode
+# ---------------------------------------------------------------------------
+
+def is_self_doc_mode() -> bool:
+    """Return whether the agent is running in *self-doc* (markdown-only) mode."""
+    return _SELF_DOC_MODE
+
+
+def enable_self_doc_mode() -> WorkspaceGuard:
+    """Switch the agent into *self-doc* (markdown-only editing) mode.
+
+    Effects:
+
+    * Workspace root → the Quanora repo root, same as self-dev.
+    * Protected paths → the *full* Quanora repo tree (``agent/``, ``test/``,
+      ``main.py``, ``.quanora/``, etc.). However, files whose extension is
+      ``.md`` are **exempt** from the write ban via
+      ``protected_write_extensions``. This allows the agent to read and
+      improve its own documentation (README, docs/, .quanora/skills/*/SKILL.md,
+      etc.) without touching source code.
+    * ``.git/`` and ``.env`` stay fully protected — even ``.md`` inside
+      ``.git/`` must not be written.
+    * Global flag :func:`is_self_doc_mode` returns True so other layers
+      (system prompt, CLI banner) can branch on it.
+
+    Returns the new workspace guard so callers can verify the swap.
+    """
+    global _SELF_DOC_MODE, _WORKSPACE_GUARD
+    _SELF_DOC_MODE = True
+
+    # Protect the entire Quanora repo tree. .md files will be exempted
+    # via protected_write_extensions, but .git and .env are fully
+    # off-limits (no .md exemption for those).
+    protected: list[Path] = []
+    for candidate in (
+        _QUANORA_REPO_ROOT,          # the whole repo tree
+        _QUANORA_REPO_ROOT / ".git",  # git internals — always fully protected
+        _QUANORA_REPO_ROOT / ".env",  # secrets — always fully protected
+    ):
+        try:
+            rp = candidate.resolve()
+        except OSError:
+            continue
+        if rp.exists():
+            protected.append(rp)
+
+    # Remove duplicates — .git and .env are under the repo root, but
+    # we want to be explicit about them.
+    protected = list(dict.fromkeys(protected))
+
+    # .git/ and .env are "fully protected" — no extension whitelist
+    # exemption applies there, even for .md files.
+    fully_protected: list[Path] = []
+    for candidate in (
+        _QUANORA_REPO_ROOT / ".git",  # git internals — always fully protected
+        _QUANORA_REPO_ROOT / ".env",  # secrets — always fully protected
+    ):
+        try:
+            rp = candidate.resolve()
+        except OSError:
+            continue
+        if rp.exists():
+            fully_protected.append(rp)
+
+    # Remove duplicates
+    fully_protected = list(dict.fromkeys(fully_protected))
+
+    new_cfg = WorkspaceConfig(
+        root=_QUANORA_REPO_ROOT,
+        protected_paths=tuple(protected),
+        allow_outside_reads=True,
+        protected_write_extensions=(".md",),
+        fully_protected_paths=tuple(fully_protected),
+    )
+    _WORKSPACE_GUARD = WorkspaceGuard(new_cfg)
+    return _WORKSPACE_GUARD
+
+
+def disable_self_doc_mode() -> WorkspaceGuard:
+    """Restore the default (non-self-doc) workspace guard. Test-only."""
+    global _SELF_DOC_MODE, _WORKSPACE_GUARD
+    _SELF_DOC_MODE = False
     _WORKSPACE_GUARD = WorkspaceGuard(
         WorkspaceConfig(
             root=_WORKSPACE_ROOT,
