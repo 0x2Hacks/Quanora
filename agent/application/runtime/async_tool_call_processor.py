@@ -16,6 +16,7 @@ from agent.domain.events import (
     ToolProgressEvent,
     PlanSnapshotEvent,
     DataIntegrityWarningEvent,
+    WorkspaceViolationEvent,
 )
 from agent.application.tool_executor import ToolExecutor
 from agent.application.runtime.cancellation import CancellationToken
@@ -23,6 +24,7 @@ from agent.application.runtime.tool_telemetry import (
     render_args_preview,
     parse_tool_result,
     detect_data_integrity_warning,
+    detect_workspace_violation,
 )
 
 
@@ -138,6 +140,14 @@ class AsyncToolCallProcessor:
                 warning = detect_data_integrity_warning(call.name, parsed)
                 if warning:
                     yield DataIntegrityWarningEvent(ts=session.now_iso(), **warning)
+
+                # Framework-level workspace boundary: if a write tool rejected
+                # a path because it would escape the project workspace or hit
+                # protected (Quanora's own) code, surface a loud banner so the
+                # user sees what the agent attempted.
+                ws_violation = detect_workspace_violation(call.name, parsed)
+                if ws_violation:
+                    yield WorkspaceViolationEvent(ts=session.now_iso(), **ws_violation)
 
             ts_end = session.now_iso()
 

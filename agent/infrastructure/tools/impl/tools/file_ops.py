@@ -3,6 +3,7 @@ from pathlib import Path
 import re
 
 from agent.domain import tool_error, tool_ok
+from agent.infrastructure.config.settings import get_workspace_guard
 
 _GREP_SKIP_DIRS = frozenset({
     ".git", "node_modules", "venv", ".venv", "__pycache__",
@@ -52,7 +53,24 @@ def read_file(file_path: str, offset: int = 1, limit: int = 1000) -> str:
 
 def write_file(file_path: str, content: str) -> str:
     try:
-        path = Path(file_path).expanduser().resolve()
+        guard = get_workspace_guard()
+        # Relative paths resolve under the workspace root, not the process
+        # cwd — this is what enforces "agent writes land inside the project".
+        path = guard.resolve_under_root(file_path)
+
+        violation = guard.check_write(path)
+        if violation is not None:
+            return tool_error(
+                "write_file",
+                f"WORKSPACE BOUNDARY VIOLATION: {violation.reason} | Fix: {violation.suggested_fix}",
+                "WorkspaceViolation",
+                meta={
+                    "path": violation.path,
+                    "violation_status": violation.status,
+                    "workspace_root": str(guard.root),
+                    "suggested_fix": violation.suggested_fix,
+                },
+            )
 
         is_overwrite = path.exists()
         action = "覆盖" if is_overwrite else "新建"
@@ -73,7 +91,23 @@ def edit_file(file_path: str, old_str: str, new_str: str) -> str:
     精确替换文件中的某一段文本 (Search and Replace)。
     """
     try:
-        path = Path(file_path).expanduser().resolve()
+        guard = get_workspace_guard()
+        path = guard.resolve_under_root(file_path)
+
+        violation = guard.check_write(path)
+        if violation is not None:
+            return tool_error(
+                "edit_file",
+                f"WORKSPACE BOUNDARY VIOLATION: {violation.reason} | Fix: {violation.suggested_fix}",
+                "WorkspaceViolation",
+                meta={
+                    "path": violation.path,
+                    "violation_status": violation.status,
+                    "workspace_root": str(guard.root),
+                    "suggested_fix": violation.suggested_fix,
+                },
+            )
+
         if not path.exists():
             return tool_error("edit_file", f"文件不存在: {file_path}", "NotFound")
         if not path.is_file():

@@ -17,7 +17,7 @@ from agent.infrastructure.plans import PlanContextProvider
 from agent.infrastructure.skills import SkillRepository
 from agent.infrastructure.tools import DefaultToolRegistry
 from agent.interfaces.cli import ChatCLI
-from agent.prompts import SYSTEM_PROMPT
+from agent.prompts import build_system_prompt
 
 
 def build_basic_agent_dependencies(
@@ -27,16 +27,31 @@ def build_basic_agent_dependencies(
     session_dir: str | None = None,
     session_id: str | None = None,
     resume_latest: bool = False,
+    self_dev: bool = False,
 ) -> dict[str, object]:
+    """Wire layered dependencies.
+
+    Parameters
+    ----------
+    self_dev :
+        When True, the session is bootstrapped with the self-development
+        addendum appended to the system prompt. The caller is expected to
+        have ALSO switched the workspace guard via
+        ``settings.enable_self_dev_mode()`` before calling this function —
+        the prompt addendum only tells the model about the new permissions;
+        the actual filesystem boundary is enforced by the guard.
+    """
     model = Config.DEFAULT_MODEL
     async_client = Config.get_async_client()
+
+    system_prompt = build_system_prompt(self_dev=self_dev)
 
     session: AsyncSessionStore = AsyncJsonlSessionStore(
         session_dir=session_dir,
         session_id=session_id,
         resume_latest=resume_latest,
         model=model,
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt,
     )
     
     store_dir = session._session_dir or getattr(session, "_default_session_root", lambda: "sessions")()
@@ -73,7 +88,7 @@ def build_basic_agent_dependencies(
     
     runtime = AsyncRuntimeFacade(turn_runner=turn_runner, session_store=session)
     
-    cli = ChatCLI(runtime=runtime, session=session, debug=debug)
+    cli = ChatCLI(runtime=runtime, session=session, debug=debug, self_dev=self_dev)
 
     return {
         "chat_client": async_chat_client,

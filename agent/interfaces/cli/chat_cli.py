@@ -14,6 +14,7 @@ from agent.domain.events import (
     ToolBatchStartedEvent,
     PlanSnapshotEvent,
     DataIntegrityWarningEvent,
+    WorkspaceViolationEvent,
 )
 from agent.interfaces.cli.ui import print_rainbow_logo, render_markdown, StreamingRenderer
 from prompt_toolkit import PromptSession
@@ -24,10 +25,11 @@ from rich.console import Console
 class ChatCLI:
     """Interactive CLI that delegates core behavior to application runtime."""
 
-    def __init__(self, runtime, session, debug: bool = False):
+    def __init__(self, runtime, session, debug: bool = False, self_dev: bool = False):
         self._runtime = runtime
         self._session = session
         self._debug = debug
+        self._self_dev = self_dev
         self._assistant_buffer: list[str] = []
         self._console = Console()
         self._streaming_renderer = StreamingRenderer(self._console)
@@ -71,6 +73,24 @@ class ChatCLI:
         else:
             print("Quanora v0.1")
             print("Welcome back!")
+        if self._self_dev:
+            # Loud, persistent banner so the user can never forget the agent
+            # is currently authorised to edit its own source.
+            try:
+                from agent.infrastructure.config.settings import get_workspace_guard
+                ws = str(get_workspace_guard().root)
+            except Exception:
+                ws = "(unknown)"
+            self._console.print(
+                "[bold white on red]"
+                " 🛠  SELF-DEVELOPMENT MODE ACTIVE "
+                "[/bold white on red]"
+            )
+            self._console.print(
+                f"[yellow]    workspace = {ws}[/yellow]\n"
+                "[yellow]    Quanora can now edit its own code, run its own tests,[/yellow]\n"
+                "[yellow]    commit, push, and open pull requests. .git/ and .env stay protected.[/yellow]"
+            )
         print("-" * 50)
 
     def _render_loaded_messages(self) -> None:
@@ -188,6 +208,7 @@ class ChatCLI:
             ToolBatchStartedEvent,
             PlanSnapshotEvent,
             DataIntegrityWarningEvent,
+            WorkspaceViolationEvent,
         )
 
         if isinstance(event, TurnStartedEvent):
@@ -273,6 +294,25 @@ class ChatCLI:
             self._console.print(f"[red]    原因: {reason}[/red]")
             if action:
                 self._console.print(f"[yellow]    建议: {action}[/yellow]")
+        elif isinstance(event, WorkspaceViolationEvent):
+            # Loud banner — the agent tried to write outside the project
+            # workspace (or into Quanora's own protected source tree). The
+            # framework already blocked the write; this just makes the
+            # attempt visible so the user can see the agent's intent.
+            tool_name = getattr(event, "tool_name", "?")
+            path = getattr(event, "path", "?")
+            status = getattr(event, "status", "outside")
+            reason = getattr(event, "reason", "workspace boundary violation")
+            fix = getattr(event, "suggested_fix", "")
+            label = "保护区写入" if status == "protected" else "越界写入"
+            self._console.print(
+                "\n[bold white on red] ⛔ 工作区边界违规 [/bold white on red]"
+                f" [red]{tool_name} → {label}[/red]"
+            )
+            self._console.print(f"[red]    路径: {path}[/red]")
+            self._console.print(f"[yellow]    原因: {reason}[/yellow]")
+            if fix:
+                self._console.print(f"[yellow]    建议: {fix}[/yellow]")
         elif isinstance(event, TurnFailedEvent):
             self._streaming_renderer.flush()
             message = getattr(event, "error", "") or getattr(event, "reason", "") or "unknown"

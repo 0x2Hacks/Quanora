@@ -20,6 +20,7 @@ class BasicAgent:
         session_dir: str | None = None,
         session_id: str | None = None,
         resume_latest: bool = False,
+        self_dev: bool = False,
     ):
         dependencies = build_basic_agent_dependencies(
             tools=tools,
@@ -27,6 +28,7 @@ class BasicAgent:
             session_dir=session_dir,
             session_id=session_id,
             resume_latest=resume_latest,
+            self_dev=self_dev,
         )
         self._tool_registry = dependencies["tool_registry"]
         self._chat_client = dependencies["chat_client"]

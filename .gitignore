@@ -10,6 +10,10 @@ env/
 .chainpeer/
 sessions/
 
+# Default workspace root (auto-created by Settings; user projects live here
+# and should NOT pollute Quanora's own git tree).
+workspace/
+
 # Testing & Cache
 .pytest_cache/
 .coverage
