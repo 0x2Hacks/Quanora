@@ -15,6 +15,7 @@ from agent.infrastructure.persistence.session_files import SessionFiles
 from agent.infrastructure.persistence.message_repository import MessageRepository
 from agent.infrastructure.persistence.tool_call_repository import ToolCallRepository
 from agent.infrastructure.persistence.summary_repository import SummaryRepository
+from agent.infrastructure.persistence.turn_cost_repository import TurnCostRepository
 from agent.infrastructure.persistence.session_index_repository import SessionIndexRepository
 from agent.domain import looks_like_tool_payload
 
@@ -119,6 +120,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
             "tool_calls": os.path.join(base, "tool_calls.jsonl"),
             "tool_call_summaries": os.path.join(base, "tool_call_summaries.jsonl"),
             "conversation_summaries": os.path.join(base, "conversation_summaries.jsonl"),
+            "turn_costs": os.path.join(base, "turn_costs.jsonl"),
             "snapshots": os.path.join(base, "snapshots"),
         }
 
@@ -126,6 +128,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
         self._msg_repo = MessageRepository(self._files, self._session_paths["messages"])
         self._tool_repo = ToolCallRepository(self._files, self._session_paths["tool_calls"], looks_like_tool_payload)
         self._summary_repo = SummaryRepository(self._files, self._session_paths["tool_call_summaries"], self._session_paths["conversation_summaries"])
+        self._cost_repo = TurnCostRepository(self._files, self._session_paths["turn_costs"])
 
     def _create_session(self, session_id: str | None = None) -> None:
         if not session_id:
@@ -302,6 +305,28 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                     self._session_meta["updated_at"] = self.now_iso()
                     self._files.write_json(self._session_paths["meta"], self._session_meta)
                 self._update_index()
+
+            await asyncio.to_thread(_persist)
+
+    async def persist_turn_cost(
+        self,
+        turn_id: str,
+        cost_report: dict[str, Any],
+    ) -> None:
+        """Persist a TurnCostReport summary for a specific turn."""
+        async with self._write_lock:
+            def _persist():
+                if not self._cost_repo:
+                    return
+                self._cost_repo.persist_cost(self._session_id, turn_id, cost_report)
+                # Update session meta with accumulated cost
+                if self._session_meta:
+                    prev_tokens = self._session_meta.get("total_tokens", 0)
+                    prev_turns = self._session_meta.get("cost_turns", 0)
+                    self._session_meta["total_tokens"] = prev_tokens + cost_report.get("total_tokens", 0)
+                    self._session_meta["cost_turns"] = prev_turns + 1
+                    self._session_meta["updated_at"] = self.now_iso()
+                    self._files.write_json(self._session_paths["meta"], self._session_meta)
 
             await asyncio.to_thread(_persist)
 

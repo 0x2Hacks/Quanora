@@ -7,6 +7,98 @@ from dataclasses import dataclass, field, asdict
 from typing import Any, Literal
 
 
+# ── Token / time usage tracking (Feature 1) ─────────────────────────────────
+
+@dataclass(slots=True)
+class LLMUsageRecord:
+    """Token usage for a single LLM API call within a turn.
+
+    Captured from the OpenAI stream's final chunk (usage field) or
+    the non-streaming response's usage object.
+    """
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    latency_seconds: float = 0.0          # wall time from request → last chunk
+    model: str = ""
+
+
+@dataclass(slots=True)
+class ToolCallUsageRecord:
+    """Time cost for a single tool call execution within a turn."""
+    tool_name: str = ""
+    call_id: str = ""
+    wall_seconds: float = 0.0             # execution duration
+    input_chars: int = 0                  # approximate input size
+    output_chars: int = 0                 # approximate output size
+
+
+@dataclass(slots=True)
+class TurnCostReport:
+    """Aggregated cost report attached to TurnCompletedEvent.
+
+    Provides a detailed breakdown of all resource consumption within a
+    single user turn, enabling per-turn analysis and cross-session stats.
+    """
+    llm_calls: list[LLMUsageRecord] = field(default_factory=list)
+    tool_calls: list[ToolCallUsageRecord] = field(default_factory=list)
+    total_prompt_tokens: int = 0
+    total_completion_tokens: int = 0
+    total_tokens: int = 0
+    total_llm_latency_seconds: float = 0.0
+    total_tool_wall_seconds: float = 0.0
+    turn_wall_seconds: float = 0.0        # from turn_started → turn_completed
+    num_llm_calls: int = 0
+    num_tool_calls: int = 0
+
+    def summarize(self) -> dict[str, Any]:
+        """Return a flat summary dict suitable for CLI rendering."""
+        return {
+            "total_prompt_tokens": self.total_prompt_tokens,
+            "total_completion_tokens": self.total_completion_tokens,
+            "total_tokens": self.total_tokens,
+            "total_llm_latency_s": round(self.total_llm_latency_seconds, 2),
+            "total_tool_wall_s": round(self.total_tool_wall_seconds, 2),
+            "turn_wall_s": round(self.turn_wall_seconds, 2),
+            "num_llm_calls": self.num_llm_calls,
+            "num_tool_calls": self.num_tool_calls,
+            "llm_details": [
+                {
+                    "model": r.model,
+                    "prompt": r.prompt_tokens,
+                    "completion": r.completion_tokens,
+                    "total": r.total_tokens,
+                    "latency_s": round(r.latency_seconds, 2),
+                }
+                for r in self.llm_calls
+            ],
+            "tool_details": [
+                {
+                    "tool": r.tool_name,
+                    "wall_s": round(r.wall_seconds, 2),
+                    "input_chars": r.input_chars,
+                    "output_chars": r.output_chars,
+                }
+                for r in self.tool_calls
+            ],
+        }
+
+    def accumulate_llm(self, record: LLMUsageRecord) -> None:
+        """Add an LLM call record and update totals."""
+        self.llm_calls.append(record)
+        self.total_prompt_tokens += record.prompt_tokens
+        self.total_completion_tokens += record.completion_tokens
+        self.total_tokens += record.total_tokens
+        self.total_llm_latency_seconds += record.latency_seconds
+        self.num_llm_calls += 1
+
+    def accumulate_tool(self, record: ToolCallUsageRecord) -> None:
+        """Add a tool call record and update totals."""
+        self.tool_calls.append(record)
+        self.total_tool_wall_seconds += record.wall_seconds
+        self.num_tool_calls += 1
+
+
 @dataclass(slots=True)
 class RuntimeEvent:
     """Base class for all runtime events."""
@@ -183,6 +275,7 @@ class SkillActivatedEvent(RuntimeEvent):
 class TurnCompletedEvent(RuntimeEvent):
     """Fired when an entire turn (including all tool executions and LLM generation) completes successfully."""
     type: Literal["turn_completed"] = "turn_completed"
+    cost_report: TurnCostReport = field(default_factory=TurnCostReport)
 
 
 @dataclass(slots=True)
@@ -191,6 +284,7 @@ class TurnFailedEvent(RuntimeEvent):
     type: Literal["turn_failed"] = "turn_failed"
     error: str = ""
     error_type: str = ""
+    cost_report: TurnCostReport | None = None   # partial report up to failure
 
 
 @dataclass(slots=True)
@@ -198,3 +292,4 @@ class TurnCancelledEvent(RuntimeEvent):
     """Fired when a turn is cancelled (e.g. via CancellationToken)."""
     type: Literal["turn_cancelled"] = "turn_cancelled"
     reason: str = ""
+    cost_report: TurnCostReport | None = None   # partial report up to cancel
