@@ -206,6 +206,35 @@ def enable_self_dev_mode() -> WorkspaceGuard:
     return _WORKSPACE_GUARD
 
 
+def switch_to_project_workspace(task_description: str) -> Path:
+    """根据任务描述动态切换 workspace 到项目子目录。
+
+    在 _WORKSPACE_BASE 下按项目名建立子目录（如 xauusd_timeseries_signal_backtest_spec/），
+    并更新全局 workspace_guard 使所有后续写入定向到该目录。
+
+    :param task_description: 用户任务描述（如文件名、需求描述）
+    :returns: 新的项目子目录路径
+    """
+    global _WORKSPACE_ROOT, _WORKSPACE_GUARD
+
+    project_dir = find_or_create_project_dir(
+        workspace_root=_WORKSPACE_BASE,
+        task_description=task_description,
+    )
+
+    _WORKSPACE_ROOT = project_dir
+    _WORKSPACE_GUARD = WorkspaceGuard(
+        WorkspaceConfig(
+            root=project_dir,
+            protected_paths=_resolve_protected_paths(project_dir),
+            allow_outside_reads=True,
+        )
+    )
+    # 同步 Config 类属性，使 runtime 等模块读取时拿到新值
+    Config.WORKSPACE_ROOT = project_dir
+    return project_dir
+
+
 def disable_self_dev_mode() -> WorkspaceGuard:
     """Restore the default (non-self-dev) workspace guard. Test-only."""
     global _SELF_DEV_MODE, _WORKSPACE_GUARD

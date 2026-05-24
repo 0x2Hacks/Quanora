@@ -29,6 +29,7 @@ class ChatCLI:
     def __init__(self, runtime, session, debug: bool = False, self_dev: bool = False):
         self._runtime = runtime
         self._session = session
+        self._session_store = session  # session implements AsyncSessionStore (persist_turn_cost etc.)
         self._debug = debug
         self._self_dev = self_dev
         self._distill_service = ExperienceDistillationService()
@@ -40,6 +41,8 @@ class ChatCLI:
         self._prompt_session: PromptSession | None = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._current_cancel_source: CancellationTokenSource | None = None
+        self._batch_tool_counter: dict[str, int] = {}   # {tool_name: seen_count_in_current_batch}
+        self._batch_tool_totals: dict[str, int] = {}     # {tool_name: total_count_in_current_batch}
 
     def start(self) -> None:
         self._render_banner()
@@ -113,7 +116,10 @@ class ChatCLI:
     def _loop(self) -> None:
         if hasattr(self._runtime, "set_retry_callback"):
             self._runtime.set_retry_callback(self._on_retry)
-            
+
+        # 是否已经切换到项目子目录（仅在首次输入时切换）
+        _project_workspace_set = False
+
         while True:
             try:
                 user_input = self._read_user_input()
@@ -126,6 +132,16 @@ class ChatCLI:
                 break
             if not user_input:
                 continue
+
+            # 首次输入时自动切换到项目子目录
+            if not _project_workspace_set:
+                from agent.infrastructure.config.settings import switch_to_project_workspace
+                project_dir = switch_to_project_workspace(user_input)
+                _project_workspace_set = True
+                # 显示项目目录信息
+                self._console.print(
+                    f"[dim]📁 项目目录: {project_dir}[/dim]\n"
+                )
 
             print("\nAgent:")
             self._assistant_buffer = []
@@ -278,11 +294,22 @@ class ChatCLI:
             tally = Counter(names)
             summary = ", ".join(f"{n}×{c}" if c > 1 else n for n, c in tally.items())
             self._console.print(f"[cyan]▶ 即将执行 {count} 个工具: {summary}[/cyan]")
+            # Initialise batch tracking counters for grouped display
+            self._batch_tool_totals = dict(tally)          # {tool_name: total_in_batch}
+            self._batch_tool_counter = {n: 0 for n in tally}  # {tool_name: seen_so_far}
+            self._batch_result_counter = {}                # {tool_name: results_seen_so_far}
         elif isinstance(event, ToolCallStartedEvent):
             self._streaming_renderer.flush()
             preview = getattr(event, "args_preview", "") or ""
             tool_name = getattr(event, "tool_name", "unknown")
-            line = f"[cyan]  🔧 {tool_name}[/cyan]"
+            # Increment batch counter and show grouped index when tool appears >1 times
+            idx = ""
+            if tool_name in self._batch_tool_counter:
+                self._batch_tool_counter[tool_name] += 1
+                total = self._batch_tool_totals.get(tool_name, 1)
+                if total > 1:
+                    idx = f" ({self._batch_tool_counter[tool_name]}/{total})"
+            line = f"[cyan]  🔧 {tool_name}{idx}[/cyan]"
             self._console.print(line)
             if preview:
                 # Indent under the tool name; truncate to terminal-friendly width.
@@ -304,7 +331,14 @@ class ChatCLI:
                 icon = "•"
                 color = "dim"
             tool_name = getattr(event, "tool_name", "unknown")
-            line = f"[{color}]     {icon} {tool_name}{duration_part}"
+            # Show grouped index for tools that appear >1 times in batch
+            idx = ""
+            if tool_name in self._batch_tool_totals:
+                self._batch_result_counter[tool_name] = self._batch_result_counter.get(tool_name, 0) + 1
+                total = self._batch_tool_totals.get(tool_name, 1)
+                if total > 1:
+                    idx = f" ({self._batch_result_counter[tool_name]}/{total})"
+            line = f"[{color}]     {icon} {tool_name}{idx}{duration_part}"
             if summary:
                 line += f" — {summary}"
             line += f"[/{color}]"
