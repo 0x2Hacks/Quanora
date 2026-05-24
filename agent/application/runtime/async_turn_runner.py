@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import AsyncIterator
 import openai
 from tenacity import RetryError
@@ -17,9 +18,13 @@ from agent.domain.events import (
     AssistantMessageCompletedEvent,
     SkillActivatedEvent,
     ToolBatchStartedEvent,
+    ToolResultEvent,
     TurnCompletedEvent,
     TurnFailedEvent,
-    TurnCancelledEvent
+    TurnCancelledEvent,
+    TurnCostReport,
+    LLMUsageRecord,
+    ToolCallUsageRecord,
 )
 
 from .message_stream_parser import MessageStreamParser
@@ -55,13 +60,16 @@ class AsyncTurnRunner:
         cancellation_token: CancellationToken | None = None
     ) -> AsyncIterator[RuntimeEvent]:
         """Run the main conversation loop for a user turn asynchronously, yielding events."""
+        turn_start_time = time.monotonic()
+        cost_report = TurnCostReport()
         
         try:
             emitted_skill_names: set[str] = set()
             turn_active_skill_matches: list | None = None
             while True:
                 if cancellation_token and cancellation_token.is_cancelled:
-                    yield TurnCancelledEvent(ts=session.now_iso(), reason=cancellation_token.reason)
+                    cost_report.turn_wall_seconds = time.monotonic() - turn_start_time
+                    yield TurnCancelledEvent(ts=session.now_iso(), reason=cancellation_token.reason, cost_report=cost_report)
                     return
 
                 if turn_active_skill_matches is None:
@@ -115,12 +123,17 @@ class AsyncTurnRunner:
                                 await event_queue.put(AssistantDeltaEvent(ts=session.now_iso(), text=text))
 
                             # Make sure we AWAIT consume_async_stream, not just return the coroutine!
-                            content, calls = await self._stream_parser.consume_async_stream(
+                            llm_start_time = time.monotonic()
+                            content, calls, usage_record = await self._stream_parser.consume_async_stream(
                                 stream_response,
                                 _on_content_async,
                                 cancellation_token
                             )
-                            return content, calls
+                            # Populate latency and model in the usage record
+                            if usage_record is not None:
+                                usage_record.latency_seconds = time.monotonic() - llm_start_time
+                                usage_record.model = getattr(self._chat_client, '_model', '')
+                            return content, calls, usage_record
                         except asyncio.CancelledError:
                             raise
                         except Exception as e:
@@ -150,7 +163,11 @@ class AsyncTurnRunner:
                             except (asyncio.CancelledError, Exception):
                                 pass
 
-                    content_text, parsed_tool_calls = consume_task.result()
+                    content_text, parsed_tool_calls, usage_record = consume_task.result()
+                    
+                    # Accumulate LLM usage into cost report
+                    if usage_record is not None:
+                        cost_report.accumulate_llm(usage_record)
                     
                     if content_text:
                         await session.persist_message("assistant", content_text)
@@ -192,16 +209,29 @@ class AsyncTurnRunner:
                     tool_calls=parsed_tool_calls,
                     cancellation_token=cancellation_token
                 ):
+                    # Capture tool call timing for cost report
+                    if isinstance(event, ToolResultEvent):
+                        cost_report.accumulate_tool(ToolCallUsageRecord(
+                            tool_name=event.tool_name,
+                            call_id=event.tool_call_id,
+                            wall_seconds=event.duration_ms / 1000.0,
+                            input_chars=0,
+                            output_chars=len(event.result) if event.result else 0,
+                        ))
                     yield event
                         
-            yield TurnCompletedEvent(ts=session.now_iso())
+            # Finalize cost report timing
+            cost_report.turn_wall_seconds = time.monotonic() - turn_start_time
+            yield TurnCompletedEvent(ts=session.now_iso(), cost_report=cost_report)
             
         except asyncio.CancelledError as e:
-            yield TurnCancelledEvent(ts=session.now_iso(), reason=str(e))
+            cost_report.turn_wall_seconds = time.monotonic() - turn_start_time
+            yield TurnCancelledEvent(ts=session.now_iso(), reason=str(e), cost_report=cost_report)
         except Exception as e:
             # We don't have session.now_iso() guaranteed here, but we try
             ts = session.now_iso() if hasattr(session, 'now_iso') else "unknown"
-            yield TurnFailedEvent(ts=ts, error=str(e))
+            cost_report.turn_wall_seconds = time.monotonic() - turn_start_time
+            yield TurnFailedEvent(ts=ts, error=str(e), cost_report=cost_report)
 
     async def _resolve_turn_active_skills(self, session: AsyncSessionStore) -> list:
         selector = getattr(self._context_manager, "select_active_skills_for_turn", None)

@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from agent.domain.skills import render_active_skill_instructions
+from agent.domain.knowledge_base import ExperienceKnowledgeBase
+from agent.infrastructure.persistence.knowledge_base_repository import KnowledgeBaseRepository
 
 from .context_estimator import ContextEstimator
 from .conversation_summary_service import ConversationSummaryService
@@ -56,6 +58,7 @@ class ContextManager:
         self._skill_selector = skill_selector
         self._plan_context_provider = plan_context_provider
         self._active_skill_char_limit = max(0, int(active_skill_char_limit))
+        self._kb_repo = KnowledgeBaseRepository()
 
     async def build_messages_async(
         self,
@@ -383,6 +386,41 @@ class ContextManager:
                 "skill_injection_applied": bool(messages),
             }
         )
+
+        # ── Experience Knowledge Injection ────────────────────────────
+        # Load relevant experience records from the KB and inject them as
+        # an additional system message alongside skill instructions.
+        try:
+            kb = self._kb_repo.load()
+            if len(kb) > 0 and active_matches:
+                # Use the first active skill's name as a task_type hint
+                task_type = active_matches[0].skill.name if active_matches else ""
+                top_records = kb.query_top_k(task_type, k=3)
+                if top_records:
+                    exp_lines = ["[Experience Knowledge — lessons from past tasks]"]
+                    for rec in top_records:
+                        exp_lines.append(f"• {rec.experience_summary}")
+                        if rec.common_pitfalls:
+                            exp_lines.append(f"  Pitfalls: {', '.join(rec.common_pitfalls[:3])}")
+                        if rec.optimization_suggestions:
+                            exp_lines.append(f"  Suggestions: {', '.join(rec.optimization_suggestions[:3])}")
+                    exp_content = "\n".join(exp_lines)
+                    messages.append({"role": "system", "content": exp_content})
+                    decisions["experience_injection_applied"] = True
+                    decisions["experience_records_used"] = len(top_records)
+                    # Boost relevance of used records
+                    for rec in top_records:
+                        self._kb_repo.boost_relevance(rec.id, 0.05)
+                else:
+                    decisions["experience_injection_applied"] = False
+                    decisions["experience_records_used"] = 0
+            else:
+                decisions["experience_injection_applied"] = False
+                decisions["experience_records_used"] = 0
+        except Exception:
+            decisions["experience_injection_applied"] = False
+            decisions["experience_records_used"] = 0
+
         return messages, stats, decisions
 
     def _insert_after_first_system(self, messages: list[dict], extra_messages: list[dict]) -> list[dict]:

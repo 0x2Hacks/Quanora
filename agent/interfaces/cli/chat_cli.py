@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from agent.application.runtime.cancellation import CancellationTokenSource
+from agent.application.services.experience_distillation_service import ExperienceDistillationService
 from agent.domain.events import (
     RuntimeEvent,
     ToolCallStartedEvent,
@@ -30,6 +31,9 @@ class ChatCLI:
         self._session = session
         self._debug = debug
         self._self_dev = self_dev
+        self._distill_service = ExperienceDistillationService()
+        self._last_cost_report = None
+        self._active_skills: list[str] = []
         self._assistant_buffer: list[str] = []
         self._console = Console()
         self._streaming_renderer = StreamingRenderer(self._console)
@@ -171,10 +175,38 @@ class ChatCLI:
     async def _run_turn_async(self, user_input: str) -> None:
         cancel_source = CancellationTokenSource()
         self._current_cancel_source = cancel_source
+        self._last_cost_report = None
+        self._last_turn_event = None
+        self._active_skills = []
         event_stream = self._runtime.run_turn(query=user_input, cancellation_token=cancel_source.token)
         try:
             async for event in event_stream:
                 self._on_event(event)
+            # Persist cost data after turn completes
+            if self._last_cost_report is not None and hasattr(self._session_store, 'persist_turn_cost'):
+                try:
+                    await self._session_store.persist_turn_cost(
+                        turn_id=self._current_turn_id or "unknown",
+                        cost_report=self._last_cost_report.summarize(),
+                    )
+                except Exception:
+                    pass  # persistence failure is non-critical
+            # Distill experience from this turn
+            try:
+                last_event = getattr(self, '_last_turn_event', None)
+                if last_event is not None and isinstance(last_event, TurnCompletedEvent):
+                    record_id = self._distill_service.distill_auto(
+                        event=last_event,
+                        session_id=self._session.session_id if hasattr(self._session, 'session_id') else "",
+                        turn_id=self._current_turn_id or "",
+                        active_skills=self._active_skills,
+                    )
+                    if record_id:
+                        self._console.print(
+                            f"[dim italic]📚 经验沉淀: 新记录 {record_id} (task: {self._active_skills[0] if self._active_skills else 'general'})[/dim italic]"
+                        )
+            except Exception:
+                pass  # distillation failure is non-critical
         finally:
             self._current_cancel_source = None
             if not getattr(event_stream, "ag_running", False):
@@ -202,6 +234,7 @@ class ChatCLI:
             ToolCallStartedEvent,
             ToolProgressEvent,
             ToolResultEvent,
+            TurnCompletedEvent,
             TurnFailedEvent,
             TurnCancelledEvent,
             TurnStartedEvent,
@@ -214,14 +247,24 @@ class ChatCLI:
         if isinstance(event, TurnStartedEvent):
             # Early "thinking" indicator so the user never sees a silent gap.
             self._console.print("[dim]🤔 思考中…[/dim]")
+            # Show experience hint if KB has records for the detected task type
+            try:
+                kb = self._distill_service._kb_repo.load()
+                if len(kb) > 0:
+                    # We don't know the task type yet, so show a generic hint
+                    self._console.print("[dim italic]💡 基于历史经验分析[/dim italic]")
+            except Exception:
+                pass
         elif isinstance(event, AssistantDeltaEvent):
             self._assistant_buffer.append(event.text)
             self._streaming_renderer.append(event.text)
         elif isinstance(event, AssistantMessageCompletedEvent):
             self._streaming_renderer.finish_message()
         elif isinstance(event, SkillActivatedEvent):
+            skill_name = getattr(event, 'skill_name', 'unknown')
+            self._active_skills.append(skill_name)
             self._console.print(
-                f"[dim italic]🧩 技能启用: {getattr(event, 'skill_name', 'unknown')}"
+                f"[dim italic]🧩 技能启用: {skill_name}"
                 f" ({getattr(event, 'reason', '') or 'auto'})[/dim italic]"
             )
         elif isinstance(event, ToolBatchStartedEvent):
@@ -317,6 +360,17 @@ class ChatCLI:
             self._streaming_renderer.flush()
             message = getattr(event, "error", "") or getattr(event, "reason", "") or "unknown"
             print(f"\n[Error] Turn failed: {message}")
+            cost = getattr(event, 'cost_report', None)
+            if cost is not None:
+                self._render_cost_report(cost)
+        elif isinstance(event, TurnCompletedEvent):
+            self._streaming_renderer.flush()
+            self._last_turn_event = event  # save for distillation
+            cost = getattr(event, 'cost_report', None)
+            if cost is not None:
+                self._render_cost_report(cost)
+                self._last_cost_report = cost  # stored for async persist
+
         elif isinstance(event, TurnCancelledEvent):
             self._streaming_renderer.flush()
             print(f"\n[Cancelled] Turn cancelled: {getattr(event, 'reason', 'unknown')}")
@@ -326,3 +380,34 @@ class ChatCLI:
 
     def _on_debug(self, message: str) -> None:
         print(f"\n[Debug] {message}")
+
+    def _render_cost_report(self, cost_report) -> None:
+        """Render a formatted cost report table at the end of a turn."""
+        summary = cost_report.summarize()
+        lines = []
+        lines.append("")
+        lines.append("┌─────────────────── Cost Report ───────────────────┐")
+        lines.append(f"│ Turn wall time : {summary['turn_wall_s']}s")
+        lines.append(f"│ LLM calls      : {summary['num_llm_calls']}")
+        lines.append(f"│ Tool calls     : {summary['num_tool_calls']}")
+        lines.append(f"│ Prompt tokens  : {summary['total_prompt_tokens']}")
+        lines.append(f"│ Completion     : {summary['total_completion_tokens']}")
+        lines.append(f"│ Total tokens   : {summary['total_tokens']}")
+        lines.append(f"│ LLM latency    : {summary['total_llm_latency_s']}s")
+        lines.append(f"│ Tool wall time : {summary['total_tool_wall_s']}s")
+
+        if summary['llm_details']:
+            lines.append("├──────────────── LLM Call Details ─────────────────┤")
+            for i, d in enumerate(summary['llm_details'], 1):
+                lines.append(f"│  #{i} model={d['model']}  p={d['prompt']} c={d['completion']} "
+                             f"tot={d['total']}  lat={d['latency_s']}s")
+
+        if summary['tool_details']:
+            lines.append("├──────────────── Tool Call Details ────────────────┤")
+            for i, d in enumerate(summary['tool_details'], 1):
+                lines.append(f"│  #{i} {d['tool']}  wall={d['wall_s']}s  "
+                             f"in={d['input_chars']}c out={d['output_chars']}c")
+
+        lines.append("└───────────────────────────────────────────────────┘")
+        lines.append("")
+        print("\n".join(lines))

@@ -418,3 +418,42 @@ def detect_workspace_violation(
         "reason": _shorten(reason, 240),
         "suggested_fix": _shorten(str(meta.get("suggested_fix") or ""), 240),
     }
+
+
+# ── Cost Report Rendering ───────────────────────────────────────────────────
+
+def render_cost_report_text(cost_report) -> str:
+    """Render a TurnCostReport into a formatted multi-line text block.
+
+    This is a pure-function version that can be called from anywhere
+    (CLI, logging, etc).  The ChatCLI class has its own _render_cost_report
+    method that directly prints; this function returns the text.
+    """
+    summary = cost_report.summarize()
+    lines = []
+    lines.append("")
+    lines.append("┌─────────────────── Cost Report ───────────────────┐")
+    lines.append(f"│ Turn wall time : {summary['turn_wall_s']}s")
+    lines.append(f"│ LLM calls      : {summary['num_llm_calls']}")
+    lines.append(f"│ Tool calls     : {summary['num_tool_calls']}")
+    lines.append(f"│ Prompt tokens  : {summary['total_prompt_tokens']}")
+    lines.append(f"│ Completion     : {summary['total_completion_tokens']}")
+    lines.append(f"│ Total tokens   : {summary['total_tokens']}")
+    lines.append(f"│ LLM latency    : {summary['total_llm_latency_s']}s")
+    lines.append(f"│ Tool wall time : {summary['total_tool_wall_s']}s")
+
+    if summary['llm_details']:
+        lines.append("├──────────────── LLM Call Details ─────────────────┤")
+        for i, d in enumerate(summary['llm_details'], 1):
+            lines.append(f"│  #{i} model={d['model']}  p={d['prompt']} c={d['completion']} "
+                         f"tot={d['total']}  lat={d['latency_s']}s")
+
+    if summary['tool_details']:
+        lines.append("├──────────────── Tool Call Details ────────────────┤")
+        for i, d in enumerate(summary['tool_details'], 1):
+            lines.append(f"│  #{i} {d['tool']}  wall={d['wall_s']}s  "
+                         f"in={d['input_chars']}c out={d['output_chars']}c")
+
+    lines.append("└───────────────────────────────────────────────────┘")
+    lines.append("")
+    return "\n".join(lines)
