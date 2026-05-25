@@ -97,6 +97,7 @@ class ContextManager:
             )
 
         final_messages = [self._strip_internal_fields(message) for message in messages]
+        final_messages = self._normalize_messages(final_messages)
         final_estimate = self._estimator.estimate_messages(final_messages)
         
         dropped_count = 0
@@ -300,6 +301,59 @@ class ContextManager:
 
     def _strip_internal_fields(self, message: dict) -> dict:
         return {key: value for key, value in dict(message).items() if not key.startswith("_")}
+
+    @staticmethod
+    def _normalize_messages(messages: list[dict]) -> list[dict]:
+        """Normalize messages to ensure they conform to LLM API requirements.
+
+        Fixes:
+        1. Consecutive messages with the same role are merged (except system).
+        2. Messages with empty/missing content are dropped.
+        3. Ensures the message list always starts with a user or system message.
+        """
+        if not messages:
+            return messages
+
+        # Step 1: Filter out messages with empty content
+        filtered = []
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str) and content.strip() == "" and msg.get("role") != "tool":
+                continue
+            if isinstance(content, list) and len(content) == 0:
+                continue
+            filtered.append(msg)
+
+        if not filtered:
+            return filtered
+
+        # Step 2: Merge consecutive messages with the same role
+        normalized = [filtered[0]]
+        for msg in filtered[1:]:
+            prev = normalized[-1]
+            if msg.get("role") == prev.get("role") and msg.get("role") != "system":
+                # Merge content
+                prev_content = prev.get("content", "")
+                curr_content = msg.get("content", "")
+                if isinstance(prev_content, str) and isinstance(curr_content, str):
+                    prev["content"] = prev_content + "\n" + curr_content
+                elif isinstance(prev_content, list) and isinstance(curr_content, list):
+                    prev["content"] = prev_content + curr_content
+                else:
+                    # Mixed content types - convert both to string and merge
+                    prev_str = prev_content if isinstance(prev_content, str) else str(prev_content)
+                    curr_str = curr_content if isinstance(curr_content, str) else str(curr_content)
+                    prev["content"] = prev_str + "\n" + curr_str
+                # If tool_call_id differs, keep the later one
+                if "tool_call_id" in msg:
+                    prev["tool_call_id"] = msg["tool_call_id"]
+                if "name" in msg:
+                    prev["name"] = msg["name"]
+            else:
+                normalized.append(msg)
+
+        return normalized
+
 
     def select_active_skills_for_turn(self, user_message: str) -> list:
         if not self._skill_repository or not self._skill_selector:

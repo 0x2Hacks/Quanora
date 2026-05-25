@@ -177,7 +177,42 @@ class AsyncTurnRunner:
                     if "context_length_exceeded" in str(e) or "maximum context length" in str(e).lower():
                         self._context_manager.reduce_hard_limit(factor=0.8)
                         continue
-                    raise
+                    # Handle non-fatal BadRequestErrors (e.g., code 1214: invalid messages
+                    # parameter) gracefully instead of crashing.  The _normalize_messages
+                    # in context_manager.py should prevent most of these; this is a safety
+                    # net for edge cases.
+                    error_code = ""
+                    if hasattr(e, "body") and isinstance(e.body, dict):
+                        error_info = e.body.get("error", {})
+                        error_code = str(error_info.get("code", ""))
+                    error_msg = str(e)
+                    is_messages_param_error = (
+                        error_code == "1214"
+                        or ("messages" in error_msg.lower() and "param" in error_msg.lower())
+                    )
+                    if is_messages_param_error:
+                        logger.warning("BadRequestError 1214 (invalid messages param), attempting retry with normalized messages: %s", error_msg)
+                        # Retry: rebuild messages with normalization and try once more.
+                        # We use the while-loop's retry mechanism by reducing context
+                        # and continuing — the next iteration will call build_messages_async
+                        # which now includes _normalize_messages.
+                        self._context_manager.reduce_hard_limit(factor=0.9)
+                        retry_count_1214 = getattr(self, "_retry_count_1214", 0)
+                        if retry_count_1214 < 2:
+                            self._retry_count_1214 = retry_count_1214 + 1
+                            continue
+                        # Exhausted retries — graceful degradation
+                        logger.error("BadRequestError 1214 persisted after %d retries: %s", retry_count_1214, error_msg)
+                        self._retry_count_1214 = 0
+                        yield AssistantDeltaEvent(ts=session.now_iso(), text=f"\n\n[BadRequestError 1214: messages parameter invalid after retries. {error_msg}]")
+                        yield TurnFailedEvent(ts=session.now_iso(), error=error_msg)
+                        return
+                    else:
+                        # Other BadRequestError — graceful degradation instead of crash
+                        logger.error("Unhandled BadRequestError: %s", error_msg)
+                        yield AssistantDeltaEvent(ts=session.now_iso(), text=f"\n\n[BadRequestError: {error_msg}]")
+                        yield TurnFailedEvent(ts=session.now_iso(), error=error_msg)
+                        return
                 except RetryError as e:
                     error_msg = f"\n\n[APIUnavailableError: The AI provider is currently unreachable after multiple retries. Error: {e.last_attempt.exception()}]"
                     yield AssistantDeltaEvent(ts=session.now_iso(), text=error_msg)

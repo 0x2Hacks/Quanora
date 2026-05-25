@@ -29,15 +29,35 @@ class AsyncOpenAIChatClient(AsyncChatClient):
         if self.on_retry and retry_state.outcome and retry_state.outcome.failed:
             self.on_retry(retry_state.attempt_number, retry_state.outcome.exception())
 
+    @staticmethod
+    def _is_retryable(exc: BaseException) -> bool:
+        """Determine if an exception should trigger a retry.
+
+        Retries on transient errors AND on BadRequestError with code 1214
+        (invalid messages parameter) — which can happen due to consecutive
+        same-role messages and is fixed by _normalize_messages on retry.
+        """
+        if isinstance(exc, (
+            openai.RateLimitError,
+            openai.APITimeoutError,
+            openai.InternalServerError,
+            openai.APIConnectionError,
+        )):
+            return True
+        # Retry 1214 "messages 参数非法" at most once
+        if isinstance(exc, openai.BadRequestError):
+            error_code = ""
+            if hasattr(exc, "body") and isinstance(exc.body, dict):
+                error_info = exc.body.get("error", {})
+                error_code = str(error_info.get("code", ""))
+            if error_code == "1214":
+                return True
+        return False
+
     @property
     def _retry_decorator(self):
         return retry(
-            retry=retry_if_exception_type((
-                openai.RateLimitError,
-                openai.APITimeoutError,
-                openai.InternalServerError,
-                openai.APIConnectionError,
-            )),
+            retry=self._is_retryable,
             wait=wait_exponential(multiplier=1, min=2, max=10),
             stop=stop_after_attempt(5),
             before_sleep=self._before_sleep_log,
