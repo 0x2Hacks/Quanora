@@ -408,12 +408,46 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                         tool_msgs.append(
                             {"id": tc_id, "type": "function", "function": {"name": tc_name, "arguments": raw_args}}
                         )
-                    built_messages.append({"role": "assistant", "tool_calls": tool_msgs})
+                    # API requires content and tool_calls in the SAME assistant
+                    # message — splitting them creates consecutive same-role
+                    # violations that trigger error code 1214.
+                    assistant_msg = {"role": "assistant", "tool_calls": tool_msgs}
                     if msg.get("content"):
-                        built_messages.append({"role": "assistant", "content": msg.get("content")})
+                        assistant_msg["content"] = msg.get("content")
+                    built_messages.append(assistant_msg)
                     continue
                 if role in {"system", "user", "assistant"}:
                     built_messages.append({"role": role, "content": msg.get("content", "")})
+            # Post-process: merge consecutive assistant messages.
+            # The agent often persists text content and tool_calls as separate
+            # assistant records; the API requires them in a single message.
+            merged: list[dict] = []
+            for msg in built_messages:
+                if (merged
+                        and merged[-1].get("role") == "assistant"
+                        and msg.get("role") == "assistant"):
+                    prev = merged[-1]
+                    prev_has_tc = bool(prev.get("tool_calls"))
+                    curr_has_tc = bool(msg.get("tool_calls"))
+                    # Merge if at most one has tool_calls, or both are text-only
+                    if not prev_has_tc or not curr_has_tc:
+                        # Merge content
+                        prev_content = prev.get("content", "")
+                        curr_content = msg.get("content", "")
+                        if curr_content:
+                            if prev_content:
+                                prev["content"] = (prev_content + "\n" + curr_content
+                                                   if isinstance(prev_content, str)
+                                                   else str(prev_content) + "\n" + str(curr_content))
+                            else:
+                                prev["content"] = curr_content
+                        # Merge tool_calls
+                        if curr_has_tc:
+                            prev["tool_calls"] = msg.get("tool_calls", [])
+                        continue
+                merged.append(msg)
+            built_messages = merged
+
             if not built_messages:
                 built_messages = [{"role": "system", "content": self._system_prompt}]
                 
