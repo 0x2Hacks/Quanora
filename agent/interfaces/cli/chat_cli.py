@@ -166,21 +166,45 @@ class ChatCLI:
         loop.close()
             
     def _on_event(self, event: RuntimeEvent) -> None:
-        from agent.domain.events import AssistantDeltaEvent, AssistantMessageCompletedEvent, SkillActivatedEvent, ToolCallStartedEvent, ToolProgressEvent, ToolResultEvent, TurnFailedEvent, TurnCancelledEvent
+        from agent.domain.events import (
+            AssistantDeltaEvent,
+            AssistantMessageCompletedEvent,
+            ContextBuiltEvent,
+            SkillActivatedEvent,
+            ToolCallStartedEvent,
+            ToolProgressEvent,
+            ToolRequestedEvent,
+            ToolResultEvent,
+            TurnCancelledEvent,
+            TurnFailedEvent,
+            TurnStartedEvent,
+        )
         
         if isinstance(event, AssistantDeltaEvent):
             self._assistant_buffer.append(event.text)
             self._streaming_renderer.append(event.text)
         elif isinstance(event, AssistantMessageCompletedEvent):
             self._streaming_renderer.finish_message()
+        elif isinstance(event, TurnStartedEvent):
+            pass
+        elif isinstance(event, ContextBuiltEvent):
+            if self._debug:
+                tokens = event.stats.get("estimated_input_tokens", "unknown")
+                self._console.print(f"[dim italic]context built: {event.message_count} messages, tokens={tokens}[/dim italic]")
         elif isinstance(event, SkillActivatedEvent):
             self._console.print(f"[dim italic]🧩 技能启用: {getattr(event, 'skill_name', 'unknown')} ({getattr(event, 'reason', 'unknown')})[/dim italic]")
+        elif isinstance(event, ToolRequestedEvent):
+            if self._debug:
+                self._console.print(f"[dim italic]tool requested: {event.tool_name} (ID: {event.tool_call_id})[/dim italic]")
         elif isinstance(event, ToolCallStartedEvent):
             self._console.print(f"[dim italic]🚀 任务启动: {getattr(event, 'tool_name', 'unknown')} (ID: {getattr(event, 'tool_call_id', 'unknown')})[/dim italic]")
         elif isinstance(event, ToolProgressEvent):
             pass # We let tool output print via bash thread for now
         elif isinstance(event, ToolResultEvent):
-            self._console.print(f"[dim italic]✅ 任务完成: {getattr(event, 'tool_name', 'unknown')}[/dim italic]")
+            if getattr(event, "status", "completed") == "failed":
+                self._console.print(f"[red]任务失败: {getattr(event, 'tool_name', 'unknown')}[/red]")
+            else:
+                self._console.print(f"[dim italic]✅ 任务完成: {getattr(event, 'tool_name', 'unknown')}[/dim italic]")
         elif isinstance(event, TurnFailedEvent):
             self._streaming_renderer.flush()
             message = getattr(event, "error", "") or getattr(event, "reason", "") or "unknown"

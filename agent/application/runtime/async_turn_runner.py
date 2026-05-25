@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import AsyncIterator
 import openai
 from tenacity import RetryError
@@ -15,10 +16,13 @@ from agent.domain.events import (
     RuntimeEvent,
     AssistantDeltaEvent,
     AssistantMessageCompletedEvent,
+    ContextBuiltEvent,
     SkillActivatedEvent,
+    ToolRequestedEvent,
     TurnCompletedEvent,
     TurnFailedEvent,
-    TurnCancelledEvent
+    TurnCancelledEvent,
+    event_meta,
 )
 
 from .message_stream_parser import MessageStreamParser
@@ -51,16 +55,21 @@ class AsyncTurnRunner:
     async def run_turn(
         self,
         session: AsyncSessionStore,
-        cancellation_token: CancellationToken | None = None
+        cancellation_token: CancellationToken | None = None,
+        turn_id: str = "",
     ) -> AsyncIterator[RuntimeEvent]:
         """Run the main conversation loop for a user turn asynchronously, yielding events."""
         
+        turn_started_at = time.perf_counter()
         try:
             emitted_skill_names: set[str] = set()
             turn_active_skill_matches: list | None = None
             while True:
                 if cancellation_token and cancellation_token.is_cancelled:
-                    yield TurnCancelledEvent(ts=session.now_iso(), reason=cancellation_token.reason)
+                    yield TurnCancelledEvent(
+                        **event_meta(session, turn_id),
+                        reason=cancellation_token.reason,
+                    )
                     return
 
                 if turn_active_skill_matches is None:
@@ -70,7 +79,15 @@ class AsyncTurnRunner:
                     session=session,
                     active_skill_matches=turn_active_skill_matches,
                 )
+                context_stats = context.stats if isinstance(getattr(context, "stats", None), dict) else {}
                 context_decisions = context.decisions if isinstance(getattr(context, "decisions", None), dict) else {}
+                context_messages = context.messages if isinstance(getattr(context, "messages", None), list) else []
+                yield ContextBuiltEvent(
+                    **event_meta(session, turn_id),
+                    message_count=len(context_messages),
+                    stats=dict(context_stats),
+                    decisions=dict(context_decisions),
+                )
                 for item in context_decisions.get("active_skills") or []:
                     skill_name = str(item.get("name") or "")
                     skill_key = skill_name.lower()
@@ -78,7 +95,7 @@ class AsyncTurnRunner:
                         continue
                     emitted_skill_names.add(skill_key)
                     yield SkillActivatedEvent(
-                        ts=session.now_iso(),
+                        **event_meta(session, turn_id),
                         skill_name=skill_name,
                         reason=str(item.get("reason") or ""),
                         score=int(item.get("score") or 0),
@@ -89,14 +106,10 @@ class AsyncTurnRunner:
                 try:
                     # We always use stream=True for the async runner to provide real-time events
                     stream_response = self._chat_client.stream(
-                        messages=context.messages,
+                        messages=context_messages,
                         tools=self._tool_schemas,
                         cancellation_token=cancellation_token
                     )
-                    
-                    # Use the parser to consume the async stream and handle merging tool call chunks
-                    async def _on_content(text: str):
-                        yield AssistantDeltaEvent(ts=session.now_iso(), text=text)
 
                     # We can't directly yield from inside a callback easily without an async generator queue.
                     # Let's collect them directly in an async generator wrapper or just use the parser logic.
@@ -111,7 +124,12 @@ class AsyncTurnRunner:
                     async def _consume():
                         try:
                             async def _on_content_async(text: str):
-                                await event_queue.put(AssistantDeltaEvent(ts=session.now_iso(), text=text))
+                                await event_queue.put(
+                                    AssistantDeltaEvent(
+                                        **event_meta(session, turn_id),
+                                        text=text,
+                                    )
+                                )
 
                             # Make sure we AWAIT consume_async_stream, not just return the coroutine!
                             content, calls = await self._stream_parser.consume_async_stream(
@@ -153,7 +171,10 @@ class AsyncTurnRunner:
                     
                     if content_text:
                         await session.persist_message("assistant", content_text)
-                        yield AssistantMessageCompletedEvent(ts=session.now_iso())
+                        yield AssistantMessageCompletedEvent(
+                            **event_meta(session, turn_id),
+                            content_chars=len(content_text),
+                        )
                         
                 except openai.BadRequestError as e:
                     if "context_length_exceeded" in str(e) or "maximum context length" in str(e).lower():
@@ -162,8 +183,12 @@ class AsyncTurnRunner:
                     raise
                 except RetryError as e:
                     error_msg = f"\n\n[APIUnavailableError: The AI provider is currently unreachable after multiple retries. Error: {e.last_attempt.exception()}]"
-                    yield AssistantDeltaEvent(ts=session.now_iso(), text=error_msg)
-                    yield TurnFailedEvent(ts=session.now_iso(), error=error_msg)
+                    yield AssistantDeltaEvent(**event_meta(session, turn_id), text=error_msg)
+                    yield TurnFailedEvent(
+                        **event_meta(session, turn_id),
+                        error=error_msg,
+                        error_type="RetryError",
+                    )
                     return
 
                 if not parsed_tool_calls:
@@ -174,25 +199,36 @@ class AsyncTurnRunner:
                     "",
                     meta={"tool_calls": [{"id": item.call_id, "name": item.name} for item in parsed_tool_calls]},
                 )
-                
-                # Execute tools and yield their events
-                request_id = session.now_iso()
+
+                for call in parsed_tool_calls:
+                    yield ToolRequestedEvent(
+                        **event_meta(session, turn_id),
+                        tool_call_id=call.call_id,
+                        tool_name=call.name,
+                        args_preview=call.raw_args[:500],
+                    )
                 
                 async for event in self._tool_processor.execute(
                     session=session,
                     tool_calls=parsed_tool_calls,
-                    cancellation_token=cancellation_token
+                    cancellation_token=cancellation_token,
+                    turn_id=turn_id,
                 ):
                     yield event
                         
-            yield TurnCompletedEvent(ts=session.now_iso())
+            yield TurnCompletedEvent(
+                **event_meta(session, turn_id),
+                duration_ms=int((time.perf_counter() - turn_started_at) * 1000),
+            )
             
         except asyncio.CancelledError as e:
-            yield TurnCancelledEvent(ts=session.now_iso(), reason=str(e))
+            yield TurnCancelledEvent(**event_meta(session, turn_id), reason=str(e))
         except Exception as e:
-            # We don't have session.now_iso() guaranteed here, but we try
-            ts = session.now_iso() if hasattr(session, 'now_iso') else "unknown"
-            yield TurnFailedEvent(ts=ts, error=str(e))
+            yield TurnFailedEvent(
+                **event_meta(session, turn_id),
+                error=str(e),
+                error_type=type(e).__name__,
+            )
 
     async def _resolve_turn_active_skills(self, session: AsyncSessionStore) -> list:
         selector = getattr(self._context_manager, "select_active_skills_for_turn", None)

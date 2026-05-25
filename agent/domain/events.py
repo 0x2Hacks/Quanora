@@ -3,8 +3,33 @@
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass, field, asdict
 from typing import Any, Literal
+
+
+def make_event_id() -> str:
+    """Return a compact unique id for a runtime event."""
+    return uuid.uuid4().hex
+
+
+def event_meta(session: Any = None, turn_id: str = "") -> dict[str, str]:
+    """Build common event metadata from a session-like object."""
+    now_iso = getattr(session, "now_iso", None)
+    try:
+        ts = now_iso() if callable(now_iso) else ""
+    except Exception:
+        ts = ""
+    if not isinstance(ts, str) or not ts:
+        ts = str(time.time())
+    session_id = getattr(session, "session_id", "")
+    if not isinstance(session_id, str):
+        session_id = ""
+    return {
+        "ts": ts,
+        "session_id": session_id,
+        "turn_id": turn_id or "",
+    }
 
 
 @dataclass(slots=True)
@@ -12,6 +37,9 @@ class RuntimeEvent:
     """Base class for all runtime events."""
     type: str
     ts: str = field(default_factory=lambda: str(time.time()))
+    event_id: str = field(default_factory=make_event_id)
+    session_id: str = ""
+    turn_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize event to a dictionary."""
@@ -47,10 +75,36 @@ class AssistantDeltaEvent(RuntimeEvent):
 
 
 @dataclass(slots=True)
+class TurnStartedEvent(RuntimeEvent):
+    """Fired when a user turn starts."""
+    type: Literal["turn_started"] = "turn_started"
+    user_message_chars: int = 0
+
+
+@dataclass(slots=True)
+class ContextBuiltEvent(RuntimeEvent):
+    """Fired after model-facing context has been built."""
+    type: Literal["context_built"] = "context_built"
+    message_count: int = 0
+    stats: dict[str, Any] = field(default_factory=dict)
+    decisions: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
 class AssistantMessageCompletedEvent(RuntimeEvent):
     """Fired when the assistant finishes generating a message."""
     type: Literal["assistant_message_completed"] = "assistant_message_completed"
     content: str = ""
+    content_chars: int = 0
+
+
+@dataclass(slots=True)
+class ToolRequestedEvent(RuntimeEvent):
+    """Fired when the model requests a tool call."""
+    type: Literal["tool_requested"] = "tool_requested"
+    tool_call_id: str = ""
+    tool_name: str = ""
+    args_preview: str = ""
 
 
 @dataclass(slots=True)
@@ -76,7 +130,44 @@ class ToolResultEvent(RuntimeEvent):
     type: Literal["tool_result"] = "tool_result"
     tool_call_id: str = ""
     tool_name: str = ""
+    status: Literal["completed", "failed"] = "completed"
     result: str = ""
+    error_type: str = ""
+    duration_ms: int = 0
+
+
+@dataclass(slots=True)
+class RetryScheduledEvent(RuntimeEvent):
+    """Fired when an API retry has been scheduled."""
+    type: Literal["retry_scheduled"] = "retry_scheduled"
+    attempt: int = 0
+    error: str = ""
+    delay_seconds: float = 0.0
+
+
+@dataclass(slots=True)
+class ToolApprovalRequiredEvent(RuntimeEvent):
+    """Reserved for future tool approval flows."""
+    type: Literal["tool_approval_required"] = "tool_approval_required"
+    tool_call_id: str = ""
+    tool_name: str = ""
+    reason: str = ""
+
+
+@dataclass(slots=True)
+class ToolDeniedEvent(RuntimeEvent):
+    """Reserved for future denied tool executions."""
+    type: Literal["tool_denied"] = "tool_denied"
+    tool_call_id: str = ""
+    tool_name: str = ""
+    reason: str = ""
+
+
+@dataclass(slots=True)
+class TokenStatsUpdatedEvent(RuntimeEvent):
+    """Reserved for future provider token usage updates."""
+    type: Literal["token_stats_updated"] = "token_stats_updated"
+    stats: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -94,6 +185,7 @@ class SkillActivatedEvent(RuntimeEvent):
 class TurnCompletedEvent(RuntimeEvent):
     """Fired when an entire turn (including all tool executions and LLM generation) completes successfully."""
     type: Literal["turn_completed"] = "turn_completed"
+    duration_ms: int = 0
 
 
 @dataclass(slots=True)

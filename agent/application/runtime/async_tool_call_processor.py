@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import AsyncIterator
 
 from agent.application.ports.async_session_store import AsyncSessionStore
 from agent.application.services.job_service import JobService
 from agent.domain import ParsedToolCall, parse_tool_args, tool_error, tool_ok
-from agent.domain.events import RuntimeEvent, ToolCallStartedEvent, ToolResultEvent, ToolProgressEvent
+from agent.domain.events import RuntimeEvent, ToolCallStartedEvent, ToolResultEvent, event_meta
 from agent.application.tool_executor import ToolExecutor
 from agent.application.runtime.cancellation import CancellationToken
 
@@ -28,6 +29,7 @@ class AsyncToolCallProcessor:
         session: AsyncSessionStore,
         tool_calls: list[ParsedToolCall],
         cancellation_token: CancellationToken | None = None,
+        turn_id: str = "",
     ) -> AsyncIterator[RuntimeEvent]:
         """
         Execute multiple tool calls asynchronously.
@@ -39,25 +41,32 @@ class AsyncToolCallProcessor:
             if cancellation_token and cancellation_token.is_cancelled:
                 break
 
-            yield ToolCallStartedEvent(tool_call_id=call.call_id, tool_name=call.name)
-
+            started_at = time.perf_counter()
             parsed_args, parse_error = parse_tool_args(call.raw_args)
             persisted_args = dict(parsed_args)
             ts_start = session.now_iso()
+            event_status = "completed"
+            error_type = ""
 
             if parse_error:
+                event_status = "failed"
+                error_type = "ToolArgsJSONError"
                 tool_result_str = tool_error(
                     call.name,
                     f"Invalid tool arguments JSON: {parse_error}",
-                    "ToolArgsJSONError",
+                    error_type,
                     meta={"raw_args": call.raw_args[:2000]},
                 )
-                yield ToolResultEvent(tool_call_id=call.call_id, tool_name=call.name, result=tool_result_str)
             else:
+                yield ToolCallStartedEvent(
+                    **event_meta(session, turn_id),
+                    tool_call_id=call.call_id,
+                    tool_name=call.name,
+                )
                 try:
                     handle = await asyncio.to_thread(
                         self._job_service.create_job,
-                        session_id=session.session_id or "default",
+                        session_id=getattr(session, "session_id", None) or "default",
                         request_id=request_id,
                         tool_call_id=call.call_id,
                         tool_name=call.name,
@@ -80,6 +89,8 @@ class AsyncToolCallProcessor:
                         await asyncio.to_thread(self._job_service.append_output, handle.job_id, result.result_str)
                         await asyncio.to_thread(self._job_service.update_status, handle.job_id, "completed")
                     else:
+                        event_status = "failed"
+                        error_type = result.error_type or "ToolExecutionError"
                         await asyncio.to_thread(self._job_service.append_output, handle.job_id, f"Error: {result.error_msg}")
                         await asyncio.to_thread(self._job_service.update_status, handle.job_id, "failed", error=result.error_msg)
 
@@ -87,6 +98,8 @@ class AsyncToolCallProcessor:
                     job = await asyncio.to_thread(self._job_service.get_job, handle.job_id)
 
                     if job and job.status == "failed":
+                        event_status = "failed"
+                        error_type = "JobFailed"
                         tool_result_str = tool_error(call.name, job.metadata.get("error", "Unknown error"), "JobFailed")
                     else:
                         from agent.domain import looks_like_tool_payload
@@ -96,9 +109,20 @@ class AsyncToolCallProcessor:
                             tool_result_str = tool_ok(call.name, content)
 
                 except Exception as exc:
-                    tool_result_str = tool_error(call.name, str(exc), type(exc).__name__)
+                    event_status = "failed"
+                    error_type = type(exc).__name__
+                    tool_result_str = tool_error(call.name, str(exc), error_type)
 
-                yield ToolResultEvent(tool_call_id=call.call_id, tool_name=call.name, result=tool_result_str)
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            yield ToolResultEvent(
+                **event_meta(session, turn_id),
+                tool_call_id=call.call_id,
+                tool_name=call.name,
+                status=event_status,
+                result=tool_result_str,
+                error_type=error_type,
+                duration_ms=duration_ms,
+            )
 
             ts_end = session.now_iso()
 

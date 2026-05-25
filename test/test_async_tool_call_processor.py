@@ -12,7 +12,7 @@ import pytest
 from agent.application.runtime.async_tool_call_processor import AsyncToolCallProcessor
 from agent.application.runtime.cancellation import CancellationTokenSource
 from agent.domain import ParsedToolCall
-from agent.domain.events import ToolResultEvent
+from agent.domain.events import ToolCallStartedEvent, ToolResultEvent
 from agent.domain.jobs import JobHandle, JobRecord, ToolExecutionResult
 
 
@@ -102,15 +102,44 @@ async def test_bash_cancellation_token_is_not_persisted_in_tool_args() -> None:
         raise AssertionError(f"Expected execution args to include cancellation token, got: {executor.received_args}")
     if not any(isinstance(event, ToolResultEvent) for event in events):
         raise AssertionError(f"Expected tool result event, got: {events}")
+    result_events = [event for event in events if isinstance(event, ToolResultEvent)]
+    if result_events[-1].status != "completed":
+        raise AssertionError(f"Expected completed tool result, got: {result_events[-1]}")
     persisted_args = session.persisted_tool_calls[0][2]
     if persisted_args != {"command": "date"}:
         raise AssertionError(f"Expected clean persisted args, got: {persisted_args}")
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_args_emit_failed_result_without_started_event() -> None:
+    processor = AsyncToolCallProcessor(tool_executor=FakeToolExecutor(), job_service=FakeJobService())
+    session = FakeSession()
+    call = ParsedToolCall(
+        call_id="call_bad",
+        name="bash",
+        raw_args="{bad json",
+    )
+
+    events = [event async for event in processor.execute(session=session, tool_calls=[call], turn_id="turn_1")]
+
+    if any(isinstance(event, ToolCallStartedEvent) for event in events):
+        raise AssertionError(f"Did not expect started event for invalid args, got: {events}")
+
+    result_events = [event for event in events if isinstance(event, ToolResultEvent)]
+    if len(result_events) != 1:
+        raise AssertionError(f"Expected one result event, got: {events}")
+    result = result_events[0]
+    if result.status != "failed" or result.error_type != "ToolArgsJSONError":
+        raise AssertionError(f"Expected failed parse result, got: {result}")
+    if result.turn_id != "turn_1":
+        raise AssertionError(f"Expected turn_id to be propagated, got: {result.turn_id}")
 
 
 def main() -> int:
     import asyncio
 
     asyncio.run(test_bash_cancellation_token_is_not_persisted_in_tool_args())
+    asyncio.run(test_invalid_tool_args_emit_failed_result_without_started_event())
     print("AsyncToolCallProcessor tests passed.")
     return 0
 

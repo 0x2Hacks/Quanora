@@ -12,7 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from agent.application.runtime.async_turn_runner import AsyncTurnRunner
 from agent.domain import ParsedToolCall, Skill, SkillMatch
-from agent.domain.events import AssistantDeltaEvent, SkillActivatedEvent
+from agent.domain.events import AssistantDeltaEvent, ContextBuiltEvent, SkillActivatedEvent
 
 
 def _skill(name: str = "demo") -> Skill:
@@ -103,10 +103,12 @@ async def test_skill_activation_event_precedes_assistant_delta() -> None:
     async for event in runner.run_turn(session):
         events.append(event)
 
-    if not isinstance(events[0], SkillActivatedEvent):
-        raise AssertionError(f"Expected first event to be SkillActivatedEvent, got: {events}")
-    if events[0].skill_name != "demo" or events[0].source != "project":
-        raise AssertionError(f"Unexpected skill event payload: {events[0]}")
+    if not isinstance(events[0], ContextBuiltEvent):
+        raise AssertionError(f"Expected first event to be ContextBuiltEvent, got: {events}")
+    if not isinstance(events[1], SkillActivatedEvent):
+        raise AssertionError(f"Expected skill event after context build, got: {events}")
+    if events[1].skill_name != "demo" or events[1].source != "project":
+        raise AssertionError(f"Unexpected skill event payload: {events[1]}")
 
     first_delta = next(index for index, event in enumerate(events) if isinstance(event, AssistantDeltaEvent))
     if first_delta <= 0:

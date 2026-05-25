@@ -13,8 +13,16 @@ if str(PROJECT_ROOT) not in sys.path:
 from agent.domain.events import (
     RuntimeEvent,
     AssistantDeltaEvent,
+    ContextBuiltEvent,
+    RetryScheduledEvent,
     SkillActivatedEvent,
+    TokenStatsUpdatedEvent,
+    ToolApprovalRequiredEvent,
+    ToolDeniedEvent,
+    ToolRequestedEvent,
     ToolProgressEvent,
+    ToolResultEvent,
+    TurnStartedEvent,
     TurnCompletedEvent
 )
 
@@ -25,6 +33,7 @@ class TestRuntimeEvents(unittest.TestCase):
         self.assertEqual(event.type, "assistant_delta")
         self.assertEqual(event.text, "Hello")
         self.assertTrue(isinstance(event.ts, str))
+        self.assertTrue(event.event_id)
 
     def test_event_serialization(self):
         event = ToolProgressEvent(tool_call_id="call_123", tool_name="bash", payload={"stdout": "test"})
@@ -39,6 +48,41 @@ class TestRuntimeEvents(unittest.TestCase):
         json_str = json.dumps(event_dict)
         self.assertIn("tool_progress", json_str)
         self.assertIn("call_123", json_str)
+
+    def test_standard_event_metadata_round_trip(self):
+        event = ContextBuiltEvent(
+            ts="2026-05-19T00:00:00Z",
+            session_id="session_1",
+            turn_id="turn_1",
+            message_count=3,
+            stats={"estimated_input_tokens": 123},
+            decisions={"mode": "test"},
+        )
+
+        restored = RuntimeEvent.from_dict(event.to_dict())
+
+        self.assertTrue(isinstance(restored, ContextBuiltEvent))
+        self.assertEqual(restored.session_id, "session_1")
+        self.assertEqual(restored.turn_id, "turn_1")
+        self.assertEqual(restored.message_count, 3)
+        self.assertEqual(restored.stats["estimated_input_tokens"], 123)
+
+    def test_new_runtime_events_are_serializable(self):
+        events = [
+            TurnStartedEvent(session_id="session_1", turn_id="turn_1", user_message_chars=5),
+            ToolRequestedEvent(tool_call_id="call_1", tool_name="bash", args_preview='{"command":"date"}'),
+            ToolResultEvent(tool_call_id="call_1", tool_name="bash", status="failed", error_type="Boom"),
+            RetryScheduledEvent(attempt=2, error="temporary"),
+            ToolApprovalRequiredEvent(tool_call_id="call_1", tool_name="bash", reason="dangerous"),
+            ToolDeniedEvent(tool_call_id="call_1", tool_name="bash", reason="user denied"),
+            TokenStatsUpdatedEvent(stats={"input_tokens": 10}),
+        ]
+
+        for event in events:
+            event_dict = event.to_dict()
+            self.assertTrue(event_dict["event_id"])
+            restored = RuntimeEvent.from_dict(event_dict)
+            self.assertEqual(restored.type, event.type)
 
     def test_inheritance(self):
         event = TurnCompletedEvent()

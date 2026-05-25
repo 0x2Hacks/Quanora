@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import AsyncIterator
 
 from agent.application.ports.async_chat_client import AsyncChatClient
 from agent.application.ports.async_session_store import AsyncSessionStore
 from agent.application.runtime.async_turn_runner import AsyncTurnRunner
 from agent.application.runtime.cancellation import CancellationToken
-from agent.domain.events import RuntimeEvent
+from agent.domain.events import RuntimeEvent, TurnStartedEvent, event_meta
 
 
 class AsyncRuntimeFacade:
@@ -47,13 +48,20 @@ class AsyncRuntimeFacade:
         for constructing one facade per session.
         """
         await self._session_store.initialize()
+        turn_id = uuid.uuid4().hex
 
         if query:
             await self._session_store.persist_message("user", query)
 
+        yield TurnStartedEvent(
+            **event_meta(self._session_store, turn_id),
+            user_message_chars=len(query or ""),
+        )
+
         async for event in self._turn_runner.run_turn(
             session=self._session_store,
-            cancellation_token=cancellation_token
+            cancellation_token=cancellation_token,
+            turn_id=turn_id,
         ):
             yield event
 
