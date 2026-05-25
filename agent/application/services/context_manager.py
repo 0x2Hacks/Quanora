@@ -76,7 +76,8 @@ class ContextManager:
         )
         plan_messages, plan_stats, plan_decisions = self._build_plan_messages()
         skill_messages, skill_stats, skill_decisions = self._build_skill_messages(active_skill_matches)
-        extra_messages = plan_messages + skill_messages
+        knowledge_messages, knowledge_stats = self._build_knowledge_cache_messages()
+        extra_messages = plan_messages + skill_messages + knowledge_messages
         if extra_messages:
             full_messages = self._insert_after_first_system(full_messages, extra_messages)
 
@@ -143,6 +144,7 @@ class ContextManager:
             "budget": budget.to_dict(),
             **plan_stats,
             **skill_stats,
+            **knowledge_stats,
         }
         decisions = {
             "mode": "session_backed",
@@ -190,6 +192,7 @@ class ContextManager:
                 "decisions": decisions,
                 **plan_stats,
                 **skill_stats,
+                **knowledge_stats,
             }
         )
         return result
@@ -555,6 +558,68 @@ class ContextManager:
             decisions["experience_records_used"] = 0
 
         return messages, stats, decisions
+
+    def _build_knowledge_cache_messages(self) -> tuple[list[dict], dict]:
+        """尝试加载项目知识缓存并注入为上下文消息.
+
+        如果缓存存在且有效，将 context_boost 注入为一条 system 消息，
+        让 agent 在新会话中无需从头探索项目。
+        """
+        stats = {"knowledge_cache_status": "none"}
+        messages: list[dict] = []
+
+        try:
+            from agent.infrastructure.config import Config
+            from agent.infrastructure.persistence.project_knowledge_cache import (
+                build_context_boost_from_cache,
+                get_cache_path,
+                is_cache_stale,
+                load_knowledge_cache,
+            )
+
+            project_root = Config.WORKSPACE_ROOT
+            cache_path = get_cache_path(project_root)
+            cache = load_knowledge_cache(cache_path)
+
+            if cache is None:
+                stats["knowledge_cache_status"] = "miss"
+                return messages, stats
+
+            if is_cache_stale(cache, project_root):
+                stats["knowledge_cache_status"] = "stale"
+                stats["knowledge_cache_old_head"] = cache.get("git_head")
+                # stale 缓存仍然注入，但标记为可能过时
+                context_boost = build_context_boost_from_cache(cache)
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        f"[项目知识缓存 — 可能已过时，git HEAD 或关键文件已变更]\n\n"
+                        f"{context_boost}\n\n"
+                        f"⚠ 此缓存可能已过时。如果发现信息不准确，请重新探索项目并调用 generate_project_knowledge 更新缓存。"
+                    ),
+                })
+                return messages, stats
+
+            # 缓存有效
+            stats["knowledge_cache_status"] = "hit"
+            stats["knowledge_cache_generated_at"] = cache.get("generated_at")
+            stats["knowledge_cache_git_head"] = cache.get("git_head")
+
+            context_boost = build_context_boost_from_cache(cache)
+            messages.append({
+                "role": "system",
+                "content": (
+                    f"[项目知识缓存 — 已加载]\n\n"
+                    f"{context_boost}\n\n"
+                    f"💡 此为上次探索项目的压缩缓存。如需深入了解某文件，仍可使用 read_file / grep。"
+                ),
+            })
+
+        except Exception:
+            # 知识缓存加载不应阻断主流程
+            stats["knowledge_cache_status"] = "error"
+
+        return messages, stats
 
     def _insert_after_first_system(self, messages: list[dict], extra_messages: list[dict]) -> list[dict]:
         if not extra_messages:
