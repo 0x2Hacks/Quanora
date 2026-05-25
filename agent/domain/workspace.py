@@ -22,6 +22,7 @@ tested in isolation and shared across infrastructure adapters.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Optional
 from pathlib import Path, PurePath
 from typing import Literal
 
@@ -68,6 +69,7 @@ class WorkspaceConfig:
     """
 
     root: Path
+    resolve_root: Optional[Path] = None
     protected_paths: tuple[Path, ...] = field(default_factory=tuple)
     allow_outside_reads: bool = True
     protected_write_extensions: tuple[str, ...] = field(default_factory=tuple)
@@ -76,6 +78,9 @@ class WorkspaceConfig:
     def __post_init__(self) -> None:  # pragma: no cover - dataclass guard
         if not self.root.is_absolute():
             raise ValueError(f"WorkspaceConfig.root must be absolute, got {self.root!r}")
+        # Default resolve_root to root
+        if self.resolve_root is None:
+            object.__setattr__(self, 'resolve_root', self.root)
         for p in self.protected_paths:
             if not p.is_absolute():
                 raise ValueError(f"protected_paths must be absolute, got {p!r}")
@@ -239,7 +244,7 @@ class WorkspaceGuard:
         """
         p = Path(path).expanduser()
         if not p.is_absolute():
-            p = self._cfg.root / p
+            p = self._cfg.resolve_root / p
         return p.resolve()
 
     # ------------------------------------------------------------------

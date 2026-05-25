@@ -166,8 +166,9 @@ def enable_self_dev_mode() -> WorkspaceGuard:
     config file) so the same Python process boots either way. Tests
     can call this in setup and reset with :func:`disable_self_dev_mode`.
     """
-    global _SELF_DEV_MODE, _WORKSPACE_GUARD
+    global _SELF_DEV_MODE, _WORKSPACE_GUARD, _WORKSPACE_ROOT
     _SELF_DEV_MODE = True
+    _WORKSPACE_ROOT = _QUANORA_REPO_ROOT
 
     # In self-dev mode .git is the only thing that stays off-limits. We
     # protect a few read-only files (.env containing secrets) as well, to
@@ -206,11 +207,32 @@ def enable_self_dev_mode() -> WorkspaceGuard:
     return _WORKSPACE_GUARD
 
 
+def _resolve_protected_paths_for_mode(workspace_root: Path) -> tuple[Path, ...]:
+    """根据当前模式（self-dev / self-doc / 普通）计算受保护路径。
+
+    - self-dev 模式：仅保护 .git/ 和 .env（允许修改 agent/ 等自身代码）
+    - self-doc 模式：保护所有源代码目录，但允许 .md 文件写入
+    - 普通模式：保护所有源代码目录和文件
+    """
+    if _SELF_DEV_MODE:
+        return (
+            _QUANORA_REPO_ROOT / ".git",
+            _QUANORA_REPO_ROOT / ".env",
+        )
+    if _SELF_DOC_MODE:
+        return _resolve_protected_paths(workspace_root)
+    return _resolve_protected_paths(workspace_root)
+
+
 def switch_to_project_workspace(task_description: str) -> Path:
     """根据任务描述动态切换 workspace 到项目子目录。
 
-    在 _WORKSPACE_BASE 下按项目名建立子目录（如 xauusd_timeseries_signal_backtest_spec/），
+    在当前 workspace_root 下按项目名建立子目录（如 xauusd_timeseries_signal_backtest_spec/），
     并更新全局 workspace_guard 使所有后续写入定向到该目录。
+
+    注意：使用 _WORKSPACE_ROOT（而非 _WORKSPACE_BASE）作为父目录，
+    这样在 self-dev/self-doc 模式下项目子目录会正确地创建在 repo root 下，
+    而不是在 workspace/ 下产生额外嵌套。
 
     :param task_description: 用户任务描述（如文件名、需求描述）
     :returns: 新的项目子目录路径
@@ -218,16 +240,27 @@ def switch_to_project_workspace(task_description: str) -> Path:
     global _WORKSPACE_ROOT, _WORKSPACE_GUARD
 
     project_dir = find_or_create_project_dir(
-        workspace_root=_WORKSPACE_BASE,
+        workspace_root=_WORKSPACE_ROOT,
         task_description=task_description,
     )
 
     _WORKSPACE_ROOT = project_dir
+    protected = _resolve_protected_paths_for_mode(project_dir)
+    # In self-doc mode, .md files in protected areas should still be writable
+    write_ext = (".md",) if _SELF_DOC_MODE else ()
+    # In self-dev mode, guard root should remain repo root so agent/ etc.
+    # remain writable; in other modes guard root is the project dir.
+    # In both modes, resolve_root should be the project dir so relative
+    # paths (like write_file("data.csv")) land in the project folder.
+    guard_root = _QUANORA_REPO_ROOT if _SELF_DEV_MODE else project_dir
+    resolve_root = project_dir if _SELF_DEV_MODE else None
     _WORKSPACE_GUARD = WorkspaceGuard(
         WorkspaceConfig(
-            root=project_dir,
-            protected_paths=_resolve_protected_paths(project_dir),
+            root=guard_root,
+            resolve_root=resolve_root,
+            protected_paths=protected,
             allow_outside_reads=True,
+            protected_write_extensions=write_ext,
         )
     )
     # 同步 Config 类属性，使 runtime 等模块读取时拿到新值
@@ -237,8 +270,9 @@ def switch_to_project_workspace(task_description: str) -> Path:
 
 def disable_self_dev_mode() -> WorkspaceGuard:
     """Restore the default (non-self-dev) workspace guard. Test-only."""
-    global _SELF_DEV_MODE, _WORKSPACE_GUARD
+    global _SELF_DEV_MODE, _WORKSPACE_GUARD, _WORKSPACE_ROOT
     _SELF_DEV_MODE = False
+    _WORKSPACE_ROOT = _WORKSPACE_BASE
     _WORKSPACE_GUARD = WorkspaceGuard(
         WorkspaceConfig(
             root=_WORKSPACE_ROOT,
@@ -277,8 +311,9 @@ def enable_self_doc_mode() -> WorkspaceGuard:
 
     Returns the new workspace guard so callers can verify the swap.
     """
-    global _SELF_DOC_MODE, _WORKSPACE_GUARD
+    global _SELF_DOC_MODE, _WORKSPACE_GUARD, _WORKSPACE_ROOT
     _SELF_DOC_MODE = True
+    _WORKSPACE_ROOT = _QUANORA_REPO_ROOT
 
     # Protect the entire Quanora repo tree. .md files will be exempted
     # via protected_write_extensions, but .git and .env are fully
@@ -330,8 +365,9 @@ def enable_self_doc_mode() -> WorkspaceGuard:
 
 def disable_self_doc_mode() -> WorkspaceGuard:
     """Restore the default (non-self-doc) workspace guard. Test-only."""
-    global _SELF_DOC_MODE, _WORKSPACE_GUARD
+    global _SELF_DOC_MODE, _WORKSPACE_GUARD, _WORKSPACE_ROOT
     _SELF_DOC_MODE = False
+    _WORKSPACE_ROOT = _WORKSPACE_BASE
     _WORKSPACE_GUARD = WorkspaceGuard(
         WorkspaceConfig(
             root=_WORKSPACE_ROOT,

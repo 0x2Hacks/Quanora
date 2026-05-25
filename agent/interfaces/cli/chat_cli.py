@@ -120,6 +120,26 @@ class ChatCLI:
         # 是否已经切换到项目子目录（仅在首次输入时切换）
         _project_workspace_set = False
 
+        # 恢复会话时自动还原 workspace（如果有 project_dir 元数据）
+        if hasattr(self._session_store, 'get_project_dir'):
+            saved_project_dir = self._session_store.get_project_dir()
+            if saved_project_dir:
+                from pathlib import Path
+                if Path(saved_project_dir).exists():
+                    try:
+                        from agent.infrastructure.config.settings import switch_to_project_workspace
+                        project_dir = switch_to_project_workspace(
+                            Path(saved_project_dir).name
+                        )
+                        _project_workspace_set = True
+                        self._console.print(
+                            f"[dim]📁 已恢复项目目录: {project_dir}[/dim]\n"
+                        )
+                    except Exception as e:
+                        self._console.print(
+                            f"[dim yellow]⚠ 恢复项目目录失败: {e}[/dim yellow]\n"
+                        )
+
         while True:
             try:
                 user_input = self._read_user_input()
@@ -138,6 +158,14 @@ class ChatCLI:
                 from agent.infrastructure.config.settings import switch_to_project_workspace
                 project_dir = switch_to_project_workspace(user_input)
                 _project_workspace_set = True
+                # Persist project_dir to session metadata for task resume
+                if hasattr(self._session_store, 'update_project_dir'):
+                    try:
+                        self._event_loop.run_until_complete(
+                            self._session_store.update_project_dir(str(project_dir))
+                        )
+                    except Exception:
+                        pass  # non-critical; best-effort persistence
                 # 显示项目目录信息
                 self._console.print(
                     f"[dim]📁 项目目录: {project_dir}[/dim]\n"
