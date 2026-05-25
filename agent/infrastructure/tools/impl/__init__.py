@@ -10,9 +10,11 @@ from .tools import (
     bash_output,
     edit_file,
     fetch_web_page,
+    generate_project_knowledge,
     grep,
     kill_shell,
     list_files,
+    load_project_knowledge,
     plan_add_step,
     plan_close,
     plan_create,
@@ -67,6 +69,9 @@ TOOLS: dict[str, Callable] = {
     "skill_create": skill_create,
     "search_web": search_web,
     "fetch_web_page": fetch_web_page,
+    # Project Knowledge Cache
+    "generate_project_knowledge": generate_project_knowledge,
+    "load_project_knowledge": load_project_knowledge,
     # WorldQuant Brain alpha mining tools
     "wq_login": wq_login,
     "wq_list_operators": wq_list_operators,
@@ -375,6 +380,35 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
                 "description": "交叉策略",
                 "enum": ["wrap_b_in_a", "rank_pair", "add_pair", "corr_pair"],
             },
+        },
+    },
+    # ── Project Knowledge Cache ──────────────────────────────────────
+    "generate_project_knowledge": {
+        "description": (
+            "生成项目知识缓存。agent 首次探索完项目后调用此工具，"
+            "将理解结果压缩为结构化缓存，后续会话可直接加载，避免重复探索。"
+            "调用前应已完成 list_files / read_file / grep 等探索。"
+        ),
+        "param_descriptions": {
+            "project_root": "项目根目录绝对路径",
+            "description": "一句话项目描述（agent 总结）",
+            "architecture_pattern": "架构模式，如 DDD / MVC / 分层架构（可选）",
+            "conventions": "项目约定列表，JSON 数组字符串，如 '[\"使用DDD分层\",\"统一返回格式\"]'（可选）",
+            "important_patterns": "重要模式列表，JSON 数组字符串，如 '[\"工具注册在__init__.py\"]'（可选）",
+            "key_files_override": "手动指定的关键文件映射，JSON 对象字符串，如 '{\"app.py\":\"主入口\"}'（可选）",
+            "context_boost": "可直接注入 system prompt 的压缩摘要文本（可选，agent 自由总结）",
+            "self_dev": "是否为 self-dev 模式（默认 False）",
+        },
+    },
+    "load_project_knowledge": {
+        "description": (
+            "加载项目知识缓存。如果缓存存在且未过期，返回项目上下文摘要，"
+            "agent 可直接使用该摘要理解项目，无需重新探索。"
+            "如果缓存过期或不存在，应先探索项目再调用 generate_project_knowledge。"
+        ),
+        "param_descriptions": {
+            "project_root": "项目根目录绝对路径",
+            "self_dev": "是否为 self-dev 模式（默认 False）",
         },
     },
 }

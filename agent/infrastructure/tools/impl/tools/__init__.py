@@ -15,6 +15,7 @@ from .plan import (
     plan_update_meta,
     plan_update_step,
 )
+from .project_knowledge import generate_project_knowledge, load_project_knowledge
 from .skill import skill_create
 from .web import fetch_web_page, search_web
 from .worldquant import (
