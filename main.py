@@ -1,3 +1,4 @@
+from pathlib import Path
 from agent.basic_agent import BasicAgent
 from agent.infrastructure.config import Config, settings as settings_mod
 import argparse
@@ -35,7 +36,39 @@ if __name__ == "__main__":
             ".quanora/sessions/self-doc/."
         ),
     )
+    parser.add_argument(
+        "--list-sessions",
+        action="store_true",
+        help="List past sessions with IDs, titles, and project directories, then exit.",
+    )
     args = parser.parse_args()
+
+    # Handle --list-sessions: print session list and exit
+    if args.list_sessions:
+        import json
+        from agent.infrastructure.persistence.session_files import SessionFiles
+        from agent.infrastructure.persistence.session_index_repository import SessionIndexRepository
+
+        session_dir = args.session_dir or str(Config.QUANORA_HOME / ".quanora" / "sessions" / ("self-dev" if args.self_dev else "self-doc" if args.self_doc else "default"))
+        index_path = os.path.join(session_dir, "index.json")
+        repo = SessionIndexRepository(SessionFiles(), index_path)
+        index_data = repo.load_index()
+        sessions = index_data.get("sessions", [])
+        if not sessions:
+            print("No sessions found.")
+            sys.exit(0)
+        print(f"{'Session ID':<32} {'Title':<50} {'Project Dir'}")
+        print("-" * 120)
+        for s in sessions:
+            sid = s.get("id", "?")
+            title = s.get("title", "Untitled")[:48]
+            pdir = s.get("project_dir", "")
+            print(f"{sid:<32} {title:<50} {pdir}")
+        print()
+        print(f"Total: {len(sessions)} sessions")
+        print(f"To resume a session: python main.py --session <SESSION_ID>")
+        sys.exit(0)
+    
 
     Config.validate()
     if args.allow_unsafe_bash:

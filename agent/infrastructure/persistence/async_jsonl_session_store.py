@@ -212,8 +212,31 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
             "size": {"messages": self._message_count, "tool_calls": self._tool_call_count},
             "preview": self._last_preview,
             "workspace_root": self._session_meta.get("workspace_root"),
+            "project_dir": self._session_meta.get("project_dir"),
         }
         self._index_repo.update_index(entry)
+
+    async def update_project_dir(self, project_dir: str) -> None:
+        """Update the project directory in the session metadata.
+
+        Called when switch_to_project_workspace creates or reuses a project
+        subdirectory. Persisted to meta.json and the session index so that
+        resuming a session can automatically restore the correct workspace.
+        """
+        async with self._write_lock:
+            def _update():
+                if not self._session_meta:
+                    return
+                self._session_meta["project_dir"] = project_dir
+                self._session_meta["updated_at"] = self.now_iso()
+                if self._session_paths:
+                    self._files.write_json(self._session_paths["meta"], self._session_meta)
+                self._update_index()
+            await asyncio.to_thread(_update)
+
+    def get_project_dir(self) -> str | None:
+        """Return the project directory stored in the session metadata, or None."""
+        return self._session_meta.get("project_dir") if self._session_meta else None
 
     def _ensure_session_sync(self):
         self._setup_paths()
