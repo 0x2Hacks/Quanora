@@ -306,33 +306,82 @@ class ContextManager:
     def _normalize_messages(messages: list[dict]) -> list[dict]:
         """Normalize messages to ensure they conform to LLM API requirements.
 
-        Fixes:
-        1. Consecutive messages with the same role are merged (except system).
-        2. Messages with empty/missing content are dropped.
-        3. Ensures the message list always starts with a user or system message.
+        The OpenAI-compatible API requires that messages alternate roles
+        (system can appear multiple times, but user/assistant/tool must not
+        appear consecutively with the same role).  This method fixes common
+        violations:
+
+        1. Drops empty assistant messages that have NO tool_calls.
+        2. Drops empty tool messages (empty content + no useful data).
+        3. Merges consecutive user messages by concatenating content.
+        4. Merges consecutive assistant messages that both have text content
+           (but NOT assistant messages that carry tool_calls).
+        5. Never merges tool messages — each must match a tool_call_id.
+        6. Inserts a dummy user message if the sequence would otherwise start
+           with an assistant/tool message.
         """
         if not messages:
             return messages
 
-        # Step 1: Filter out messages with empty content
-        filtered = []
+        # ---- Step 1: Filter out clearly invalid messages ----
+        filtered: list[dict] = []
         for msg in messages:
+            role = msg.get("role", "")
             content = msg.get("content", "")
-            if isinstance(content, str) and content.strip() == "" and msg.get("role") != "tool":
-                continue
-            if isinstance(content, list) and len(content) == 0:
-                continue
+            has_tool_calls = bool(msg.get("tool_calls"))
+
+            # Empty assistant with no tool_calls is useless — drop it
+            if role == "assistant" and not has_tool_calls:
+                if isinstance(content, str) and content.strip() == "":
+                    continue
+                if isinstance(content, list) and len(content) == 0:
+                    continue
+
+            # Empty tool content is common (some tools return "") — keep it
+            # because it is paired with a tool_call_id.
+            # But if a tool msg has NO content AND no tool_call_id, drop it.
+            if role == "tool":
+                if not msg.get("tool_call_id") and not msg.get("name"):
+                    if isinstance(content, str) and content.strip() == "":
+                        continue
+                    if isinstance(content, list) and len(content) == 0:
+                        continue
+
+            # Empty user content (non-tool, non-assistant) — drop
+            if role == "user":
+                if isinstance(content, str) and content.strip() == "":
+                    continue
+                if isinstance(content, list) and len(content) == 0:
+                    continue
+
             filtered.append(msg)
 
         if not filtered:
             return filtered
 
-        # Step 2: Merge consecutive messages with the same role
-        normalized = [filtered[0]]
+        # ---- Step 2: Merge consecutive same-role messages ----
+        # Rules:
+        #   - system: never merge (multiple system messages are allowed)
+        #   - user: merge by concatenating content
+        #   - assistant with text only: merge by concatenating content
+        #   - assistant with tool_calls: NEVER merge (API expects 1:1 pairing)
+        #   - tool: NEVER merge (must match tool_call_id)
+        normalized: list[dict] = [filtered[0]]
         for msg in filtered[1:]:
             prev = normalized[-1]
-            if msg.get("role") == prev.get("role") and msg.get("role") != "system":
-                # Merge content
+            prev_role = prev.get("role", "")
+            curr_role = msg.get("role", "")
+
+            if prev_role != curr_role:
+                normalized.append(msg)
+                continue
+
+            # Same role from here on
+            if curr_role == "system":
+                # Multiple system messages are OK
+                normalized.append(msg)
+            elif curr_role == "user":
+                # Merge user content
                 prev_content = prev.get("content", "")
                 curr_content = msg.get("content", "")
                 if isinstance(prev_content, str) and isinstance(curr_content, str):
@@ -340,17 +389,47 @@ class ContextManager:
                 elif isinstance(prev_content, list) and isinstance(curr_content, list):
                     prev["content"] = prev_content + curr_content
                 else:
-                    # Mixed content types - convert both to string and merge
-                    prev_str = prev_content if isinstance(prev_content, str) else str(prev_content)
-                    curr_str = curr_content if isinstance(curr_content, str) else str(curr_content)
-                    prev["content"] = prev_str + "\n" + curr_str
-                # If tool_call_id differs, keep the later one
-                if "tool_call_id" in msg:
-                    prev["tool_call_id"] = msg["tool_call_id"]
-                if "name" in msg:
-                    prev["name"] = msg["name"]
+                    prev["content"] = str(prev_content) + "\n" + str(curr_content)
+            elif curr_role == "assistant":
+                # Only merge if BOTH are text-only (no tool_calls)
+                prev_has_tc = bool(prev.get("tool_calls"))
+                curr_has_tc = bool(msg.get("tool_calls"))
+                if not prev_has_tc and not curr_has_tc:
+                    prev_content = prev.get("content", "")
+                    curr_content = msg.get("content", "")
+                    if isinstance(prev_content, str) and isinstance(curr_content, str):
+                        prev["content"] = prev_content + "\n" + curr_content
+                    elif isinstance(prev_content, list) and isinstance(curr_content, list):
+                        prev["content"] = prev_content + curr_content
+                    else:
+                        prev["content"] = str(prev_content) + "\n" + str(curr_content)
+                else:
+                    # At least one has tool_calls — cannot merge.
+                    # This is a genuine API violation.  We insert a dummy
+                    # user message to break the sequence.
+                    normalized.append({"role": "user", "content": "[continuation]"})
+                    normalized.append(msg)
+            elif curr_role == "tool":
+                # Tool messages must not be merged (each has a unique
+                # tool_call_id).  Insert a dummy assistant to break.
+                normalized.append({"role": "assistant", "content": ""})
+                normalized.append(msg)
             else:
                 normalized.append(msg)
+
+        # ---- Step 3: Ensure sequence starts with system or user ----
+        if normalized and normalized[0].get("role") not in ("system", "user"):
+            normalized.insert(0, {"role": "user", "content": "[start]"})
+
+        # ---- Step 4: Remove trailing assistant with empty content & no tool_calls ----
+        while normalized:
+            last = normalized[-1]
+            if last.get("role") == "assistant" and not last.get("tool_calls"):
+                lc = last.get("content", "")
+                if (isinstance(lc, str) and lc.strip() == "") or (isinstance(lc, list) and len(lc) == 0):
+                    normalized.pop()
+                    continue
+            break
 
         return normalized
 

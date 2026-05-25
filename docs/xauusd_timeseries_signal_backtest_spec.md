@@ -4,72 +4,235 @@
 > 时序信号回测的核心问题是：**这个信号对未来 N 根 bar 的收益有没有预测能力、预测能力在不同时段/regime 下是否稳定、扣除点差成本后能否实际使用。**
 > 不涉及具体止盈止损规则、仓位管理、复杂订单类型；只回答“信号本身是否有 edge”。
 >
-> 标的：XAU/USD（现货黄金对美元，国际外汇代码 `XAUUSD`，期货代码 `GC=F`）
-> 频率：5 分钟（M5）
-> 历史长度：≥ 2 年
+> 标的：XAU/USD（现货黄金对美元，Dukascopy symbol `XAU/USD`）
+> 频率：5 分钟（M5），由 Dukascopy tick 数据聚合生成
+> 历史长度：2 年（2024-05-01 至 2026-04-30）
 
 ---
 
 ## 〇、数据获取（Agent 必须先完成）
 
-### 0.1 可用的免费数据源（按推荐顺序）
+> **⚠ 本项目数据源唯一指定：Dukascopy Historical Data Feed。**
+> 不使用 yfinance、HistData.com、Kaggle 等任何其他来源。
+> yfinance 5m 数据仅覆盖最近 60 天，不满足 2 年回测需求；
+> HistData.com 只有 bid 价且需手动逐月下载；
+> Kaggle 数据离线且最新月份可能缺失。
+> Dukascopy 提供银行间 tick 级 bid/ask 双边报价，是免费外汇数据中最权威的来源。
 
-| 来源 | 标的代码 | 时间跨度 | Python 接入 | 备注 |
-|------|---------|---------|------------|------|
-| **Dukascopy Historical Data Feed** | `XAUUSD` | 2003 至今 | `pip install dukascopy-python` 或 `duka` CLI | **首选**。免费、官方、tick → 重采样到 M5；时间戳为 UTC；价格为银行间报价（bid/ask 分离）|
-| **HistData.com** | `XAUUSD` | 2009 至今 | 需手动逐月下载 zip，再用 pandas 合并 | M1 数据 → 重采样到 M5；只有 bid 价 |
-| **Kaggle 公开数据集** | `XAU/USD` | 2004 ~ 2025 | `kaggle datasets download novandraanugrah/xauusd-gold-price-historical-data-2004-2024` | 已包含 5m/15m/30m/1h/4h/1D；离线数据，最新月份可能缺失 |
-| **yfinance（GC=F 黄金期货）** | `GC=F` | **仅最近 60 天** | `yfinance.download('GC=F', interval='5m')` | ⚠️ 不满足 2 年要求，仅用于实时增量补丁 |
+### 0.1 Dukascopy 数据概览
 
-> ⚠️ 注意：**yfinance 不支持 5m 频率回溯 2 年**（intraday 数据上限 60 天）。Agent 必须使用 Dukascopy 或 HistData 作为主数据源。
+| 属性 | 值 |
+|------|-----|
+| 数据来源 | Dukascopy Swiss Forex Bank & Marketplace |
+| 标的代码 | `XAU/USD`（Dukascopy 内部 symbol，非 `XAUUSD`） |
+| 原始粒度 | Tick（每笔 bid/ask报价，毫秒级时间戳） |
+| 目标频率 | 5 分钟（M5），由 tick 聚合生成 |
+| 时间范围 | **2024-05-01 00:00 UTC 至 2026-04-30 24:00 UTC**（2 年） |
+| 时区 | UTC（Dukascopy 原始时间戳为 UTC） |
+| 价格类型 | bid / ask 双边报价（分别下载，聚合后合并） |
+| 预估 tick 量 | 约 2 年 × ~50M ticks/年 ≈ 100M ticks |
+| 预估 M5 bar 量 | 约 150k bars（2 年 × 52 周 × 5 天 × 24h × 12 bar/h，黄金近 24h 交易，周末除外） |
 
-### 0.2 推荐的下载脚本（Dukascopy 路径）
+### 0.2 下载工具安装
+
+使用 **`duka`** CLI 工具（基于 `duka` Python 包）下载 Dukascopy tick 数据。
+
+```bash
+# 安装 duka 包（包含 CLI 和 Python API）
+pip install duka
+
+# 验证安装
+duka --help
+```
+
+> `duka` 包由 giovcare 维护，源码见 https://github.com/codetinker/duka 。
+> 该包直接读取 Dukascopy 公开的数据 feed URL（`https://datafeed.dukascopy.com/datafeed/...`），
+> 解压 `.bi5` 二进制格式为 tick 级 CSV，支持按日期范围批量下载。
+
+### 0.3 Tick 数据下载脚本
 
 ```python
-# 优先方案：dukascopy-python
-# pip install dukascopy-python pandas
-import dukascopy_python
-from datetime import datetime, timezone
+# scripts/download_xauusd_ticks.py
+"""
+从 Dukascopy 下载 XAU/USD tick 数据（2024-05 至 2026-04）。
+输出: data/raw/xauusd_ticks_bid_YYYYMM.csv + xauusd_ticks_ask_YYYYMM.csv（按月分片）
+"""
+import subprocess
+import os
+from datetime import datetime
+
+# --- 配置 ---
+SYMBOL = "XAU/USD"        # Dukascopy 内部 symbol（注意斜杠）
+START   = "2024-05-01"
+END     = "2026-04-30"
+RAW_DIR = "data/raw"      # 原始 tick 数据存储目录
+
+os.makedirs(RAW_DIR, exist_ok=True)
+
+# duka CLI 批量下载 tick 数据
+# --pair: 交易品种；--start/--end: 日期范围（UTC）；--folder: 输出目录
+# --candle: tick（默认为 tick 级下载）
+cmd = [
+    "duka",
+    "--pair", SYMBOL,
+    "--start", START,
+    "--end", END,
+    "--folder", RAW_DIR,
+]
+
+print(f"下载 Dukascopy tick 数据: {SYMBOL}, {START} ~ {END}")
+result = subprocess.run(cmd, capture_output=True, text=True)
+if result.returncode != 0:
+    print(f"下载失败: {result.stderr}")
+    raise RuntimeError(f"duka CLI 失败: {result.stderr}")
+print(f"下载完成，文件保存在 {RAW_DIR}/")
+```
+
+> **注意：** `duka` CLI 下载的 tick 数据为按月分片的 CSV 文件，
+> 文件名格式为 `XAUUSD_YYYYMM.csv`（Dukascopy 在文件名中使用 `XAUUSD` 无斜杠）。
+> 每行包含：`timestamp, bid, ask, bid_volume, ask_volume`。
+
+### 0.4 Tick → M5 OHLC 聚合脚本
+
+```python
+# scripts/aggregate_ticks_to_m5.py
+"""
+将 Dukascopy tick 数据聚合为 5 分钟 OHLC bar。
+分别对 bid 和 ask 做 OHLC 聚合，然后合并为单条 bar 的 bid/ask 双边数据。
+输出: data/processed/xauusd_m5_2024-05_2026-04.parquet
+"""
 import pandas as pd
+import glob
+import os
 
-df = dukascopy_python.fetch(
-    instrument=dukascopy_python.INSTRUMENT_FX_METALS_XAU_USD,
-    interval=dukascopy_python.INTERVAL_MIN_5,
-    offer_side=dukascopy_python.OFFER_SIDE_BID,   # 同时再拉一次 ASK 用于估算点差
-    start=datetime(2023, 1, 1, tzinfo=timezone.utc),
-    end=datetime(2026, 1, 1, tzinfo=timezone.utc),
-)
-df.to_parquet("xauusd_m5_bid.parquet")
+# --- 配置 ---
+RAW_DIR      = "data/raw"
+PROCESSED_DIR = "data/processed"
+OUTPUT_FILE  = os.path.join(PROCESSED_DIR, "xauusd_m5_2024-05_2026-04.parquet")
+
+os.makedirs(PROCESSED_DIR, exist_ok=True)
+
+# 1. 读取所有月分片 tick CSV
+tick_files = sorted(glob.glob(os.path.join(RAW_DIR, "XAUUSD_*.csv")))
+print(f"发现 {len(tick_files)} 个 tick 文件")
+
+tick_dfs = []
+for f in tick_files:
+    df = pd.read_csv(f, header=None,
+                     names=["timestamp", "bid", "ask", "bid_vol", "ask_vol"])
+    tick_dfs.append(df)
+
+ticks = pd.concat(tick_dfs, ignore_index=True)
+ticks["timestamp"] = pd.to_datetime(ticks["timestamp"], utc=True)
+ticks = ticks.set_index("timestamp").sort_index()
+
+# 2. 过滤：仅保留 2024-05-01 至 2026-04-30 范围
+ticks = ticks.loc["2024-05-01":"2026-04-30"]
+
+# 3. 聚合为 5min OHLC（bid 和 ask 分别聚合）
+agg_5min = {
+    "first":  "open",
+    "max":    "high",
+    "min":    "low",
+    "last":   "close",
+}
+
+bid_m5 = ticks["bid"].resample("5min").agg(agg_5min).rename(columns=lambda c: f"bid_{c}")
+ask_m5 = ticks["ask"].resample("5min").agg(agg_5min).rename(columns=lambda c: f"ask_{c}")
+
+# 4. 合合 bid/ask → 单条 bar，计算 mid 和 spread
+m5 = pd.concat([bid_m5, ask_m5], axis=1)
+m5["mid_open"]   = (m5["bid_open"]   + m5["ask_open"])   / 2
+m5["mid_high"]   = (m5["bid_high"]   + m5["ask_high"])   / 2
+m5["mid_low"]    = (m5["bid_low"]    + m5["ask_low"])    / 2
+m5["mid_close"]  = (m5["bid_close"]  + m5["ask_close"])  / 2
+m5["spread"]     = m5["ask_close"]   - m5["bid_close"]    # 最后一笔 tick 的点差
+
+# 5. 剔除无交易的空 bar（周末/节假日 5min resample 产生 NaN）
+m5 = m5.dropna(subset=["bid_close", "ask_close"])
+
+# 6. 保存为 Parquet
+m5.to_parquet(OUTPUT_FILE, index=True)
+print(f"聚合完成: {len(m5)} bars, 保存在 {OUTPUT_FILE}")
+print(f"时间范围: {m5.index.min()} ~ {m5.index.max()}")
 ```
 
-```python
-# 备选方案：HistData.com（M1 → 重采样到 M5）
-# 手动下载 https://www.histdata.com/download-free-forex-historical-data/?/ascii/1-minute-bar-quotes/xauusd/YYYY/MM
-# 解压得到 DAT_ASCII_XAUUSD_M1_YYYYMM.csv，列顺序：Datetime; Open; High; Low; Close; Volume
-import pandas as pd, glob
-m1 = pd.concat([pd.read_csv(f, sep=';', header=None,
-                            names=['ts','open','high','low','close','vol'])
-                for f in sorted(glob.glob('DAT_ASCII_XAUUSD_M1_*.csv'))])
-m1['ts'] = pd.to_datetime(m1['ts'], format='%Y%m%d %H%M%S', utc=True)
-m1 = m1.set_index('ts').sort_index()
-m5 = m1.resample('5min').agg({'open':'first','high':'max',
-                              'low':'min','close':'last','vol':'sum'}).dropna()
-m5.to_parquet('xauusd_m5_histdata.parquet')
+### 0.5 Parquet 数据 Schema
+
+```
+xauusd_m5_2024-05_2026-04.parquet
+─────────────────────────────────────
+索引: timestamp (datetime[ns, UTC]) — bar 开始时间
+列:
+  bid_open    float64  — bar 内首笔 bid
+  bid_high    float64  — bar 内最高 bid
+  bid_low     float64  — bar 内最低 bid
+  bid_close   float64  — bar 内末笔 bid
+  ask_open    float64  — bar 内首笔 ask
+  ask_high    float64  — bar 内最高 ask
+  ask_low     float64  — bar 内最低 ask
+  ask_close   float64  — bar 内末笔 ask
+  mid_open    float64  — (bid_open + ask_open) / 2
+  mid_high    float64  — (bid_high + ask_high) / 2
+  mid_low     float64  — (bid_low + ask_low) / 2
+  mid_close   float64  — (bid_close + ask_close) / 2
+  spread      float64  — ask_close - bid_close（末笔点差）
+─────────────────────────────────────
+预估行数: ~150k
+预估文件大小: ~15 MB (Parquet 压缩后)
 ```
 
-### 0.3 数据完整性检查清单
+### 0.6 数据存储目录结构
+
+```
+data/
+├── raw/                              # Dukascopy tick 原始数据（按月分片）
+│   ├── XAUUSD_202405.csv
+│   ├── XAUUSD_202406.csv
+│   ├── ...
+│   └── XAUUSD_202604.csv
+│   └── download_meta.json            # 记录下载时间、duka版本、原始URL
+├── processed/                        # 聚合后的 M5 数据
+│   ├── xauusd_m5_2024-05_2026-04.parquet
+│   └── aggregation_meta.json         # 记录聚合参数、tick总条数、bar总条数
+└── artifacts/                        # 回测产物（图表、报告）
+```
+
+### 0.7 数据完整性检查清单
+
+| 检查项 | 通过标准 | 检查命令 |
+|--------|---------|---------|
+| 时间范围覆盖 | 首个 bar ≥ 2024-05-01，末个 bar ≤ 2026-04-30 | `df.index.min(), df.index.max()` |
+| Bar 数量 | ≥ 140k bars（2 年 × 24h × 12 bar/h × ~250 有效交易日） | `len(df)` |
+| 时间戳时区 | 所有 timestamp 为 UTC | `df.index.dtype == datetime64[ns, UTC]` |
+| 无周末 bar | 周六/周日（UTC）无 bar | `df[df.index.dayofweek >= 5].empty == True` |
+| 节假日缺口 | 圣诞/元旦当天 bar 数大幅减少（正常） | 人工核验 |
+| 异常跳价 | `|log(close/close.shift(1))| > 0.05` 的 bar ≤ 5 条 | `(np.abs(np.log(df.mid_close / df.mid_close.shift(1))) > 0.05).sum()` |
+| 重复时间戳 | `df.index.duplicated().sum() == 0` | `df.index.duplicated().sum()` |
+| OHLC 一致性 | `low ≤ open,close ≤ high`（bid 与 ask 各自满足） | `(df.bid_low <= df.bid_close).all()` |
+| Spread 范围 | `(ask_close - bid_close).median()` 在 0.15 ~ 0.40 美元/盎司 | `df.spread.median()` |
+| 无 NaN 关键列 | bid/ask OHLC + mid 均非空 | `df[['bid_close','ask_close','mid_close']].isna().sum() == 0` |
+
+### 0.8 Tick 数据验证（聚合前）
 
 | 检查项 | 通过标准 |
 |--------|---------|
-| 时间范围 | ≥ 730 天 |
-| Bar 数量 | 约 2 年 × 52 周 × 5 天 × 24 小时 × 12 bar ≈ 150k 根（黄金近 24h 交易，周末除外）|
-| 时间戳时区 | 统一存储为 UTC，分析时再转 NY/London |
-| 周末缺口 | 周五 ~22:00 UTC 至周日 ~22:00 UTC 应该没有 bar（正常）|
-| 节假日缺口 | 圣诞、元旦、感恩节当天数据稀疏（正常）|
-| 异常跳价 | `|log(close/close.shift(1))| > 0.05`（5% 单 bar 涨跌）的 bar 标记为可疑 |
-| 重复时间戳 | `df.index.duplicated().sum() == 0` |
-| 字段完整 | open/high/low/close 均非空，且 `low ≤ open,close ≤ high` |
-| 点差估算 | `(ask - bid).median()` 应在 0.15 ~ 0.40 美元/盎司之间（正常黄金点差）|
+| Tick 文件数 | 24 个月分片文件（2024-05 至 2026-04） |
+| Tick 总量 | ≥ 50M ticks（XAU/USD 活跃品种每月约 2-5M ticks） |
+| Bid/ask 非负 | `bid > 0` 且 `ask > 0` 全部满足 |
+| Bid < ask | `bid ≤ ask` 全部满足（违反则为异常报价） |
+| 时间戳单调 | tick 按时间严格递增（同月分片内） |
+| 无跨月重叠 | 不同月份文件时间戳不重叠 |
+
+### 0.9 异常值与清洗规则
+
+| 场景 | 处理方式 |
+|------|---------|
+| 单 bar 涨跌超 5% | 标记为可疑，保留但输出 warning 日志；人工核查后决定删除或保留 |
+| bid > ask（报价翻转） | 删除该 tick，重新聚合受影响的 bar |
+| 点差 > 1.0 USD/盎司（异常宽点差） | 标记为流动性枯竭时段（如非农数据发布瞬间），该 bar 信号忽略 |
+| 周末/假日空 bar | resample 后 dropna，不填充 |
+| 拍卖/结算时段（每日 ~17:00 UTC 附近） | 保留但标记，点差可能暂时扩大 |
 
 ---
 
@@ -99,11 +262,14 @@ m5.to_parquet('xauusd_m5_histdata.parquet')
 
 ### 1.3 收益率定义
 
+> **约定：** 收益率计算中的 `close` / `open` 指 `mid_close` / `mid_open`（bid-ask 中间价），
+> 除非特别标注使用 `bid_close`（模拟做空成交）或 `ask_close`（模拟做多成交）。
+
 | 字段 | 定义 | 用途 |
 |------|------|------|
-| `ret_1` | 单 bar 对数收益 `log(close[t] / close[t-1])` | 累乘/累加更稳定 |
-| `fwd_ret_h` | 未来 h 根 bar 的累计对数收益 `log(close[t+h] / close[t])` | 信号在不同持有期的预测能力 |
-| `fwd_ret_h_oc` | 未来 h 根 bar 的 open→close 收益 `log(close[t+h] / open[t+1])` | **更现实**，模拟“下一根 bar 开盘进场”的真实成交 |
+| `ret_1` | 单 bar 对数收益 `log(mid_close[t] / mid_close[t-1])` | 累乘/累加更稳定 |
+| `fwd_ret_h` | 未来 h 根 bar 的累计对数收益 `log(mid_close[t+h] / mid_close[t])` | 信号在不同持有期的预测能力 |
+| `fwd_ret_h_oc` | 未来 h 根 bar 的 open→close 收益 `log(mid_close[t+h] / mid_open[t+1])` | **更现实**，模拟"下一根 bar 开盘进场"的真实成交 |
 | 净收益 | `fwd_ret - spread_cost - commission` | 必须报告 |
 
 > 默认采用 `fwd_ret_h_oc` 作为主指标，因为 close-to-close 假设你能在 bar 收盘那一瞬间成交，这在 5m 频率上是有偏的乐观假设。
@@ -316,9 +482,9 @@ m5.to_parquet('xauusd_m5_histdata.parquet')
 
 ### 4.7 数据源差异
 
-- Dukascopy / HistData / OANDA / MT5 broker 的 XAU/USD 报价**不完全一致**（不同流动性池）。
-- 同一信号在不同源上 Sharpe 可能差 30%。
-- 必须明确报告数据源；进阶检验：拿第二个数据源跑同一信号，看相对秩是否一致。
+- 本项目数据源固定为 **Dukascopy**，不存在多源切换问题。
+- 若将来需要与 OANDA / MT5 broker 报价交叉验证（确认信号在另一数据源上相对秩一致），可额外下载第二源做进阶检验。
+- 同一信号在不同源上 Sharpe 可能差 30%，因此进阶检验必须明确报告使用的数据源版本。
 
 ### 4.8 信号稀疏性
 
@@ -419,8 +585,8 @@ m5.to_parquet('xauusd_m5_histdata.parquet')
 ## 六、Agent 执行检查清单
 
 ```
-□ 数据已下载，时间跨度 ≥ 2 年，bar 数 ≥ 130k
-□ 时间戳统一 UTC，无重复，OHLC 字段完整
+□ 数据已下载（Dukascopy tick → M5 聚合），时间跨度 2024-05-01 至 2026-04-30，bar 数 ≥ 140k
+□ 时间戳统一 UTC，无重复，OHLC 字段完整（bid/ask 双边 + mid + spread）
 □ 周末/节假日缺口已检查并记录
 □ 点差已估算并写入成本模型
 □ 信号计算完成，无 NaN 泄漏
