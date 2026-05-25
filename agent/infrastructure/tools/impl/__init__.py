@@ -10,6 +10,7 @@ from .tools import (
     bash_output,
     edit_file,
     fetch_web_page,
+    glob,
     grep,
     kill_shell,
     list_files,
@@ -35,6 +36,7 @@ TOOLS: dict[str, Callable] = {
     "write_file": write_file,
     "edit_file": edit_file,
     "list_files": list_files,
+    "glob": glob,
     "grep": grep,
     "bash": bash,
     "bash_output": bash_output,
@@ -55,11 +57,11 @@ TOOLS: dict[str, Callable] = {
 
 _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
     "read_file": {
-        "description": "读取文本文件内容，支持行号和分页读取。Agent应通过此工具查看代码上下文。",
+        "description": "读取文本文件内容，支持行号和范围读取。小文件可直接读取；大文件应先用 glob/grep 定位后通过 offset/limit 读取局部范围。",
         "param_descriptions": {
             "file_path": "文件绝对或相对路径",
             "offset": "起始行号（默认 1）",
-            "limit": "最多读取的行数（默认 1000 行，避免大文件超出上下文）",
+            "limit": "最多读取的行数（默认 1000 行，最大 2000 行；超过会被截断）",
         },
     },
     "read_pdf": {
@@ -84,13 +86,28 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
         },
     },
     "grep": {
-        "description": "在文件中搜索正则表达式模式 (Search)。返回匹配的文件路径、行号和内容。这是查找代码定义、引用或特定模式的首选工具。",
+        "description": "在文件中搜索正则表达式模式 (Search)。默认只返回匹配文件列表；需要具体行内容时使用 output_mode=content。",
         "param_descriptions": {
             "pattern": "要搜索的正则表达式 (Python re syntax)",
             "path": "搜索的根目录 (默认为当前目录 .)",
             "glob_pattern": "文件匹配模式 (如 **/*.py, src/*.ts)。默认为 **/*。",
             "case_sensitive": "是否区分大小写 (默认为 False)",
             "max_results": "最大返回结果数 (默认为 50)",
+            "output_mode": {
+                "description": "输出模式：files_with_matches 只返回匹配文件；content 返回匹配行；count 返回每个文件的匹配次数。",
+                "enum": ["files_with_matches", "content", "count"],
+            },
+            "offset": "分页偏移：跳过当前 output_mode 下的前 N 个输出项。默认为 0。",
+            "context": "content 模式下每个命中行前后附带的上下文行数。默认为 0。",
+        },
+    },
+    "glob": {
+        "description": "按 glob 模式快速查找文件路径，并返回文件大小。适合在读取文件内容前定位候选文件。",
+        "param_descriptions": {
+            "pattern": "文件匹配模式，如 **/*.py、src/**/*.ts。",
+            "path": "搜索目录。默认为当前目录 .。",
+            "max_results": "最大返回文件数。默认 100。",
+            "offset": "分页偏移：跳过前 N 个匹配文件。默认 0。",
         },
     },
     "list_files": {

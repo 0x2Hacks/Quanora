@@ -4,12 +4,42 @@ import re
 
 from agent.domain import tool_error, tool_ok
 
-_GREP_SKIP_DIRS = frozenset({
+_SKIP_DIRS = frozenset({
     ".git", "node_modules", "venv", ".venv", "__pycache__",
     "dist", "build", ".mypy_cache", ".pytest_cache", ".tox",
     ".hg", ".svn", "site-packages",
 })
 _GREP_MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+_READ_LARGE_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+_READ_MAX_LIMIT = 2000
+_MAX_LINE_CHARS = 2000
+
+
+def _is_skipped_path(path: Path) -> bool:
+    return bool(_SKIP_DIRS & set(path.parts))
+
+
+def _relative_path(file_path: Path, root: Path) -> str:
+    base = root if root.is_dir() else root.parent
+    try:
+        return file_path.relative_to(base).as_posix()
+    except ValueError:
+        return file_path.name
+
+
+def _format_size(size: int) -> str:
+    value = float(size)
+    for unit in ["B", "KB", "MB", "GB"]:
+        if value < 1024:
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} TB"
+
+
+def _clip_text(text: str, limit: int = _MAX_LINE_CHARS) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"...(truncated:{len(text)})"
 
 
 def read_file(file_path: str, offset: int = 1, limit: int = 1000) -> str:
@@ -20,32 +50,65 @@ def read_file(file_path: str, offset: int = 1, limit: int = 1000) -> str:
     :param limit: 读取最大行数 (默认 1000)
     """
     try:
-        path = Path(file_path)
+        path = Path(file_path).expanduser().resolve()
         if not path.exists():
             return tool_error("read_file", f"文件不存在: {file_path}", "NotFound")
         if not path.is_file():
             return tool_error("read_file", f"路径不是文件: {file_path}", "NotAFile")
-        if path.stat().st_size > 10 * 1024 * 1024:
-            return tool_error("read_file", "文件过大（>10MB），请使用更精确的搜索或限制读取范围。", "FileTooLarge")
+        offset = int(offset)
+        requested_limit = int(limit)
+        if offset < 1:
+            return tool_error("read_file", "offset 必须 >= 1。", "InvalidOffset")
+        if requested_limit < 1:
+            return tool_error("read_file", "limit 必须 >= 1。", "InvalidLimit")
 
+        effective_limit = min(requested_limit, _READ_MAX_LIMIT)
+        limit_clamped = requested_limit != effective_limit
+        file_size = path.stat().st_size
+        large_file = file_size > _READ_LARGE_FILE_SIZE
+
+        selected: list[tuple[int, str]] = []
+        end_line = offset + effective_limit - 1
+        total_lines = 0
         with open(path, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
+            for line_no, line in enumerate(f, start=1):
+                total_lines = line_no
+                if offset <= line_no <= end_line:
+                    selected.append((line_no, _clip_text(line.rstrip("\n").rstrip("\r"))))
 
-        total_lines = len(lines)
-        start_idx = max(0, offset - 1)
-        end_idx = min(total_lines, start_idx + limit)
+        if offset > total_lines:
+            return tool_error(
+                "read_file",
+                f"起始行 {offset} 超出文件总行数 ({total_lines} 行)。",
+                "OffsetOutOfRange",
+                meta={"file_path": str(path), "offset": offset, "total_lines": total_lines},
+            )
 
-        if start_idx >= total_lines:
-            return tool_error("read_file", f"起始行 {offset} 超出文件总行数 ({total_lines} 行)。", "OffsetOutOfRange", meta={"total_lines": total_lines})
-
-        output = [f"Showing lines {start_idx + 1} to {end_idx} of {total_lines}:"]
-        for i in range(start_idx, end_idx):
-            output.append(f"{i + 1:4d} | {lines[i].rstrip(chr(10))}")
+        shown_start = selected[0][0] if selected else offset
+        shown_end = selected[-1][0] if selected else offset - 1
+        truncated = shown_end < total_lines
+        next_offset = shown_end + 1 if truncated else None
+        output = [f"Showing lines {shown_start} to {shown_end} of {total_lines}:"]
+        for line_no, line in selected:
+            output.append(f"{line_no:4d} | {line}")
 
         return tool_ok(
             "read_file",
             "\n".join(output),
-            meta={"file_path": str(path.resolve()), "offset": offset, "limit": limit, "total_lines": total_lines},
+            meta={
+                "file_path": str(path),
+                "size_bytes": file_size,
+                "large_file": large_file,
+                "offset": offset,
+                "limit": effective_limit,
+                "requested_limit": requested_limit,
+                "limit_clamped": limit_clamped,
+                "shown_start": shown_start,
+                "shown_end": shown_end,
+                "total_lines": total_lines,
+                "truncated": truncated,
+                "next_offset": next_offset,
+            },
         )
     except Exception as e:
         return tool_error("read_file", f"读取错误: {e}", type(e).__name__)
@@ -102,11 +165,81 @@ def edit_file(file_path: str, old_str: str, new_str: str) -> str:
     except Exception as e:
         return tool_error("edit_file", f"编辑错误: {e}", type(e).__name__)
 
-def grep(pattern: str, path: str = ".", glob_pattern: str = "**/*", case_sensitive: bool = False, max_results: int = 50) -> str:
+def glob(pattern: str, path: str = ".", max_results: int = 100, offset: int = 0) -> str:
+    """
+    Find files by glob pattern and return compact file entries with sizes.
+    """
+    try:
+        search_path = Path(path).expanduser().resolve()
+        if not search_path.exists():
+            return tool_error("glob", f"Directory does not exist: {path}", "NotFound")
+        if not search_path.is_dir():
+            return tool_error("glob", f"Path is not a directory: {path}", "NotADirectory")
+
+        offset = max(0, int(offset))
+        max_results = max(0, int(max_results))
+        results: list[dict[str, object]] = []
+        seen = 0
+        truncated = False
+
+        for file_path in sorted(search_path.rglob(pattern), key=lambda item: item.as_posix().lower()):
+            if not file_path.is_file() or _is_skipped_path(file_path):
+                continue
+            try:
+                stat = file_path.stat()
+            except Exception:
+                continue
+
+            if seen < offset:
+                seen += 1
+                continue
+            if len(results) >= max_results:
+                truncated = True
+                break
+            size = int(stat.st_size)
+            results.append(
+                {
+                    "path": _relative_path(file_path, search_path),
+                    "size_bytes": size,
+                    "size_label": _format_size(size),
+                }
+            )
+            seen += 1
+
+        return tool_ok(
+            "glob",
+            results,
+            meta={
+                "path": str(search_path),
+                "pattern": pattern,
+                "count": len(results),
+                "offset": offset,
+                "max_results": max_results,
+                "truncated": truncated,
+                "next_offset": offset + len(results) if truncated else None,
+            },
+        )
+    except Exception as e:
+        return tool_error("glob", f"Glob error: {e}", type(e).__name__)
+
+
+def grep(
+    pattern: str,
+    path: str = ".",
+    glob_pattern: str = "**/*",
+    case_sensitive: bool = False,
+    max_results: int = 50,
+    output_mode: str = "files_with_matches",
+    offset: int = 0,
+    context: int = 0,
+) -> str:
     """
     Search for a regex pattern in files.
     """
     try:
+        if output_mode not in {"files_with_matches", "content", "count"}:
+            return tool_error("grep", f"Invalid output_mode: {output_mode}", "InvalidOutputMode")
+
         search_path = Path(path).expanduser().resolve()
         if not search_path.exists():
             return tool_error("grep", f"Path does not exist: {path}", "NotFound")
@@ -117,49 +250,76 @@ def grep(pattern: str, path: str = ".", glob_pattern: str = "**/*", case_sensiti
         except re.error as e:
             return tool_error("grep", f"Invalid regex pattern: {e}", "InvalidRegex")
 
-        results: list[dict[str, object]] = []
-        match_count = 0
+        max_results = max(0, int(max_results))
+        offset = max(0, int(offset))
+        context = max(0, int(context))
+        results: list[object] = []
+        seen = 0
+        truncated = False
+        skipped_large_files = 0
 
         if search_path.is_file():
             files_to_search = [search_path]
         else:
-            files_to_search = search_path.rglob(glob_pattern)
+            files_to_search = sorted(search_path.rglob(glob_pattern), key=lambda item: item.as_posix().lower())
 
         for file_path in files_to_search:
-            if match_count >= max_results:
+            if truncated:
                 break
 
             if not file_path.is_file():
                 continue
 
-            if _GREP_SKIP_DIRS & set(file_path.parts):
+            if _is_skipped_path(file_path):
                 continue
 
             try:
                 if file_path.stat().st_size > _GREP_MAX_FILE_SIZE:
+                    skipped_large_files += 1
                     continue
 
-                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                    for i, line in enumerate(f):
-                        if regex.search(line):
-                            try:
-                                rel_path = file_path.relative_to(search_path)
-                            except ValueError:
-                                rel_path = file_path.name
+                rel_path = _relative_path(file_path, search_path)
+                if output_mode == "files_with_matches":
+                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                        if any(regex.search(line) for line in f):
+                            seen, truncated = _append_paged(results, rel_path, seen, offset, max_results)
+                    continue
 
-                            line_content = line.strip()
-                            if len(line_content) > 200:
-                                line_content = line_content[:200] + "..."
+                if output_mode == "count":
+                    count = 0
+                    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                        for line in f:
+                            if regex.search(line):
+                                count += 1
+                    if count:
+                        seen, truncated = _append_paged(results, {"file": rel_path, "count": count}, seen, offset, max_results)
+                    continue
 
-                            results.append({"file": str(rel_path), "line": i + 1, "text": line_content})
-                            match_count += 1
-                            if match_count >= max_results:
-                                break
+                lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                for index, line in enumerate(lines):
+                    if not regex.search(line):
+                        continue
+                    record: dict[str, object] = {
+                        "file": rel_path,
+                        "line": index + 1,
+                        "text": _clip_text(line.strip(), 500),
+                    }
+                    if context:
+                        start = max(0, index - context)
+                        end = min(len(lines), index + context + 1)
+                        record["context"] = [
+                            {
+                                "line": line_index + 1,
+                                "text": _clip_text(lines[line_index].strip(), 500),
+                                "match": line_index == index,
+                            }
+                            for line_index in range(start, end)
+                        ]
+                    seen, truncated = _append_paged(results, record, seen, offset, max_results)
+                    if truncated:
+                        break
             except Exception:
                 continue
-
-        if not results:
-            return tool_ok("grep", [], meta={"pattern": pattern, "path": str(search_path), "glob_pattern": glob_pattern, "matches": 0, "truncated": False})
 
         return tool_ok(
             "grep",
@@ -168,18 +328,27 @@ def grep(pattern: str, path: str = ".", glob_pattern: str = "**/*", case_sensiti
                 "pattern": pattern,
                 "path": str(search_path),
                 "glob_pattern": glob_pattern,
+                "output_mode": output_mode,
                 "matches": len(results),
-                "truncated": match_count >= max_results,
+                "offset": offset,
+                "max_results": max_results,
+                "truncated": truncated,
+                "next_offset": offset + len(results) if truncated else None,
+                "skipped_large_files": skipped_large_files,
             },
         )
     except Exception as e:
         return tool_error("grep", f"Grep error: {e}", type(e).__name__)
 
-def _format_size(size: int) -> str:
-    for unit in ['B', 'KB', 'MB', 'GB']:
-        if size < 1024: return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
+
+def _append_paged(results: list, item: object, seen: int, offset: int, max_results: int) -> tuple[int, bool]:
+    seen += 1
+    if seen <= offset:
+        return seen, False
+    if len(results) >= max_results:
+        return seen, True
+    results.append(item)
+    return seen, False
 
 def _build_tree(path: Path, prefix: str = "", depth: int = 0, max_depth: int = 2) -> tuple:
     try:

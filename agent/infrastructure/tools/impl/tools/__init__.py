@@ -1,7 +1,7 @@
 """Concrete tool implementations."""
 
 from .bash import bash, bash_output, kill_shell
-from .file_ops import edit_file, grep, list_files, read_file, write_file
+from .file_ops import edit_file, glob, grep, list_files, read_file, write_file
 from .pdf_ops import read_pdf
 from .plan import (
     plan_add_step,
@@ -22,6 +22,7 @@ __all__ = [
     "bash_output",
     "kill_shell",
     "edit_file",
+    "glob",
     "grep",
     "list_files",
     "read_file",
