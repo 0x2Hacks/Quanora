@@ -35,7 +35,7 @@ def test_chat_cli_tool_result_failed_uses_failed_status() -> None:
         cli._on_event(ToolResultEvent(tool_name="bash", status="failed"))
 
     text = output.getvalue()
-    if "任务失败: bash" not in text:
+    if "Tool: bash failed" not in text:
         raise AssertionError(f"Expected CLI to render failed tool status, got: {text!r}")
 
 

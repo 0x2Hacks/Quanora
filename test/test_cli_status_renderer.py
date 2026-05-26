@@ -1,0 +1,155 @@
+import io
+import os
+import sys
+from pathlib import Path
+
+from rich.console import Console
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+os.chdir(PROJECT_ROOT)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from agent.domain.events import (
+    ContextBuiltEvent,
+    SkillActivatedEvent,
+    ToolCallStartedEvent,
+    ToolProgressEvent,
+    ToolRequestedEvent,
+    ToolResultEvent,
+    TurnCompletedEvent,
+)
+from agent.interfaces.cli.status import CliStatusRenderer
+
+
+def make_renderer(*, debug: bool = False):
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=False, color_system=None, width=120)
+    return CliStatusRenderer(console, debug=debug), output
+
+
+def test_tool_lifecycle_completed_output() -> None:
+    renderer, output = make_renderer()
+
+    renderer.handle(ToolCallStartedEvent(tool_call_id="call_1", tool_name="bash"))
+    renderer.handle(
+        ToolResultEvent(
+            tool_call_id="call_1",
+            tool_name="bash",
+            status="completed",
+            duration_ms=1250,
+        )
+    )
+
+    text = output.getvalue()
+    if "Tool: bash started" not in text:
+        raise AssertionError(f"Expected started line, got: {text!r}")
+    if "Tool: bash completed in 1.25s" not in text:
+        raise AssertionError(f"Expected completed line, got: {text!r}")
+
+
+def test_tool_lifecycle_failed_output() -> None:
+    renderer, output = make_renderer()
+
+    renderer.handle(
+        ToolResultEvent(
+            tool_call_id="call_1",
+            tool_name="bash",
+            status="failed",
+            error_type="ToolExecutionError",
+            duration_ms=50,
+        )
+    )
+
+    text = output.getvalue()
+    if "Tool: bash failed in 50ms (ToolExecutionError)" not in text:
+        raise AssertionError(f"Expected failed line, got: {text!r}")
+
+
+def test_skill_activation_deduplicates_within_turn() -> None:
+    renderer, output = make_renderer()
+
+    event = SkillActivatedEvent(skill_name="poem-writer", reason="explicit_dollar_name")
+    renderer.handle(event)
+    renderer.handle(event)
+
+    text = output.getvalue()
+    if text.count("Skill: poem-writer") != 1:
+        raise AssertionError(f"Expected one skill line, got: {text!r}")
+
+
+def test_context_built_deduplicates_in_normal_mode() -> None:
+    renderer, output = make_renderer()
+
+    event = ContextBuiltEvent(message_count=8, stats={"estimated_input_tokens": 1234})
+    renderer.handle(event)
+    renderer.handle(event)
+
+    text = output.getvalue()
+    if text.count("Context:") != 1:
+        raise AssertionError(f"Expected one context line, got: {text!r}")
+    if "~1.2k input tokens" not in text:
+        raise AssertionError(f"Expected compact token count, got: {text!r}")
+
+
+def test_debug_tool_requested_shows_truncated_args() -> None:
+    renderer, output = make_renderer(debug=True)
+    args = '{"command":"' + ("x" * 600) + '"}'
+
+    renderer.handle(ToolRequestedEvent(tool_call_id="call_1", tool_name="bash", args_preview=args))
+
+    text = output.getvalue()
+    if "[debug] tool requested: bash id=call_1" not in text or "args=" not in text:
+        raise AssertionError(f"Expected debug requested line, got: {text!r}")
+    if len(text) >= 520:
+        raise AssertionError(f"Expected truncated args output, got length {len(text)}")
+
+
+def test_tool_progress_deduplicates_messages() -> None:
+    renderer, output = make_renderer()
+    event = ToolProgressEvent(tool_call_id="call_1", tool_name="bash", payload={"message": "running"})
+
+    renderer.handle(event)
+    renderer.handle(event)
+
+    text = output.getvalue()
+    if text.count("Tool: bash running") != 1:
+        raise AssertionError(f"Expected one progress line, got: {text!r}")
+
+
+def test_turn_completed_summarizes_tool_counts() -> None:
+    renderer, output = make_renderer()
+
+    renderer.handle(ToolResultEvent(tool_call_id="ok", tool_name="read_file", status="completed"))
+    renderer.handle(ToolResultEvent(tool_call_id="bad", tool_name="bash", status="failed"))
+    renderer.handle(TurnCompletedEvent(duration_ms=2000))
+
+    text = output.getvalue()
+    if "Done in 2.00s - tools 1 completed, 1 failed" not in text:
+        raise AssertionError(f"Expected turn summary, got: {text!r}")
+
+
+def test_plain_turn_completed_without_tools_is_quiet() -> None:
+    renderer, output = make_renderer()
+
+    renderer.handle(TurnCompletedEvent(duration_ms=2000))
+
+    if output.getvalue():
+        raise AssertionError(f"Expected no output for tool-less normal turn, got: {output.getvalue()!r}")
+
+
+def main() -> int:
+    test_tool_lifecycle_completed_output()
+    test_tool_lifecycle_failed_output()
+    test_skill_activation_deduplicates_within_turn()
+    test_context_built_deduplicates_in_normal_mode()
+    test_debug_tool_requested_shows_truncated_args()
+    test_tool_progress_deduplicates_messages()
+    test_turn_completed_summarizes_tool_counts()
+    test_plain_turn_completed_without_tools_is_quiet()
+    print("CLI status renderer tests passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

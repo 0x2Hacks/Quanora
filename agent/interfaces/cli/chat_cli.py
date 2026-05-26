@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 
 from agent.application.runtime.cancellation import CancellationTokenSource
-from agent.domain.events import RuntimeEvent, ToolCallStartedEvent, ToolProgressEvent, ToolResultEvent
+from agent.domain.events import RuntimeEvent
 from agent.interfaces.cli.commands import SlashCommandContext, SlashCommandRouter
+from agent.interfaces.cli.status import CliStatusRenderer
 from agent.interfaces.cli.ui import print_rainbow_logo, render_markdown, StreamingRenderer
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
@@ -23,6 +24,11 @@ class ChatCLI:
         self._assistant_buffer: list[str] = []
         self._console = Console()
         self._streaming_renderer = StreamingRenderer(self._console)
+        self._status_renderer = CliStatusRenderer(
+            self._console,
+            debug=debug,
+            before_print=self._flush_assistant_for_status,
+        )
         self._prompt_session: PromptSession | None = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._current_cancel_source: CancellationTokenSource | None = None
@@ -104,6 +110,11 @@ class ChatCLI:
             print("\nAgent:")
             self._assistant_buffer = []
             self._streaming_renderer = StreamingRenderer(self._console)
+            self._status_renderer = CliStatusRenderer(
+                self._console,
+                debug=self._debug,
+                before_print=self._flush_assistant_for_status,
+            )
 
             try:
                 self._event_loop.run_until_complete(self._run_turn_async(user_input))
@@ -183,20 +194,14 @@ class ChatCLI:
         loop.run_until_complete(loop.shutdown_asyncgens())
         loop.run_until_complete(loop.shutdown_default_executor())
         loop.close()
+
+    def _flush_assistant_for_status(self) -> None:
+        self._streaming_renderer.finish_message()
             
     def _on_event(self, event: RuntimeEvent) -> None:
         from agent.domain.events import (
             AssistantDeltaEvent,
             AssistantMessageCompletedEvent,
-            ContextBuiltEvent,
-            SkillActivatedEvent,
-            ToolCallStartedEvent,
-            ToolProgressEvent,
-            ToolRequestedEvent,
-            ToolResultEvent,
-            TurnCancelledEvent,
-            TurnFailedEvent,
-            TurnStartedEvent,
         )
         
         if isinstance(event, AssistantDeltaEvent):
@@ -204,33 +209,8 @@ class ChatCLI:
             self._streaming_renderer.append(event.text)
         elif isinstance(event, AssistantMessageCompletedEvent):
             self._streaming_renderer.finish_message()
-        elif isinstance(event, TurnStartedEvent):
-            pass
-        elif isinstance(event, ContextBuiltEvent):
-            if self._debug:
-                tokens = event.stats.get("estimated_input_tokens", "unknown")
-                self._console.print(f"[dim italic]context built: {event.message_count} messages, tokens={tokens}[/dim italic]")
-        elif isinstance(event, SkillActivatedEvent):
-            self._console.print(f"[dim italic]🧩 技能启用: {getattr(event, 'skill_name', 'unknown')} ({getattr(event, 'reason', 'unknown')})[/dim italic]")
-        elif isinstance(event, ToolRequestedEvent):
-            if self._debug:
-                self._console.print(f"[dim italic]tool requested: {event.tool_name} (ID: {event.tool_call_id})[/dim italic]")
-        elif isinstance(event, ToolCallStartedEvent):
-            self._console.print(f"[dim italic]🚀 任务启动: {getattr(event, 'tool_name', 'unknown')} (ID: {getattr(event, 'tool_call_id', 'unknown')})[/dim italic]")
-        elif isinstance(event, ToolProgressEvent):
-            pass # We let tool output print via bash thread for now
-        elif isinstance(event, ToolResultEvent):
-            if getattr(event, "status", "completed") == "failed":
-                self._console.print(f"[red]任务失败: {getattr(event, 'tool_name', 'unknown')}[/red]")
-            else:
-                self._console.print(f"[dim italic]✅ 任务完成: {getattr(event, 'tool_name', 'unknown')}[/dim italic]")
-        elif isinstance(event, TurnFailedEvent):
-            self._streaming_renderer.flush()
-            message = getattr(event, "error", "") or getattr(event, "reason", "") or "unknown"
-            print(f"\n[Error] Turn failed: {message}")
-        elif isinstance(event, TurnCancelledEvent):
-            self._streaming_renderer.flush()
-            print(f"\n[Cancelled] Turn cancelled: {getattr(event, 'reason', 'unknown')}")
+        else:
+            self._status_renderer.handle(event)
 
     def _on_retry(self, attempt: int, exception: Exception) -> None:
         self._streaming_renderer.show_retry(attempt, exception)
