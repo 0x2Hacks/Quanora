@@ -63,6 +63,13 @@ class ChatCLI:
             if not loop.run_until_complete(_init_session()):
                 return
 
+            # Print session ID so user can resume later
+            sid = self._session.session_id
+            if sid:
+                self._console.print(
+                    f"[dim cyan]Session ID: {sid}[/dim cyan]"
+                )
+
             self._render_loaded_messages()
             self._loop()
         finally:
