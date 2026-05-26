@@ -99,15 +99,21 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
     def _setup_paths(self):
         if self._session_dir:
             self._session_root = os.path.abspath(self._session_dir)
-            self._index_path = os.path.join(self._session_root, "index.json")
         else:
             quanora_home = self._default_quanora_home()
             self._session_root = os.path.join(quanora_home, "sessions")
-            self._index_path = os.path.join(quanora_home, "session_index.json")
             
         os.makedirs(self._session_root, exist_ok=True)
-        if self._index_path:
-            os.makedirs(os.path.dirname(self._index_path), exist_ok=True)
+        self._index_path = os.path.join(self._session_root, "index.json")
+        os.makedirs(os.path.dirname(self._index_path), exist_ok=True)
+        
+        # Migrate legacy index file from <quanora_home>/session_index.json
+        if not self._session_dir:
+            quanora_home = self._default_quanora_home()
+            legacy_index = os.path.join(quanora_home, "session_index.json")
+            if os.path.exists(legacy_index) and not os.path.exists(self._index_path):
+                import shutil
+                shutil.move(legacy_index, self._index_path)
             
         self._index_repo = SessionIndexRepository(self._files, self._index_path)
 
@@ -269,7 +275,9 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                 self._session_meta["message_count"] = self._message_count
                 self._session_meta["updated_at"] = self.now_iso()
                 self._files.write_json(self._session_paths["meta"], self._session_meta)
-            self._update_index()
+        
+        # Always update index so resumed sessions get fresh updated_at
+        self._update_index()
 
     async def initialize(self) -> None:
         async with self._write_lock:
