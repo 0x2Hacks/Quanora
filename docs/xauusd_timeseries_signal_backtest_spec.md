@@ -33,129 +33,158 @@
 | 预估 tick 量 | 约 2 年 × ~50M ticks/年 ≈ 100M ticks |
 | 预估 M5 bar 量 | 约 150k bars（2 年 × 52 周 × 5 天 × 24h × 12 bar/h，黄金近 24h 交易，周末除外） |
 
-### 0.2 下载工具安装
+### 0.2 自写 Dukascopy 下载器（替代 duka CLI）
 
-使用 **`duka`** CLI 工具（基于 `duka` Python 包）下载 Dukascopy tick 数据。
+> **方案变更说明（2026-05）：** 原方案使用第三方 `duka` CLI 包，实测中发现以下问题：
+> - `duka` 包长期未维护，对 Dukascopy 新版数据 feed 兼容性不稳定；
+> - `duka` 不支持 point_value 精度修正（XAU/USD 的 point_value=0.001，原始 bi5 为整数需除以 point_value）；
+> - 下载失败后无断点续传，需要手动重跑整个月份；
+> - 无法控制并发数，大量下载时容易触发服务端限速。
+>
+> 因此改用自写下载器 `scripts/dukascopy_downloader.py`，直接 HTTP 下载 `.bi5` 文件并自行解析，
+> 无第三方依赖，已通过实际 2024-05 ~ 2026-04 全量数据下载验证。
+
+**依赖安装**（仅标准库 + pandas）：
 
 ```bash
-# 安装 duka 包（包含 CLI 和 Python API）
-pip install duka
-
-# 验证安装
-duka --help
+pip install pandas  # 唯一外部依赖；其余均为 Python 标准库（lzma, struct, urllib, concurrent）
 ```
 
-> `duka` 包由 giovcare 维护，源码见 https://github.com/codetinker/duka 。
-> 该包直接读取 Dukascopy 公开的数据 feed URL（`https://datafeed.dukascopy.com/datafeed/...`），
-> 解压 `.bi5` 二进制格式为 tick 级 CSV，支持按日期范围批量下载。
+**Dukascopy bi5 数据格式要点**（自写解析器的核心知识）：
 
-### 0.3 Tick 数据下载脚本
+| 要素 | 值 | 备注 |
+|------|-----|------|
+| 数据 feed URL | `https://datafeed.dukascopy.com/datafeed/{symbol}/{yyyy}/{MM-1}/{dd}/{HH}h_ticks.bi5` | **月份为 0-based**（1 月 = `00`） |
+| Symbol 路径 | `XAU/USD` → URL 中使用 `XAUUSD` | 无斜杠 |
+| 文件格式 | LZMA 压缩的二进制 | 先 `lzma.decompress()`，再 `struct.unpack` |
+| 每条 tick 结构 | 5 字段 × 4 字节 big-endian uint32 | `time_ms, ask, bid, ask_vol, bid_vol` |
+| XAU/USD point_value | `0.001` | 原始整数除以 point_value 才得到真实价格（如 `2654123 → 2654.123`） |
+| 时区 | UTC | bi5 中的 `time_ms` 是当天 0 点 UTC 的毫秒偏移量 |
+
+### 0.3 下载 + 聚合一体化脚本
+
+自写下载器 `scripts/dukascopy_downloader.py` 将 **下载、解压、解析、tick→M5 聚合** 合并为一个流程，
+无需分步执行。核心设计：
+
+```
+Dukascopy bi5 URL → HTTP GET → LZMA 解压 → struct 解析 → tick DataFrame
+                                                                  ↓
+                                              resample("5min").ohlc() → M5 OHLC → Parquet
+```
 
 ```python
-# scripts/download_xauusd_ticks.py
+# scripts/dukascopy_downloader.py
 """
-从 Dukascopy 下载 XAU/USD tick 数据（2024-05 至 2026-04）。
-输出: data/raw/xauusd_ticks_bid_YYYYMM.csv + xauusd_ticks_ask_YYYYMM.csv（按月分片）
+自写 Dukascopy tick 数据下载器 + M5 聚合器。
+替代 duka CLI，直接 HTTP 下载 .bi5 → LZMA 解压 → struct 解析 → 聚合为 M5 OHLC。
+输出: data/processed/xauusd_m5_{start}_{end}.parquet
+
+用法:
+    python scripts/dukascopy_downloader.py \
+        --symbol XAU/USD \
+        --start 2024-05-01 --end 2026-04-30 \
+        --output data/processed/xauusd_m5_2024-05_2026-04.parquet \
+        --concurrency 8
+
+核心参数:
+    --concurrency  并发下载线程数（默认 8，Dukascopy 允许适当并发）
+    --point-value  价格精度因子（XAU/USD=0.001, EUR/USD=1e-5, USD/JPY=1e-3）
 """
-import subprocess
-import os
-from datetime import datetime
-
-# --- 配置 ---
-SYMBOL = "XAU/USD"        # Dukascopy 内部 symbol（注意斜杠）
-START   = "2024-05-01"
-END     = "2026-04-30"
-RAW_DIR = "data/raw"      # 原始 tick 数据存储目录
-
-os.makedirs(RAW_DIR, exist_ok=True)
-
-# duka CLI 批量下载 tick 数据
-# --pair: 交易品种；--start/--end: 日期范围（UTC）；--folder: 输出目录
-# --candle: tick（默认为 tick 级下载）
-cmd = [
-    "duka",
-    "--pair", SYMBOL,
-    "--start", START,
-    "--end", END,
-    "--folder", RAW_DIR,
-]
-
-print(f"下载 Dukascopy tick 数据: {SYMBOL}, {START} ~ {END}")
-result = subprocess.run(cmd, capture_output=True, text=True)
-if result.returncode != 0:
-    print(f"下载失败: {result.stderr}")
-    raise RuntimeError(f"duka CLI 失败: {result.stderr}")
-print(f"下载完成，文件保存在 {RAW_DIR}/")
 ```
 
-> **注意：** `duka` CLI 下载的 tick 数据为按月分片的 CSV 文件，
-> 文件名格式为 `XAUUSD_YYYYMM.csv`（Dukascopy 在文件名中使用 `XAUUSD` 无斜杠）。
-> 每行包含：`timestamp, bid, ask, bid_volume, ask_volume`。
+**关键实现细节**（源自 `scripts/dukascopy_downloader.py` 代码）：
 
-### 0.4 Tick → M5 OHLC 聚合脚本
+1. **URL 构造**：月份必须 `month - 1`（0-based），日期和小时用零填充两位数：
+   ```python
+   url = f"https://datafeed.dukascopy.com/datafeed/{symbol_path}/{yyyy}/{mm:02d}/{dd:02d}/{hh:02d}h_ticks.bi5"
+   # 其中 mm = month - 1（1月→00, 12月→11）
+   ```
 
-```python
-# scripts/aggregate_ticks_to_m5.py
-"""
-将 Dukascopy tick 数据聚合为 5 分钟 OHLC bar。
-分别对 bid 和 ask 做 OHLC 聚合，然后合并为单条 bar 的 bid/ask 双边数据。
-输出: data/processed/xauusd_m5_2024-05_2026-04.parquet
-"""
-import pandas as pd
-import glob
-import os
+2. **bi5 解压与解析**：
+   ```python
+   import lzma, struct
+   raw = lzma.decompress(bi5_bytes)
+   # 每 tick = 20 bytes (5 × uint32 big-endian)
+   n_ticks = len(raw) // 20
+   ticks = struct.unpack(f">{n_ticks * 5}I", raw)
+   # 字段顺序: time_ms_offset, ask_raw, bid_raw, ask_volume, bid_volume
+   # 价格还原: real_price = raw_int / (1 / point_value)
+   #           例: XAU/USD point_value=0.001, 2654123 / 1000 = 2654.123
+   ```
 
-# --- 配置 ---
-RAW_DIR      = "data/raw"
-PROCESSED_DIR = "data/processed"
-OUTPUT_FILE  = os.path.join(PROCESSED_DIR, "xauusd_m5_2024-05_2026-04.parquet")
+3. **point_value 精度修正**：
+   ```python
+   POINT_VALUES = {"XAU/USD": 0.001, "EUR/USD": 1e-5, "USD/JPY": 1e-3}
+   divisor = 1 / POINT_VALUES[symbol]  # XAU/USD → 1000
+   bid = bid_raw / divisor
+   ask = ask_raw / divisor
+   ```
+   > **坑点：** 不做此修正，价格会偏差 1000 倍（XAU/USD 出现 2654123 而非 2654.123）。
+   > 这也是 `duka` CLI 早期版本的一个已知 bug 来源。
 
-os.makedirs(PROCESSED_DIR, exist_ok=True)
+4. **并发下载与容错**：
+   ```python
+   from concurrent.futures import ThreadPoolExecutor, as_completed
+   # 按天分组下载，每天 24 个小时文件
+   # 404（无数据的小时）静默跳过；网络错误重试 1 次
+   # 使用 ThreadPoolExecutor(max_workers=concurrency) 控制并发
+   ```
 
-# 1. 读取所有月分片 tick CSV
-tick_files = sorted(glob.glob(os.path.join(RAW_DIR, "XAUUSD_*.csv")))
-print(f"发现 {len(tick_files)} 个 tick 文件")
+5. **tick → M5 聚合**（与原方案逻辑一致，但内建于下载流程）：
+   ```python
+   # 所有 tick 加载完毕后
+   ticks_df["timestamp"] = pd.to_datetime(ticks_df["utc_date"] + " " + ticks_df["time_ms"], utc=True)
+   bid_m5 = ticks_df["bid"].resample("5min").ohlc().rename(columns=lambda c: f"bid_{c}")
+   ask_m5 = ticks_df["ask"].resample("5min").ohlc().rename(columns=lambda c: f"ask_{c}")
+   m5 = pd.concat([bid_m5, ask_m5], axis=1)
+   m5["mid_open"]  = (m5["bid_open"]  + m5["ask_open"])  / 2
+   m5["mid_high"]  = (m5["bid_high"]  + m5["ask_high"])  / 2
+   m5["mid_low"]   = (m5["bid_low"]   + m5["ask_low"])   / 2
+   m5["mid_close"] = (m5["bid_close"] + m5["ask_close"]) / 2
+   m5["spread"]    = m5["ask_close"] - m5["bid_close"]
+   m5 = m5.dropna(subset=["bid_close", "ask_close"])  # 剔除周末/节假日空 bar
+   m5.to_parquet(output_path, index=True)
+   ```
 
-tick_dfs = []
-for f in tick_files:
-    df = pd.read_csv(f, header=None,
-                     names=["timestamp", "bid", "ask", "bid_vol", "ask_vol"])
-    tick_dfs.append(df)
+### 0.4 使用方式与验证
 
-ticks = pd.concat(tick_dfs, ignore_index=True)
-ticks["timestamp"] = pd.to_datetime(ticks["timestamp"], utc=True)
-ticks = ticks.set_index("timestamp").sort_index()
+**完整下载 + 聚合命令**（一步到位）：
 
-# 2. 过滤：仅保留 2024-05-01 至 2026-04-30 范围
-ticks = ticks.loc["2024-05-01":"2026-04-30"]
-
-# 3. 聚合为 5min OHLC（bid 和 ask 分别聚合）
-agg_5min = {
-    "first":  "open",
-    "max":    "high",
-    "min":    "low",
-    "last":   "close",
-}
-
-bid_m5 = ticks["bid"].resample("5min").agg(agg_5min).rename(columns=lambda c: f"bid_{c}")
-ask_m5 = ticks["ask"].resample("5min").agg(agg_5min).rename(columns=lambda c: f"ask_{c}")
-
-# 4. 合合 bid/ask → 单条 bar，计算 mid 和 spread
-m5 = pd.concat([bid_m5, ask_m5], axis=1)
-m5["mid_open"]   = (m5["bid_open"]   + m5["ask_open"])   / 2
-m5["mid_high"]   = (m5["bid_high"]   + m5["ask_high"])   / 2
-m5["mid_low"]    = (m5["bid_low"]    + m5["ask_low"])    / 2
-m5["mid_close"]  = (m5["bid_close"]  + m5["ask_close"])  / 2
-m5["spread"]     = m5["ask_close"]   - m5["bid_close"]    # 最后一笔 tick 的点差
-
-# 5. 剔除无交易的空 bar（周末/节假日 5min resample 产生 NaN）
-m5 = m5.dropna(subset=["bid_close", "ask_close"])
-
-# 6. 保存为 Parquet
-m5.to_parquet(OUTPUT_FILE, index=True)
-print(f"聚合完成: {len(m5)} bars, 保存在 {OUTPUT_FILE}")
-print(f"时间范围: {m5.index.min()} ~ {m5.index.max()}")
+```bash
+python scripts/dukascopy_downloader.py \
+    --symbol XAU/USD \
+    --start 2024-05-01 --end 2026-04-30 \
+    --output data/processed/xauusd_m5_2024-05_2026-04.parquet \
+    --concurrency 8
 ```
+
+**验证步骤**（对应 `scripts/test_dukascopy_download.py`）：
+
+```bash
+# 1. 小范围冒烟测试：仅下载 1 天数据，验证解析正确性
+python scripts/dukascopy_downloader.py \
+    --symbol XAU/USD \
+    --start 2024-05-01 --end 2024-05-01 \
+    --output /tmp/test_m5.parquet \
+    --concurrency 4
+
+# 2. 用 test 脚本验证：
+#    - Parquet 文件可读
+#    - bar 数量合理（1 天 ~288 条 M5 bar，需扣除非交易时段）
+#    - bid < ask（点差为正）
+#    - 价格范围合理（XAU/USD 在 2024-05 约 2300-2400 区间）
+python scripts/test_dukascopy_download.py
+```
+
+**实测经验 & 踩坑记录**：
+
+| 问题 | 原因 | 解决 |
+|------|------|------|
+| 价格出现 2654123 而非 2654.123 | bi5 原始值为整数，需除以 `1/point_value` | `scripts/dukascopy_downloader.py` 内置 `POINT_VALUES` 映射 |
+| 1 月数据 URL 为 `.../2024/00/...` | Dukascopy URL 中月份 0-based | URL 构造时 `month - 1` |
+| 部分小时返回 404 | 周末/节假日无交易，服务器无该小时文件 | 静默跳过 404，不视为错误 |
+| 大量并发下载被限速 | Dukascopy 服务端有速率限制 | `--concurrency 8` 为经验安全值，不建议超过 16 |
+| 下载中断后需重跑整月 | 原方案无断点续传 | 自写方案按小时粒度下载，失败自动重试 1 次；已下载小时可跳过（未来可加缓存） |
 
 ### 0.5 Parquet 数据 Schema
 
@@ -186,17 +215,15 @@ xauusd_m5_2024-05_2026-04.parquet
 
 ```
 data/
-├── raw/                              # Dukascopy tick 原始数据（按月分片）
-│   ├── XAUUSD_202405.csv
-│   ├── XAUUSD_202406.csv
-│   ├── ...
-│   └── XAUUSD_202604.csv
-│   └── download_meta.json            # 记录下载时间、duka版本、原始URL
-├── processed/                        # 聚合后的 M5 数据
+├── processed/                        # 聚合后的 M5 数据（下载器直接输出）
 │   ├── xauusd_m5_2024-05_2026-04.parquet
-│   └── aggregation_meta.json         # 记录聚合参数、tick总条数、bar总条数
+│   └── download_meta.json            # 记录下载时间、point_value、并发数、tick总条数、bar总条数
 └── artifacts/                        # 回测产物（图表、报告）
 ```
+
+> **说明：** 自写下载器采用流式处理（bi5 → 解压 → 解析 → 内存聚合 → Parquet），
+> 不在磁盘保留中间 tick CSV 文件，节省存储空间。如需保留原始 tick 数据，
+> 可在 `dukascopy_downloader.py` 中添加 `--save-ticks` 参数输出 tick 级 Parquet。
 
 ### 0.7 数据完整性检查清单
 
@@ -217,12 +244,12 @@ data/
 
 | 检查项 | 通过标准 |
 |--------|---------|
-| Tick 文件数 | 24 个月分片文件（2024-05 至 2026-04） |
+| Tick 下载覆盖 | 所有交易日的小时文件均已下载（404 小时不计入缺失） |
 | Tick 总量 | ≥ 50M ticks（XAU/USD 活跃品种每月约 2-5M ticks） |
 | Bid/ask 非负 | `bid > 0` 且 `ask > 0` 全部满足 |
 | Bid < ask | `bid ≤ ask` 全部满足（违反则为异常报价） |
-| 时间戳单调 | tick 按时间严格递增（同月分片内） |
-| 无跨月重叠 | 不同月份文件时间戳不重叠 |
+| 时间戳单调 | tick 按时间严格递增（同天内） |
+| point_value 修正 | 价格量级与实际市场一致（XAU/USD 在 2000-3500 区间，非百万级） |
 
 ### 0.9 异常值与清洗规则
 
@@ -606,3 +633,128 @@ data/
 □ 所有必需图表已生成
 □ 最终结论已明确说明：可用 / 不可用 / 条件可用
 ```
+
+---
+
+## 七、研究结果
+
+> **回测执行时间**: 2026-05-27 08:19:32
+> **数据区间**: 2024-05-01 ~ 2025-03-31（H1）
+> **报告来源**: `workspace/xauusd-timeseries-signal-backtest-spec/reports/backtest_report_20260527_081932.md`
+
+### 7.1 策略配置
+
+| 参数 | 值 |
+|------|------|
+| MA 快线 | EMA(8) |
+| MA 慢线 | EMA(21) |
+| RSI | 14, 超买 70 / 超卖 30 |
+| MACD | 12/26/9 |
+| 布林带 | 20 ± 2σ |
+| ADX 阈值 | 25 |
+| ATR | 14 |
+| 信号阈值 | 0.1 |
+| 方向权重 | MA 0.8, BB 0.2 |
+| 止损/止盈 | ATR×2 / ATR×4 |
+| 风险/笔 | 1% |
+| 初始资金 | $100,000 |
+| WFA | 5 折, 训练比 0.7 |
+
+### 7.2 核心绩效
+
+| 指标 | 值 | 目标 | 达标 |
+|------|------|------|------|
+| 总收益 | 21.01% | — | — |
+| 年化收益 | 23.10% | — | — |
+| **净 Sharpe** | **0.1948** | > 0.5 | ❌ |
+| Sortino | 0.1254 | — | — |
+| Calmar | 1.6994 | — | — |
+| **最大回撤** | **-13.59%** | < 20% | ✅ |
+| 年化波动率 | 5.33% | — | — |
+
+### 7.3 交易统计
+
+| 指标 | 值 | 目标 | 达标 |
+|------|------|------|------|
+| 总交易数 | 284 | ≥ 200 | ✅ |
+| **胜率** | **39.44%** | > 40% | ❌ |
+| **盈亏比** | **1.12** | > 1.0 | ✅ |
+| 平均盈利 | $1,794.19 | — | — |
+| 平均亏损 | -$1,046.15 | — | — |
+| 做多胜率 | 49.29% | — | — |
+| 做空胜率 | 29.86% | — | — |
+
+### 7.4 时段分析
+
+| 时段 | 交易数 | 胜率 | 总盈亏 | Sharpe |
+|------|--------|------|--------|--------|
+| Asian | 78 | 44.87% | $26,401 | 3.33 |
+| Europe | 80 | 33.75% | -$14,219 | -1.89 |
+| US | 54 | 37.04% | $2,988 | 0.53 |
+| EU/US Overlap | 59 | 40.68% | $593 | 0.11 |
+| Off-Hours | 13 | 46.15% | $5,249 | 3.14 |
+
+**关键发现**: Asian 和 Off-Hours 时段表现显著优于欧美交易时段；European 时段为最大亏损来源（Sharpe -1.89）。
+
+### 7.5 Walk-Forward 验证
+
+| 指标 | 值 |
+|------|------|
+| **OOS Sharpe 均值** | **0.1999** |
+| OOS Sharpe 标准差 | 0.9112 |
+| IS Sharpe 均值 | 0.3901 |
+| IS-OOS 相关性 | -0.9521 |
+| **WFA 是否通过** | **❌ NO** |
+
+各 Fold 详情:
+
+| Fold | IS Sharpe | OOS Sharpe | IS Return | OOS Return |
+|------|-----------|------------|-----------|------------|
+| 1 | 0.5456 | 0.0346 | 7.43% | 0.07% |
+| 2 | 0.8159 | -1.4432 | 13.79% | -6.71% |
+| 3 | 0.2203 | 0.4344 | 2.93% | 2.80% |
+| 4 | 0.3231 | 0.7316 | 4.59% | 4.28% |
+| 5 | 0.0458 | 1.2421 | 0.31% | 7.59% |
+
+**关键发现**: IS-OOS 相关性为 -0.95（强负相关），说明模型在训练集和测试集上的表现严重不一致，存在过拟合风险。Fold 2 OOS Sharpe 为 -1.44 是主要拖累。
+
+### 7.6 稳定性分析
+
+| 指标 | 值 |
+|------|------|
+| 滚动 Sharpe 均值 | 0.4717 |
+| 滚动 Sharpe 标准差 | 0.6734 |
+| Sharpe 变异系数 | 1.4274 |
+| 正 Sharpe 占比 | 67.52% |
+
+### 7.7 成本分析
+
+| 指标 | 值 |
+|------|------|
+| 总成本 | $24,920.79 |
+| 每笔平均成本 | $87.75 |
+| 成本占毛利比 | 6.62% |
+
+### 7.8 综合评估
+
+| 检查项 | 要求 | 实际 | 结果 |
+|--------|------|------|------|
+| 净 Sharpe | > 0.5 | 0.1948 | ❌ |
+| 最大回撤 | < 20% | 13.59% | ✅ |
+| 胜率 | > 40% | 39.44% | ❌ |
+| 盈亏比 | > 1.0 | 1.12 | ✅ |
+| WFA OOS Sharpe | > 0.5 | 0.1999 | ❌ |
+
+**结论: ❌ 当前策略不可直接使用**
+
+- 5 项验证标准中仅 2 项通过（MDD 和盈亏比）
+- 净 Sharpe (0.19) 远低于 0.5 门槛，策略风险调整后收益不足
+- WFA OOS Sharpe (0.20) 未达标，且 IS-OOS 强负相关提示过拟合
+- 胜率 39.44% 略低于 40% 门槛
+
+**推荐改进方向**:
+1. **优化做空逻辑**: 做空胜率仅 29.86%，可考虑仅在 Asian/Off-Hours 时段允许做空
+2. **时段过滤**: 仅在 Asian 和 Off-Hours 时段交易，回避 European 时段
+3. **信号融合**: 引入 ADX 趋势过滤，减少震荡市假信号
+4. **参数高原化**: 当前参数可能是尖峰，需要参数敏感性分析确认高原存在
+5. **降低交易频率**: 284 笔交易 / 约 11 个月 = 日均 1.3 笔，频率偏高可尝试更严格阈值

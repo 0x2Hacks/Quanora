@@ -168,7 +168,10 @@ def enable_self_dev_mode() -> WorkspaceGuard:
     """
     global _SELF_DEV_MODE, _WORKSPACE_GUARD, _WORKSPACE_ROOT
     _SELF_DEV_MODE = True
-    _WORKSPACE_ROOT = _QUANORA_REPO_ROOT
+    # Keep project sub-directories organised under workspace/ rather than
+    # littering the repo root.  The guard still grants write access to the
+    # whole repo (agent/, test/, docs/, …) so self-dev edits work.
+    _WORKSPACE_ROOT = _QUANORA_REPO_ROOT / "workspace"
 
     # In self-dev mode .git is the only thing that stays off-limits. We
     # protect a few read-only files (.env containing secrets) as well, to
