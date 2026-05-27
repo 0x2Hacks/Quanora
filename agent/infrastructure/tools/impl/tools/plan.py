@@ -72,10 +72,16 @@ def plan_next(mode: str, expected_version: int | None = None) -> str:
         return _tool_exception("plan_next", exc)
 
 
-def plan_close(summary: str, expected_version: int) -> str:
+def plan_close(expected_version: int) -> str:
     try:
-        plan = ops.close_plan(summary, expected_version)
-        return tool_ok("plan_close", plan, meta={"plan_id": plan.get("plan_id"), "version": plan.get("version")})
+        plan = ops.close_plan(expected_version)
+        data = {
+            "plan_id": plan.get("plan_id"),
+            "status": plan.get("status"),
+            "version": plan.get("version"),
+            "completed_steps": len(plan.get("steps") or []),
+        }
+        return tool_ok("plan_close", data, meta={"plan_id": plan.get("plan_id"), "version": plan.get("version")})
     except Exception as exc:
         return _tool_exception("plan_close", exc)
 
@@ -106,10 +112,9 @@ def plan_update_meta(
     goal: str | None = None,
     objectives: list[dict[str, Any]] | None = None,
     constraints: list[dict[str, Any]] | None = None,
-    summary: str | None = None,
 ) -> str:
     try:
-        meta_data = ops.update_meta(expected_version, goal, objectives, constraints, summary)
+        meta_data = ops.update_meta(expected_version, goal, objectives, constraints)
         return tool_ok(
             "plan_update_meta",
             meta_data,

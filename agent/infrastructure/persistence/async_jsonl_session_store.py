@@ -68,11 +68,18 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
     def now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def _default_chainpeer_home(self) -> str:
+    @classmethod
+    def default_chainpeer_home(cls) -> str:
         custom_home = os.getenv("CHAINPEER_HOME")
         if custom_home:
             return os.path.abspath(os.path.expanduser(custom_home))
         return os.path.abspath(os.path.join(os.path.expanduser("~"), ".chainpeer"))
+
+    @classmethod
+    def resolve_session_root(cls, session_dir: str | None = None) -> str:
+        if session_dir:
+            return os.path.abspath(os.path.expanduser(session_dir))
+        return os.path.join(cls.default_chainpeer_home(), "sessions")
 
     def _resolve_workspace_root(self) -> str:
         current = os.path.normcase(os.path.realpath(os.path.abspath(os.getcwd())))
@@ -86,13 +93,11 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
             current = parent
 
     def _setup_paths(self):
+        self._session_root = self.resolve_session_root(self._session_dir)
         if self._session_dir:
-            self._session_root = os.path.abspath(self._session_dir)
             self._index_path = os.path.join(self._session_root, "index.json")
         else:
-            chainpeer_home = self._default_chainpeer_home()
-            self._session_root = os.path.join(chainpeer_home, "sessions")
-            self._index_path = os.path.join(chainpeer_home, "session_index.json")
+            self._index_path = os.path.join(self.default_chainpeer_home(), "session_index.json")
             
         os.makedirs(self._session_root, exist_ok=True)
         if self._index_path:

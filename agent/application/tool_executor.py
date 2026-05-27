@@ -5,16 +5,14 @@ from __future__ import annotations
 import traceback
 
 from agent.application.ports import ToolRegistry
-from agent.application.services.job_service import JobService
 from agent.domain.jobs import ToolExecutionResult
 
 
 class ToolExecutor:
-    """Runs tool calls with standardized error handling and job semantics."""
+    """Runs tool calls with standardized error handling."""
 
-    def __init__(self, registry: ToolRegistry, job_service: JobService | None = None):
+    def __init__(self, registry: ToolRegistry):
         self._registry = registry
-        self._job_service = job_service
 
     def is_async_tool(self, name: str) -> bool:
         """Return whether the named tool should be awaited directly."""

@@ -68,7 +68,6 @@ def create_plan(
         "title": title.strip(),
         "goal": goal.strip(),
         "status": "active",
-        "summary": "",
         "objectives": normalized_items(objectives),
         "constraints": normalized_items(constraints),
         "version": 1,
@@ -203,7 +202,7 @@ def reorder_steps(step_orders: list[str], expected_version: int) -> list[dict[st
     return sorted(step_by_id.values(), key=lambda item: int(item.get("order", 0)))
 
 
-def close_plan(summary: str, expected_version: int) -> dict[str, Any]:
+def close_plan(expected_version: int) -> dict[str, Any]:
     plan, plan_file, events_file = load_plan()
     ensure_plan_defaults(plan)
     assert_expected_version(plan, expected_version)
@@ -212,13 +211,12 @@ def close_plan(summary: str, expected_version: int) -> dict[str, Any]:
     if unfinished:
         raise DependencyViolation(f"Cannot close plan with unfinished steps: {unfinished}")
     plan["status"] = "completed"
-    plan["summary"] = summary.strip()
     persist_plan_update(
         plan=plan,
         plan_file=plan_file,
         events_file=events_file,
         event_type="plan_closed",
-        payload={"summary": plan["summary"]},
+        payload={"completed_steps": len(step_by_id)},
     )
     return plan
 
@@ -282,7 +280,6 @@ def update_meta(
     goal: str | None = None,
     objectives: list[dict[str, Any]] | None = None,
     constraints: list[dict[str, Any]] | None = None,
-    summary: str | None = None,
 ) -> dict[str, Any]:
     plan, plan_file, events_file = load_plan()
     ensure_plan_defaults(plan)
@@ -293,9 +290,6 @@ def update_meta(
     if goal is not None:
         plan["goal"] = str(goal).strip()
         updates["goal"] = plan["goal"]
-    if summary is not None:
-        plan["summary"] = str(summary).strip()
-        updates["summary"] = plan["summary"]
     if objectives is not None:
         plan["objectives"] = normalized_items(objectives)
         updates["objectives"] = plan["objectives"]

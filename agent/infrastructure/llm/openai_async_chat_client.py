@@ -20,9 +20,11 @@ from agent.application.runtime.cancellation import CancellationToken
 class AsyncOpenAIChatClient(AsyncChatClient):
     """Small wrapper around OpenAI async chat.completions API with resilient retries and cancellation support."""
 
-    def __init__(self, async_client: Any, model: str):
+    def __init__(self, async_client: Any, model: str, reasoning_effort: str | None = None):
         self._client = async_client
         self._model = model
+        self._reasoning_effort = (reasoning_effort or "").strip() or None
+        self._reasoning_effort_disabled = False
         self.on_retry = None  # Callback function: def on_retry(attempt: int, exception: Exception)
 
     def _before_sleep_log(self, retry_state: RetryCallState):
@@ -67,7 +69,7 @@ class AsyncOpenAIChatClient(AsyncChatClient):
                 
             # For non-streaming create, we await it.
             # To be fully responsive to cancellation mid-flight, we wrap it in a task.
-            task = asyncio.create_task(self._client.chat.completions.create(**kwargs))
+            task = asyncio.create_task(self._create_with_optional_reasoning_effort(kwargs))
             
             if cancellation_token:
                 cancel_task = asyncio.create_task(cancellation_token.wait())
@@ -110,7 +112,7 @@ class AsyncOpenAIChatClient(AsyncChatClient):
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "auto"
                 
-            task = asyncio.create_task(self._client.chat.completions.create(**kwargs))
+            task = asyncio.create_task(self._create_with_optional_reasoning_effort(kwargs))
             
             if cancellation_token:
                 cancel_task = asyncio.create_task(cancellation_token.wait())
@@ -144,3 +146,36 @@ class AsyncOpenAIChatClient(AsyncChatClient):
         result = close()
         if asyncio.iscoroutine(result):
             await result
+
+    async def _create_with_optional_reasoning_effort(self, kwargs: dict[str, Any]) -> Any:
+        payload = dict(kwargs)
+        if self._reasoning_effort and not self._reasoning_effort_disabled:
+            payload["reasoning_effort"] = self._reasoning_effort
+        try:
+            return await self._client.chat.completions.create(**payload)
+        except openai.APIStatusError as exc:
+            if "reasoning_effort" not in payload or not self._should_retry_without_reasoning_effort(exc):
+                raise
+            fallback_payload = dict(payload)
+            fallback_payload.pop("reasoning_effort", None)
+            result = await self._client.chat.completions.create(**fallback_payload)
+            self._reasoning_effort_disabled = True
+            return result
+
+    def _should_retry_without_reasoning_effort(self, exc: Exception) -> bool:
+        text = str(exc).lower()
+        return any(
+            marker in text
+            for marker in (
+                "reasoning_effort",
+                "request was blocked",
+                "blocked",
+                "unsupported",
+                "unknown",
+                "invalid",
+                "unrecognized",
+                "not support",
+                "not supported",
+                "extra_forbidden",
+            )
+        )

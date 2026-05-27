@@ -83,7 +83,6 @@ def plan_meta(plan: dict[str, Any]) -> dict[str, Any]:
         "title": plan.get("title"),
         "goal": plan.get("goal"),
         "status": plan.get("status"),
-        "summary": plan.get("summary"),
         "version": plan.get("version"),
         "objectives": plan.get("objectives", []),
         "constraints": plan.get("constraints", []),

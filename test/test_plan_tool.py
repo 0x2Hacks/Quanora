@@ -84,6 +84,8 @@ def create_and_next() -> tuple[str, int]:
         raise AssertionError(f"Invalid plan_id: {data}")
     if "metrics" in data or "observations" in data:
         raise AssertionError(f"Plan should not contain fact-memory fields, got: {data}")
+    if "summary" in data:
+        raise AssertionError(f"Plan should not contain summary field, got: {data}")
 
     ready = assert_ok(parse_payload(plan_next("ready"))).get("data") or []
     ready_ids = {item.get("step_id") for item in ready}
@@ -124,7 +126,7 @@ def reorder_link_and_close(version: int) -> None:
     payload = assert_ok(parse_payload(plan_link_dependency("s3", ["s1"], expected_version=version)))
     version = int((payload.get("meta") or {}).get("version"))
 
-    cannot_close = parse_payload(plan_close("done", expected_version=version))
+    cannot_close = parse_payload(plan_close(expected_version=version))
     assert_error(cannot_close, "DependencyViolation")
 
     payload = assert_ok(parse_payload(plan_update_step("s1", {"status": "in_progress"}, expected_version=version)))
@@ -140,13 +142,18 @@ def reorder_link_and_close(version: int) -> None:
     payload = assert_ok(parse_payload(plan_update_step("s3", {"status": "completed"}, expected_version=version)))
     version = int((payload.get("meta") or {}).get("version"))
 
-    closed = assert_ok(parse_payload(plan_close("all done", expected_version=version)))
-    if (closed.get("data") or {}).get("status") != "completed":
+    closed = assert_ok(parse_payload(plan_close(expected_version=version)))
+    closed_data = closed.get("data") or {}
+    if closed_data.get("status") != "completed":
         raise AssertionError(f"Expected completed plan, got: {closed}")
+    if "summary" in closed_data or "steps" in closed_data:
+        raise AssertionError(f"Expected lightweight close result, got: {closed_data}")
+    if closed_data.get("completed_steps") != 3:
+        raise AssertionError(f"Expected completed step count, got: {closed_data}")
 
     current = assert_ok(parse_payload(plan_get())).get("data") or {}
-    if current.get("summary") != "all done":
-        raise AssertionError(f"Expected summary updated, got: {current}")
+    if "summary" in current:
+        raise AssertionError(f"Plan should not contain summary after close, got: {current}")
 
 
 def test_plan_tool_flow() -> None:
@@ -193,11 +200,11 @@ def test_iterative_plan_tools(tmp_path: Path) -> None:
     )
     version = int(meta["meta"]["version"])
     data = meta.get("data") or {}
-    if "metrics" in data or "observation_count" in data:
+    if "metrics" in data or "observation_count" in data or "summary" in data:
         raise AssertionError(f"Plan meta should not expose fact-memory fields, got: {data}")
 
     current = assert_ok(parse_payload(plan_get())).get("data") or {}
-    if "metrics" in current or "observations" in current:
+    if "metrics" in current or "observations" in current or "summary" in current:
         raise AssertionError(f"Plan should not contain fact-memory fields, got: {current}")
 
     events = tmp_path / "test_plan_session" / "plan_events.jsonl"
@@ -218,6 +225,11 @@ def test_plan_schema_excludes_observation_and_metrics() -> None:
         props = ((schemas.get(name) or {}).get("parameters") or {}).get("properties") or {}
         if "metrics" in props:
             raise AssertionError(f"{name} schema should not contain metrics: {props}")
+        if "summary" in props:
+            raise AssertionError(f"{name} schema should not contain summary: {props}")
+    close_props = ((schemas.get("plan_close") or {}).get("parameters") or {}).get("properties") or {}
+    if "summary" in close_props:
+        raise AssertionError(f"plan_close schema should not contain summary: {close_props}")
 
 
 def test_plan_next_all_steps_terminal() -> None:
@@ -232,7 +244,7 @@ def test_plan_next_all_steps_terminal() -> None:
     if (focus.get("meta") or {}).get("reason") != "all_steps_terminal":
         raise AssertionError(f"Expected terminal reason, got: {focus}")
 
-    closed = assert_ok(parse_payload(plan_close("done", expected_version=version)))
+    closed = assert_ok(parse_payload(plan_close(expected_version=version)))
     version = int(closed["meta"]["version"])
     rejected = parse_payload(plan_add_step(title="after close", expected_version=version))
     assert_error(rejected, "ValidationError")

@@ -13,7 +13,7 @@ from agent.application.runtime.async_tool_call_processor import AsyncToolCallPro
 from agent.application.runtime.cancellation import CancellationTokenSource
 from agent.domain import ParsedToolCall
 from agent.domain.events import ToolCallStartedEvent, ToolResultEvent
-from agent.domain.jobs import JobHandle, JobRecord, ToolExecutionResult
+from agent.domain.jobs import ToolExecutionResult
 
 
 class FakeToolExecutor:
@@ -26,38 +26,6 @@ class FakeToolExecutor:
     async def execute_async(self, name: str, args: dict, raw_args: str | None = None):
         self.received_args = dict(args)
         return ToolExecutionResult(status="ok", result_str="done")
-
-
-class FakeJobService:
-    def __init__(self):
-        self.output = ""
-        self.job = None
-
-    def create_job(self, session_id, request_id, tool_call_id, tool_name, metadata=None):
-        self.job = JobRecord(
-            job_id="job_1",
-            session_id=session_id,
-            request_id=request_id,
-            tool_call_id=tool_call_id,
-            tool_name=tool_name,
-            status="pending",
-            metadata=metadata or {},
-        )
-        return JobHandle(job_id="job_1", status="pending", output_ref=None)
-
-    def update_status(self, job_id, status, error=None, reason=None):
-        self.job.status = status
-        if error:
-            self.job.metadata["error"] = error
-
-    def append_output(self, job_id, content, stream_type="stdout"):
-        self.output += content
-
-    def read_output(self, job_id):
-        return self.output, len(self.output)
-
-    def get_job(self, job_id):
-        return self.job
 
 
 class FakeSession:
@@ -81,7 +49,7 @@ class FakeSession:
 async def test_bash_cancellation_token_is_not_persisted_in_tool_args() -> None:
     executor = FakeToolExecutor()
     session = FakeSession()
-    processor = AsyncToolCallProcessor(tool_executor=executor, job_service=FakeJobService())
+    processor = AsyncToolCallProcessor(tool_executor=executor)
     cancel_source = CancellationTokenSource()
     call = ParsedToolCall(
         call_id="call_1",
@@ -112,7 +80,7 @@ async def test_bash_cancellation_token_is_not_persisted_in_tool_args() -> None:
 
 @pytest.mark.asyncio
 async def test_invalid_tool_args_emit_failed_result_without_started_event() -> None:
-    processor = AsyncToolCallProcessor(tool_executor=FakeToolExecutor(), job_service=FakeJobService())
+    processor = AsyncToolCallProcessor(tool_executor=FakeToolExecutor())
     session = FakeSession()
     call = ParsedToolCall(
         call_id="call_bad",
@@ -135,11 +103,36 @@ async def test_invalid_tool_args_emit_failed_result_without_started_event() -> N
         raise AssertionError(f"Expected turn_id to be propagated, got: {result.turn_id}")
 
 
+@pytest.mark.asyncio
+async def test_successful_tool_does_not_require_job_service() -> None:
+    processor = AsyncToolCallProcessor(tool_executor=FakeToolExecutor())
+    session = FakeSession()
+    call = ParsedToolCall(
+        call_id="call_1",
+        name="demo_tool",
+        raw_args='{"value":"x"}',
+    )
+
+    events = [event async for event in processor.execute(session=session, tool_calls=[call])]
+
+    if not any(isinstance(event, ToolCallStartedEvent) for event in events):
+        raise AssertionError(f"Expected started event, got: {events}")
+    result_events = [event for event in events if isinstance(event, ToolResultEvent)]
+    if len(result_events) != 1 or result_events[0].status != "completed":
+        raise AssertionError(f"Expected completed result, got: {events}")
+    if len(session.persisted_tool_calls) != 1:
+        raise AssertionError("Expected tool call to be persisted directly")
+    persisted_result = session.persisted_tool_calls[0][-1]
+    if '"ok": true' not in persisted_result or '"tool": "demo_tool"' not in persisted_result:
+        raise AssertionError(f"Expected standardized tool payload, got: {persisted_result}")
+
+
 def main() -> int:
     import asyncio
 
     asyncio.run(test_bash_cancellation_token_is_not_persisted_in_tool_args())
     asyncio.run(test_invalid_tool_args_emit_failed_result_without_started_event())
+    asyncio.run(test_successful_tool_does_not_require_job_service())
     print("AsyncToolCallProcessor tests passed.")
     return 0
 

@@ -1,13 +1,31 @@
 import pytest
+import os
+import sys
+from pathlib import Path
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+os.chdir(PROJECT_ROOT)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from agent.bootstrap import container
 from agent.interfaces.api.main import create_app
 from agent.domain.jobs import JobRecord
 
 @pytest.fixture
-def client():
+def client(monkeypatch, tmp_path):
+    workspace = tmp_path / "workspace"
+    chainpeer_home = tmp_path / "home" / ".chainpeer"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+    monkeypatch.setenv("CHAINPEER_HOME", str(chainpeer_home))
+    monkeypatch.setattr(container.Config, "get_async_client", classmethod(lambda cls: object()))
+
     app = create_app()
+    if (workspace / "sessions").exists():
+        raise AssertionError("API app initialization should not create project-local sessions")
     
     # Mock JobService
     mock_job_service = MagicMock()

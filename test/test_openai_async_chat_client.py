@@ -1,6 +1,15 @@
 import pytest
 import asyncio
+import openai
+import os
+import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+os.chdir(PROJECT_ROOT)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from agent.infrastructure.llm.openai_async_chat_client import AsyncOpenAIChatClient
 from agent.application.runtime.cancellation import CancellationTokenSource
@@ -66,3 +75,69 @@ async def test_openai_async_client_close_stream_accepts_sync_close():
     await client._close_stream(stream)
 
     assert stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_openai_async_client_adds_reasoning_effort_when_configured():
+    mock_openai = MagicMock()
+    mock_openai.chat.completions.create = AsyncMock(return_value="Done")
+    client = AsyncOpenAIChatClient(mock_openai, "test-model", reasoning_effort="xhigh")
+
+    result = await client.create([{"role": "user", "content": "hi"}])
+
+    assert result == "Done"
+    kwargs = mock_openai.chat.completions.create.call_args.kwargs
+    assert kwargs["reasoning_effort"] == "xhigh"
+
+
+@pytest.mark.asyncio
+async def test_openai_async_client_disables_unsupported_reasoning_effort_once():
+    mock_openai = MagicMock()
+    calls = []
+
+    async def fake_create(**kwargs):
+        calls.append(dict(kwargs))
+        if len(calls) == 1:
+            raise openai.BadRequestError(
+                "Unsupported parameter: reasoning_effort",
+                response=MagicMock(status_code=400),
+                body=None,
+            )
+        return "Done"
+
+    mock_openai.chat.completions.create = AsyncMock(side_effect=fake_create)
+    client = AsyncOpenAIChatClient(mock_openai, "test-model", reasoning_effort="xhigh")
+
+    result = await client.create([{"role": "user", "content": "hi"}])
+    second = await client.create([{"role": "user", "content": "again"}])
+
+    assert result == "Done"
+    assert second == "Done"
+    assert "reasoning_effort" in calls[0]
+    assert "reasoning_effort" not in calls[1]
+    assert "reasoning_effort" not in calls[2]
+
+
+@pytest.mark.asyncio
+async def test_openai_async_client_retries_blocked_request_without_reasoning_effort():
+    mock_openai = MagicMock()
+    calls = []
+
+    async def fake_create(**kwargs):
+        calls.append(dict(kwargs))
+        if len(calls) == 1:
+            raise openai.BadRequestError(
+                "Your request was blocked.",
+                response=MagicMock(status_code=400),
+                body=None,
+            )
+        return "Done"
+
+    mock_openai.chat.completions.create = AsyncMock(side_effect=fake_create)
+    client = AsyncOpenAIChatClient(mock_openai, "test-model", reasoning_effort="xhigh")
+
+    result = await client.create([{"role": "user", "content": "hi"}])
+
+    assert result == "Done"
+    assert "reasoning_effort" in calls[0]
+    assert "reasoning_effort" not in calls[1]

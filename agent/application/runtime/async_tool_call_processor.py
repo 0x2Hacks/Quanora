@@ -7,8 +7,7 @@ import time
 from typing import AsyncIterator
 
 from agent.application.ports.async_session_store import AsyncSessionStore
-from agent.application.services.job_service import JobService
-from agent.domain import ParsedToolCall, parse_tool_args, tool_error, tool_ok
+from agent.domain import ParsedToolCall, looks_like_tool_payload, parse_tool_args, tool_error, tool_ok
 from agent.domain.events import RuntimeEvent, ToolCallStartedEvent, ToolResultEvent, event_meta
 from agent.application.tool_executor import ToolExecutor
 from agent.application.runtime.cancellation import CancellationToken
@@ -20,9 +19,8 @@ class AsyncToolCallProcessor:
     and yielding an event stream. Replaces the legacy ToolCallProcessor.
     """
 
-    def __init__(self, tool_executor: ToolExecutor, job_service: JobService):
+    def __init__(self, tool_executor: ToolExecutor):
         self._tool_executor = tool_executor
-        self._job_service = job_service
 
     async def execute(
         self,
@@ -35,8 +33,6 @@ class AsyncToolCallProcessor:
         Execute multiple tool calls asynchronously.
         Async tools (like bash) are awaited directly; sync tools run in a thread.
         """
-        request_id = session.now_iso()
-
         for call in tool_calls:
             if cancellation_token and cancellation_token.is_cancelled:
                 break
@@ -64,16 +60,6 @@ class AsyncToolCallProcessor:
                     tool_name=call.name,
                 )
                 try:
-                    handle = await asyncio.to_thread(
-                        self._job_service.create_job,
-                        session_id=getattr(session, "session_id", None) or "default",
-                        request_id=request_id,
-                        tool_call_id=call.call_id,
-                        tool_name=call.name,
-                        metadata={"args": parsed_args, "raw_args": call.raw_args}
-                    )
-                    await asyncio.to_thread(self._job_service.update_status, handle.job_id, "running")
-
                     if self._tool_executor.is_async_tool(call.name):
                         # Inject _cancellation_token for tools that accept it (e.g. bash)
                         execution_args = parsed_args
@@ -86,27 +72,13 @@ class AsyncToolCallProcessor:
                         result = await asyncio.to_thread(_sync_run)
 
                     if result.status == "ok":
-                        await asyncio.to_thread(self._job_service.append_output, handle.job_id, result.result_str)
-                        await asyncio.to_thread(self._job_service.update_status, handle.job_id, "completed")
+                        tool_result_str = result.result_str
+                        if not looks_like_tool_payload(tool_result_str):
+                            tool_result_str = tool_ok(call.name, tool_result_str)
                     else:
                         event_status = "failed"
                         error_type = result.error_type or "ToolExecutionError"
-                        await asyncio.to_thread(self._job_service.append_output, handle.job_id, f"Error: {result.error_msg}")
-                        await asyncio.to_thread(self._job_service.update_status, handle.job_id, "failed", error=result.error_msg)
-
-                    content, _ = await asyncio.to_thread(self._job_service.read_output, handle.job_id)
-                    job = await asyncio.to_thread(self._job_service.get_job, handle.job_id)
-
-                    if job and job.status == "failed":
-                        event_status = "failed"
-                        error_type = "JobFailed"
-                        tool_result_str = tool_error(call.name, job.metadata.get("error", "Unknown error"), "JobFailed")
-                    else:
-                        from agent.domain import looks_like_tool_payload
-                        if looks_like_tool_payload(content):
-                            tool_result_str = content
-                        else:
-                            tool_result_str = tool_ok(call.name, content)
+                        tool_result_str = tool_error(call.name, result.error_msg, error_type)
 
                 except Exception as exc:
                     event_status = "failed"

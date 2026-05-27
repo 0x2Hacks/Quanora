@@ -21,6 +21,7 @@ def _plan(status: str = "active") -> dict:
         "plan_id": "p1",
         "title": "strategy_optimization",
         "goal": "Optimize to CAGR >= 10% and Sharpe >= 3",
+        "summary": "stale factual summary should not be rendered",
         "status": status,
         "version": 7,
         "objectives": [{"metric": "sharpe", "operator": ">=", "target": 3.0, "current": 2.1}],
@@ -52,7 +53,15 @@ def test_render_compact_plan_summary_contains_key_state() -> None:
     ]:
         if expected not in text:
             raise AssertionError(f"Expected {expected!r} in summary:\n{text}")
-    for forbidden in ["Latest metrics", "Latest observation", "Hypothesis", "Next action", "current 2.1", "current 0.15"]:
+    for forbidden in [
+        "Latest metrics",
+        "Latest observation",
+        "Hypothesis",
+        "Next action",
+        "current 2.1",
+        "current 0.15",
+        "stale factual summary",
+    ]:
         if forbidden in text:
             raise AssertionError(f"Did not expect {forbidden!r} in summary:\n{text}")
     if "unlisted pending" in text:

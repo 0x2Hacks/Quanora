@@ -1,9 +1,16 @@
-import pytest
 import shutil
 import tempfile
 import pytest
 import os
 import asyncio
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+os.chdir(PROJECT_ROOT)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from agent.infrastructure.persistence.async_jsonl_session_store import AsyncJsonlSessionStore
 
 @pytest.fixture
@@ -41,3 +48,20 @@ async def test_async_session_store_facade(temp_session_dir):
     
     messages = await async_store.load_messages()
     assert len(messages) == 11 # 1 user + 5 assistant + 5 system
+
+
+def test_resolve_session_root_uses_chainpeer_home(monkeypatch, tmp_path):
+    chainpeer_home = tmp_path / ".chainpeer"
+    monkeypatch.setenv("CHAINPEER_HOME", str(chainpeer_home))
+
+    root = AsyncJsonlSessionStore.resolve_session_root()
+
+    assert root == os.path.abspath(str(chainpeer_home / "sessions"))
+
+
+def test_resolve_session_root_uses_explicit_session_dir(tmp_path):
+    session_dir = tmp_path / "custom_sessions"
+
+    root = AsyncJsonlSessionStore.resolve_session_root(str(session_dir))
+
+    assert root == os.path.abspath(str(session_dir))

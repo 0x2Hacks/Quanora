@@ -160,13 +160,12 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
         },
     },
     "plan_update_meta": {
-        "description": "更新当前 active plan 的长期目标、约束、最新指标或摘要。必须使用 expected_version，不要直接编辑 plan.json。",
+        "description": "更新当前 active plan 的长期目标、目标指标和约束。必须使用 expected_version，不要直接编辑 plan.json。",
         "param_descriptions": {
             "expected_version": "必填版本号，用于乐观锁",
             "goal": "可选新的全局目标文本",
             "objectives": "可选目标数组，整体替换 objectives",
             "constraints": "可选约束数组，整体替换 constraints",
-            "summary": "可选计划摘要",
         },
     },
     "plan_update_step": {
@@ -200,9 +199,8 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
         },
     },
     "plan_close": {
-        "description": "在所有步骤完成后关闭计划。",
+        "description": "在所有步骤完成后关闭计划。只更新计划状态，不生成事实总结。",
         "param_descriptions": {
-            "summary": "计划完成总结",
             "expected_version": "必填版本号，用于乐观锁",
         },
     },
