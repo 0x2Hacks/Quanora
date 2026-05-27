@@ -11,6 +11,7 @@ from .tools import (
     edit_file,
     fetch_web_page,
     generate_project_knowledge,
+    get_research_summary,
     grep,
     kill_shell,
     list_files,
@@ -25,13 +26,16 @@ from .tools import (
     plan_reorder,
     plan_update_meta,
     plan_update_step,
+    query_research_experience,
     read_file,
     read_pdf,
+    record_research_experience,
     search_web,
     skill_create,
     write_file,
     wq_build_generation_prompt,
     wq_crossover_alpha,
+    wq_data_review,
     wq_distill_insight,
     wq_evaluate_alpha,
     wq_list_data_fields,
@@ -72,6 +76,10 @@ TOOLS: dict[str, Callable] = {
     # Project Knowledge Cache
     "generate_project_knowledge": generate_project_knowledge,
     "load_project_knowledge": load_project_knowledge,
+    # Research Experience
+    "record_research_experience": record_research_experience,
+    "query_research_experience": query_research_experience,
+    "get_research_summary": get_research_summary,
     # WorldQuant Brain alpha mining tools
     "wq_login": wq_login,
     "wq_list_operators": wq_list_operators,
@@ -87,6 +95,7 @@ TOOLS: dict[str, Callable] = {
     "wq_submit_alpha": wq_submit_alpha,
     "wq_mutate_alpha": wq_mutate_alpha,
     "wq_crossover_alpha": wq_crossover_alpha,
+    "wq_data_review": wq_data_review,
 }
 
 _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
@@ -382,6 +391,20 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "wq_data_review": {
+        "description": (
+            "在 Alpha 研究开始前执行数据预审，输出数据综述供人确认。"
+            "检查指定研究方向所需的数据字段和算子是否可用，并结合"
+            "Experience Memory 的禁区/洞察给出风险标记和建议。"
+        ),
+        "param_descriptions": {
+            "direction_key": "DIRECTION_LIBRARY 中的方向 key（默认 reversal_short_term）",
+            "region": "市场区域（默认 USA）",
+            "universe": "股票池（默认 TOP3000）",
+            "delay": "数据延迟（默认 1）",
+            "check_online": "是否在线查询 Brain API 补充字段/算子信息（默认 False）",
+        },
+    },
     # ── Project Knowledge Cache ──────────────────────────────────────
     "generate_project_knowledge": {
         "description": (
@@ -410,6 +433,55 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
             "project_root": "项目根目录绝对路径",
             "self_dev": "是否为 self-dev 模式（默认 False）",
         },
+    },
+    # ── Research Experience ──
+    "record_research_experience": {
+        "description": (
+            "记录一条量化研究经验到项目级经验库。在完成策略研究后调用，"
+            "总结经验教训供未来会话复用。经验存储在项目级别（.quanora/research_experience.json），"
+            "跨会话持久化。"
+        ),
+        "param_descriptions": {
+            "strategy_name": "策略名称，如 'dual_ma_crossover'",
+            "strategy_category": "策略分类（momentum/mean_reversion/breakout/trend_following/volatility/seasonality/microstructure/statistical_arbitrage/machine_learning/other）",
+            "expression": "Alpha表达式或策略代码片段",
+            "instrument": "标的，如 'XAUUSD'、'SPY'",
+            "timeframe": "时间框架，如 'M5'、'H1'、'daily'",
+            "outcome": "研究结果（success/partial/failure/inconclusive/insight）",
+            "key_insight": "核心洞察（一句话总结最重要的发现）",
+            "what_worked": "哪些方面有效",
+            "what_failed": "哪些方面失败及原因",
+            "pitfalls": "陷阱列表，JSON数组字符串，如 '[\"过拟合\",\"滑点未计入\"]'",
+            "next_steps": "建议后续步骤，JSON数组字符串",
+            "tags": "标签，JSON数组字符串，如 '[\"xauusd\",\"mean_reversion\"]'",
+            "performance": "性能指标，JSON对象字符串，如 '{\"sharpe\":1.5,\"max_drawdown\":0.12}'",
+            "market_regime": "市场环境（trending_up/trending_down/ranging/high_volatility/low_volatility/unknown）",
+            "universe": "股票池/标的范围，如 'TOP3000'",
+            "region": "市场区域，如 'USA'",
+            "date_range": "回测日期范围，如 '2024-01-01~2025-12-31'",
+            "parameters": "关键参数，JSON对象字符串，如 '{\"window\":20,\"threshold\":0.02}'",
+        },
+    },
+    "query_research_experience": {
+        "description": (
+            "查询项目历史研究经验。在新研究开始前或研究过程中调用，"
+            "查阅相关经验避免重复探索已验证的死路。"
+        ),
+        "param_descriptions": {
+            "strategy_category": "按策略分类过滤（momentum/mean_reversion/...）",
+            "instrument": "按标的过滤，如 'XAUUSD'",
+            "outcome": "按结果过滤（success/partial/failure/inconclusive/insight）",
+            "tags": "按标签过滤，JSON数组字符串，需全部匹配",
+            "keyword": "关键词搜索（全文搜索）",
+            "k": "最多返回条数（默认10）",
+        },
+    },
+    "get_research_summary": {
+        "description": (
+            "获取项目研究经验统计摘要。了解项目整体研究进展和经验分布，"
+            "包括各分类/结果/标的的经验数量分布。"
+        ),
+        "param_descriptions": {},
     },
 }
 

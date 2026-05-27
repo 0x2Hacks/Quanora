@@ -28,6 +28,14 @@ from .evaluator import (
     evaluate_expression,
     verdict_to_alpha_record,
 )
+from .reviewer import (
+    DataReviewReport,
+    review_direction,
+)
+from .reviewer import (
+    DataReviewReport,
+    review_direction,
+)
 from .knowledge import (
     BUILTIN_FIELDS,
     BUILTIN_OPERATORS,
@@ -458,6 +466,104 @@ def wq_crossover_alpha(expression_a: str, expression_b: str, strategy: str = "wr
         return tool_error("wq_crossover_alpha", str(exc), exc.__class__.__name__)
 
 
+# ────────────────────────────────────────────
+# wq_data_review — 数据预审
+# ────────────────────────────────────────────
+
+def wq_data_review(
+    direction_key: str = "reversal_short_term",
+    region: str = "USA",
+    universe: str = "TOP3000",
+    delay: int = 1,
+    check_online: bool = False,
+) -> str:
+    """在 Alpha 研究开始前执行数据预审，输出数据综述供人确认。
+
+    检查指定研究方向所需的数据字段和算子是否可用，并结合
+    Experience Memory 的禁区/洞察给出风险标记和建议。
+
+    :param direction_key: DIRECTION_LIBRARY 中的方向 key（默认 reversal_short_term）
+    :param region: 市场区域（默认 USA）
+    :param universe: 股票池（默认 TOP3000）
+    :param delay: 数据延迟（默认 1）
+    :param check_online: 是否在线查询 Brain API 补充字段/算子信息（默认 False）
+    :return: tool_ok/tool_error 字符串载荷，含 markdown 报告 + dict 数据
+    """
+    try:
+        # 1. 可选在线查询
+        online_fields: dict[str, str] | None = None
+        online_operators: dict[str, dict[str, str]] | None = None
+
+        if check_online:
+            try:
+                client = get_global_client()
+                if client is None:
+                    # 尝试自动登录
+                    client = get_global_client()
+
+                if client is not None:
+                    # 在线查询数据字段
+                    fields_resp = client.list_data_fields(
+                        region=region, universe=universe, delay=delay, limit=200,
+                    )
+                    if fields_resp:
+                        online_fields = {}
+                        for f in fields_resp:
+                            fname = f.get("id", f.get("name", ""))
+                            fdesc = f.get("description", f.get("desc", ""))
+                            if fname:
+                                online_fields[fname] = fdesc
+
+                    # 在线查询算子
+                    ops_resp = client.list_operators()
+                    if ops_resp:
+                        online_operators = {}
+                        for op in ops_resp:
+                            oname = op.get("name", "")
+                            if oname:
+                                online_operators[oname] = {
+                                    "sig": op.get("signature", ""),
+                                    "desc": op.get("description", ""),
+                                    "category": op.get("category", ""),
+                                }
+            except Exception:  # noqa: BLE001
+                # 在线查询失败不阻塞，使用 builtin 兜底
+                pass
+
+        # 2. 获取 Memory Snapshot（如有）
+        memory_snapshot: dict[str, Any] | None = None
+        try:
+            mem_json = wq_memory_snapshot()
+            mem_data = json.loads(mem_json)
+            if mem_data.get("ok"):
+                memory_snapshot = mem_data.get("data", {})
+        except Exception:  # noqa: BLE001
+            pass
+
+        # 3. 执行预审
+        report = review_direction(
+            direction_key=direction_key,
+            region=region,
+            universe=universe,
+            delay=delay,
+            memory_snapshot=memory_snapshot,
+            online_fields=online_fields,
+            online_operators=online_operators,
+        )
+
+        return tool_ok("wq_data_review", {
+            "report_markdown": report.to_markdown(),
+            "report_dict": report.to_dict(),
+            "recommendation": report.recommendation,
+            "risk_count": report.risk_count,
+            "fields_available": f"{report.fields_available}/{report.total_fields_required}",
+            "operators_available": f"{report.operators_available}/{report.total_operators_required}",
+        })
+
+    except Exception as exc:  # noqa: BLE001
+        return tool_error("wq_data_review", str(exc), exc.__class__.__name__)
+
+
 __all__ = [
     "wq_login",
     "wq_list_operators",
@@ -473,4 +579,5 @@ __all__ = [
     "wq_submit_alpha",
     "wq_mutate_alpha",
     "wq_crossover_alpha",
+    "wq_data_review",
 ]

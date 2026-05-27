@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from agent.domain.skills import render_active_skill_instructions
 from agent.domain.knowledge_base import ExperienceKnowledgeBase
 from agent.infrastructure.persistence.knowledge_base_repository import KnowledgeBaseRepository
+from agent.infrastructure.persistence.research_experience_repository import ResearchExperienceRepository
 
 from .context_estimator import ContextEstimator
 from .conversation_summary_service import ConversationSummaryService
@@ -59,6 +60,7 @@ class ContextManager:
         self._plan_context_provider = plan_context_provider
         self._active_skill_char_limit = max(0, int(active_skill_char_limit))
         self._kb_repo = KnowledgeBaseRepository()
+        self._research_exp_repo: ResearchExperienceRepository | None = None  # lazy-init
 
     async def build_messages_async(
         self,
@@ -77,7 +79,8 @@ class ContextManager:
         plan_messages, plan_stats, plan_decisions = self._build_plan_messages()
         skill_messages, skill_stats, skill_decisions = self._build_skill_messages(active_skill_matches)
         knowledge_messages, knowledge_stats = self._build_knowledge_cache_messages()
-        extra_messages = plan_messages + skill_messages + knowledge_messages
+        research_exp_messages, research_exp_stats = self._build_research_experience_messages()
+        extra_messages = plan_messages + skill_messages + knowledge_messages + research_exp_messages
         if extra_messages:
             full_messages = self._insert_after_first_system(full_messages, extra_messages)
 
@@ -145,6 +148,7 @@ class ContextManager:
             **plan_stats,
             **skill_stats,
             **knowledge_stats,
+            **research_exp_stats,
         }
         decisions = {
             "mode": "session_backed",
@@ -618,6 +622,95 @@ class ContextManager:
         except Exception:
             # 知识缓存加载不应阻断主流程
             stats["knowledge_cache_status"] = "error"
+
+        return messages, stats
+
+    def _build_research_experience_messages(self) -> tuple[list[dict], dict]:
+        """Build system messages injecting project-level quant research experience.
+
+        This is separate from the generic KnowledgeBase (which is user-scoped and
+        task-type-oriented).  Research experience is project-scoped and contains
+        structured quant-specific fields (strategy category, instrument, regime,
+        performance metrics, what worked / what failed).
+
+        The injection format is designed to be concise yet actionable:
+        - Top insights: one-liners that steer the agent away from dead ends
+        - Recent successes: proven patterns to build on
+        - Recent failures: anti-patterns to avoid
+        """
+        stats = {"research_experience_status": "none"}
+        messages: list[dict] = []
+
+        try:
+            from agent.infrastructure.config import Config
+
+            project_root = Config.WORKSPACE_ROOT
+            if not project_root:
+                return messages, stats
+
+            # Lazy-init the repo (only when we actually have a project)
+            if self._research_exp_repo is None:
+                self._research_exp_repo = ResearchExperienceRepository(project_root)
+
+            book = self._research_exp_repo.load()
+
+            if len(book) == 0:
+                stats["research_experience_status"] = "empty"
+                return messages, stats
+
+            stats["research_experience_status"] = "hit"
+            stats["research_experience_count"] = len(book)
+
+            # Build concise injection
+            parts: list[str] = [
+                "[项目量化研究经验 — 已加载]",
+                f"本项目共 {len(book)} 条研究经验记录。",
+                "",
+            ]
+
+            # Top insights
+            insights = book.query_top_insights(k=5)
+            if insights:
+                parts.append("### 关键洞察")
+                for r in insights:
+                    parts.append(f"- [{r.outcome.upper()}] {r.strategy_name or r.strategy_category}: {r.key_insight}")
+                parts.append("")
+
+            # Recent successes
+            successes = book.query_successes(k=3)
+            if successes:
+                parts.append("### 近期成功策略")
+                for r in successes:
+                    perf_str = ""
+                    if r.performance:
+                        sharpe = r.performance.get("sharpe")
+                        if sharpe is not None:
+                            perf_str = f" (Sharpe={sharpe:.2f})"
+                    parts.append(f"- {r.strategy_name}{perf_str}: {r.what_worked}")
+                parts.append("")
+
+            # Recent failures (anti-patterns)
+            failures = book.query_failures(k=3)
+            if failures:
+                parts.append("### 近期失败教训（避免重复）")
+                for r in failures:
+                    parts.append(f"- {r.strategy_name}: {r.what_failed}")
+                parts.append("")
+
+            parts.append(
+                "💡 以上是本项目历史研究经验的自动摘要。在新研究开始前，"
+                "请优先参考这些经验以避免重复探索已知死路。"
+                "完成研究后，请使用 research_experience 工具总结新经验。"
+            )
+
+            messages.append({
+                "role": "system",
+                "content": "\n".join(parts),
+            })
+
+        except Exception:
+            # Research experience injection should never block main flow
+            stats["research_experience_status"] = "error"
 
         return messages, stats
 

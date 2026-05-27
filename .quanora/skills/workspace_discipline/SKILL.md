@@ -4,7 +4,8 @@ description: >
   Project workspace boundary discipline. Activates when the user asks you to
   scaffold, create, organize, or refactor project files. Reminds you that
   every file you write must land inside the workspace, NEVER in Quanora's own
-  source tree or arbitrary system paths.
+  source tree or arbitrary system paths. Also governs project directory naming
+  conventions to prevent duplicate/fragmented directories across sessions.
 triggers:
   - "$workspace"
   - "$workspace_discipline"
@@ -26,64 +27,81 @@ triggers:
 You are working on a USER'S PROJECT. Quanora itself is a tool — it is NOT the
 project. Three rules:
 
-1. **All writes land inside the workspace.** The runtime resolves relative
-   paths under `QUANORA_WORKSPACE` (default `<install>/workspace/`). Prefer
-   relative paths.
-2. **Quanora's own code is PROTECTED** (`agent/`, `test/`, `.quanora/`,
-   `scripts/`, `main.py`, `requirements.txt`, `.env*`). The runtime will hard
-   reject any write that targets those paths.
-3. **A project should be self-contained.** It should be possible to `cp -r
-   <workspace>` to a USB drive and have a complete, working project. Nothing
-   in `/tmp`, nothing in `$HOME` siblings, nothing in the Quanora repo.
+1. **All writes land inside the workspace.** The runtime resolves relative paths
+   against the workspace root, not your CWD. If in doubt, use relative paths.
+
+2. **Never modify Quanora's own code** (unless in self-dev mode and explicitly
+   told to). The guard will reject writes to `agent/`, `main.py`, etc.
+
+3. **Never scatter files** into `/tmp`, `$HOME`, or outside the workspace.
 
 ---
 
-## Playbook A — User asks "create a new project for X"
+## Directory Naming Convention
 
-1. Determine the project root. By default: `<workspace>/<project_name>/`.
-   Confirm with the user if the workspace already has unrelated content.
-2. Establish a conventional layout BEFORE writing code:
-   - **Python**: `<project>/<package>/__init__.py`, `<project>/tests/`,
-     `<project>/pyproject.toml` (or `requirements.txt`), `<project>/README.md`.
-   - **JS/TS**: `<project>/src/`, `<project>/tests/`, `<project>/package.json`,
-     `<project>/README.md`, optional `<project>/tsconfig.json`.
-   - **Quant strategy**: `<project>/strategy/`, `<project>/data/`,
-     `<project>/notebooks/`, `<project>/results/`, `<project>/README.md`.
-3. Use `list_files` on the workspace first to see what already exists.
-4. Create directories implicitly via `write_file` — `write_file` makes parent
-   dirs automatically.
-5. Initialise version control (`bash: cd <project> && git init`) only after
-   the user confirms — not as a default.
+When `find_or_create_project_dir` creates a project subdirectory under
+`workspace_root`, it follows a **type-prefixed naming convention** to ensure
+that similar projects from different sessions reuse the same directory:
 
-## Playbook B — User asks "add a feature to existing project"
+| Project Type | Prefix | Example Directory Name |
+|---|---|---|
+| WorldQuant Brain alpha mining | `wq-` | `wq-alpha-momentum`, `wq-alpha-reversal` |
+| Quantitative research | `quant-` | `quant-strategy-backtest`, `quant-factor-analysis` |
+| Data pipeline | `data-` | `data-market-etl`, `data-cleaning` |
+| Web application | `web-` | `web-dashboard`, `web-api-server` |
+| General / other | `proj-` | `proj-my-experiment`, `proj-docs` |
 
-1. `list_files` the workspace to identify the existing project structure.
-2. Follow the existing convention (don't introduce a new layout). If the
-   project uses `src/`, your new file goes in `src/`. If it uses flat
-   modules, follow flat.
-3. Put tests next to the project's existing test dir.
-4. Never create sibling helper files at the workspace root unless the user
-   explicitly asks for "a quick script".
+### How it works
 
-## Playbook C — You hit ⛔ WORKSPACE BOUNDARY VIOLATION
+1. **Type detection**: The system scans the task description for keywords
+   (e.g., "WorldQuant", "WQ", "alpha", "量化", "回测") and assigns a type.
+2. **Slug generation**: The project name is slugified (lowercase, hyphens, ASCII).
+3. **Prefix application**: The type prefix is prepended: `wq-alpha-mining`.
+4. **Fuzzy matching**: Before creating a new directory, existing directories
+   are checked using a composite score:
+   - Levenshtein similarity (40% weight)
+   - Semantic-normalized Levenshtein (30% — maps synonyms like "WQ" → "worldquant")
+   - Keyword overlap / Jaccard (30%)
+   - Same-type-prefix bonus (+0.1)
+   - Threshold ≥ 0.6 → reuse existing directory
 
-Stop. Read the error's `suggested_fix` meta. Two cases:
+### What this means for you
 
-- **`status: outside`** — your path escaped the workspace. Rewrite the path
-  as relative (or absolute under the workspace root).
-- **`status: protected`** — you tried to write into Quanora's own code.
-  Stop and tell the user exactly what you tried; ask whether they want to
-  modify Quanora itself (which they should do manually) or whether you
-  misunderstood and the target should be a project file under the workspace.
+- **Don't create ad-hoc directories.** Always use `find_or_create_project_dir`
+  (called automatically by the session manager) to get the project directory.
+- **If you see two directories like `alpha-research` and `wq-alpha-research`**
+  in the same workspace, the latter is the canonical one (type-prefixed).
+- **Chinese descriptions work**: "量化策略回测" → `quant-quant-ce-lve-hui-ce`
+  (Chinese chars are stripped to ASCII; the prefix carries the meaning).
+- **Sessions with similar tasks will reuse the same directory**, preventing
+  directory sprawl.
 
-DO NOT retry the same path. DO NOT try `bash echo > <protected_path>` as a
-workaround — the violation banner is visible to the user.
+---
+
+## Standard project layout
+
+Inside a project directory, follow this layout:
+
+```
+<workspace>/<project-slug>/
+├── src/             # Source code
+├── tests/           # Tests
+├── scripts/         # Scripts (backtest, data download, etc.)
+├── data/            # Generated / downloaded data (gitignored)
+├── artifacts/       # Reports, figures, exports
+├── docs/            # Documentation
+├── results/         # Simulation results, logs
+└── README.md        # Project overview
+```
+
+**Never** put files directly in the workspace root.
 
 ## Quick decision table
 
 | User says | Where does the file go? |
 |---|---|
-| "create a quant strategy called momentum_50" | `<workspace>/momentum_50/strategy/...` |
+| "create a quant strategy called momentum_50" | `<workspace>/quant-momentum-50/strategy/...` |
+| "WQ alpha research on reversal" | `<workspace>/wq-alpha-reversal/...` |
 | "add a backtest script" | `<workspace>/<existing-project>/scripts/backtest.py` |
 | "show me the data fields" | NO write — just `read_file` / `wq_list_data_fields` |
 | "fix the bug in agent/foo.py" | STOP — that's Quanora's own code, ask user |
