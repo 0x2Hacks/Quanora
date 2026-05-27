@@ -321,3 +321,111 @@ def test_cli_self_doc_argument_is_accepted():
     args = parser.parse_args(["--self-doc"])
     assert args.self_doc is True
     assert args.self_dev is False
+
+
+# ---------------------------------------------------------------------------
+# self-doc + switch_to_project_workspace: path resolution correctness
+# ---------------------------------------------------------------------------
+
+def test_self_doc_switch_keeps_workspace_root_at_repo():
+    """In self-doc mode, switch_to_project_workspace must NOT change
+    _WORKSPACE_ROOT or Config.WORKSPACE_ROOT away from the repo root.
+    Otherwise docs/xxx.md would resolve to an empty project subdirectory
+    instead of the real docs/ tree under the repo.
+    """
+    from agent.infrastructure.config import settings as settings_mod
+
+    # Record initial state
+    initial_ws_root = settings_mod._WORKSPACE_ROOT
+    initial_config_ws = settings_mod.Config.WORKSPACE_ROOT
+
+    # Enable self-doc mode
+    settings_mod.enable_self_doc_mode()
+
+    try:
+        # Simulate switching to a project workspace (like what happens
+        # when the CLI processes a new task in self-doc mode)
+        project_dir = settings_mod.switch_to_project_workspace(
+            "test self-doc project"
+        )
+
+        # KEY ASSERTION: _WORKSPACE_ROOT must stay at repo root
+        assert settings_mod._WORKSPACE_ROOT == settings_mod._QUANORA_REPO_ROOT, (
+            f"_WORKSPACE_ROOT should stay at repo root in self-doc mode, "
+            f"but got {settings_mod._WORKSPACE_ROOT}"
+        )
+
+        # Config.WORKSPACE_ROOT must also stay at repo root
+        assert settings_mod.Config.WORKSPACE_ROOT == settings_mod._QUANORA_REPO_ROOT, (
+            f"Config.WORKSPACE_ROOT should stay at repo root in self-doc mode, "
+            f"but got {settings_mod.Config.WORKSPACE_ROOT}"
+        )
+
+        # The project_dir returned should still exist (for metadata tracking)
+        assert project_dir.exists()
+
+    finally:
+        # Clean up: disable self-doc mode and restore workspace root
+        settings_mod.disable_self_doc_mode()
+
+
+def test_self_doc_guard_resolve_root_is_repo_root():
+    """In self-doc mode, the guard's resolve_root must be the repo root
+    so that relative paths like 'docs/xxx.md' resolve correctly.
+    """
+    from agent.infrastructure.config import settings as settings_mod
+
+    # Enable self-doc mode
+    settings_mod.enable_self_doc_mode()
+
+    try:
+        # Simulate switching to a project workspace
+        settings_mod.switch_to_project_workspace("test self-doc project")
+
+        # After switch, the guard should have root == repo root
+        current_guard = settings_mod._WORKSPACE_GUARD
+        assert current_guard.root == settings_mod._QUANORA_REPO_ROOT, (
+            f"guard.root should be repo root in self-doc mode, "
+            f"but got {current_guard.root}"
+        )
+
+        # resolve_root should also be repo root
+        assert current_guard._cfg.resolve_root == settings_mod._QUANORA_REPO_ROOT, (
+            f"guard._cfg.resolve_root should be repo root in self-doc mode, "
+            f"but got {current_guard._cfg.resolve_root}"
+        )
+
+    finally:
+        # Clean up
+        settings_mod.disable_self_doc_mode()
+
+
+def test_self_doc_md_path_resolves_to_repo_docs():
+    """In self-doc mode, writing 'docs/something.md' should resolve to
+    <repo_root>/docs/something.md, NOT to some empty project subdirectory.
+    """
+    from agent.infrastructure.config import settings as settings_mod
+
+    # Enable self-doc mode
+    settings_mod.enable_self_doc_mode()
+
+    try:
+        # Simulate switching to a project workspace
+        settings_mod.switch_to_project_workspace("test self-doc project")
+
+        # A relative path like "docs/something.md" should resolve under repo root
+        current_guard = settings_mod._WORKSPACE_GUARD
+        resolve_root = current_guard._cfg.resolve_root
+        expected_path = resolve_root / "docs" / "something.md"
+
+        # The resolved path should be under the repo root's docs/ directory
+        assert str(expected_path).startswith(
+            str(settings_mod._QUANORA_REPO_ROOT / "docs")
+        ), (
+            f"docs/something.md should resolve to repo_root/docs/something.md, "
+            f"but would resolve to {expected_path}"
+        )
+
+    finally:
+        # Clean up
+        settings_mod.disable_self_doc_mode()
