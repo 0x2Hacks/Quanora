@@ -29,13 +29,13 @@ from agent.domain.project_manager import (
 
 class TestSlugify:
     def test_ascii_text(self):
-        assert _slugify("Hello World") == "hello-world"
+        assert _slugify("Hello World") == "hello_world"
 
     def test_special_chars(self):
-        assert _slugify("Foo & Bar!") == "foo-bar"
+        assert _slugify("Foo & Bar!") == "foo_bar"
 
-    def test_multiple_hyphens(self):
-        assert _slugify("a---b") == "a-b"
+    def test_multiple_underscores(self):
+        assert _slugify("a---b") == "a_b"
 
     def test_chinese_text_pinyin_lossy(self):
         # Chinese chars stripped → could be empty → fallback
@@ -47,7 +47,7 @@ class TestSlugify:
     def test_empty_string(self):
         assert _slugify("") == "untitled"
 
-    def test_leading_trailing_hyphens(self):
+    def test_leading_trailing_underscores(self):
         assert _slugify("-hello-") == "hello"
 
     def test_mixed_case(self):
@@ -61,34 +61,51 @@ class TestSlugify:
 
 class TestDetectProjectType:
     def test_wq_alpha_type(self):
-        type_id, prefix = _detect_project_type("WorldQuant Brain alpha mining")
+        type_id, cat_path, prefix = _detect_project_type("WorldQuant Brain alpha mining")
         assert type_id == "wq_alpha"
+        assert cat_path == "alpha/wq"
         assert prefix == "wq"
 
     def test_wq_short_form(self):
-        type_id, prefix = _detect_project_type("WQ alpha研究")
+        type_id, cat_path, prefix = _detect_project_type("WQ alpha研究")
         assert type_id == "wq_alpha"
+        assert cat_path == "alpha/wq"
         assert prefix == "wq"
 
-    def test_quant_research_type(self):
-        type_id, prefix = _detect_project_type("量化策略回测")
-        assert type_id == "quant_research"
-        assert prefix == "quant"
+    def test_quant_backtest_type(self):
+        type_id, cat_path, prefix = _detect_project_type("量化策略回测")
+        assert type_id == "quant_backtest"
+        assert cat_path == "backtest"
+        assert prefix == "bt"
 
     def test_general_type(self):
-        type_id, prefix = _detect_project_type("随便写个东西")
+        type_id, cat_path, prefix = _detect_project_type("随便写个东西")
         assert type_id == "general"
+        assert cat_path == "projects"
         assert prefix == "proj"
 
     def test_data_pipeline_type(self):
-        type_id, prefix = _detect_project_type("ETL data pipeline for market data")
+        type_id, cat_path, prefix = _detect_project_type("ETL data pipeline for market data")
         assert type_id == "data_pipeline"
-        assert prefix == "data"
+        assert cat_path == "data"
+        assert prefix == "pipe"
 
     def test_wq_takes_priority_over_quant(self):
         # WQ rules come first in PROJECT_TYPE_RULES
-        type_id, _ = _detect_project_type("WorldQuant quant research")
+        type_id, _, _ = _detect_project_type("WorldQuant quant research")
         assert type_id == "wq_alpha"
+
+    def test_futures_doc_type(self):
+        type_id, cat_path, prefix = _detect_project_type("期货合约 Binance OKX XAUUSD")
+        assert type_id == "quant_md_futures"
+        assert cat_path == "docs/futures"
+        assert prefix == "spec"
+
+    def test_fx_doc_type(self):
+        type_id, cat_path, prefix = _detect_project_type("外汇 XAUUSD timeseries")
+        assert type_id == "quant_md_fx"
+        assert cat_path == "docs/fx"
+        assert prefix == "spec"
 
 
 # ---------------------------------------------------------------------------
@@ -204,12 +221,16 @@ class TestFindOrCreateProjectDir:
         ws_root = tmp_path / "workspace"
         result = find_or_create_project_dir(ws_root, "my new project")
         assert result.is_dir()
-        assert result.parent == ws_root
+        # Should be under a category path, not directly under workspace root
+        assert result.parent != ws_root
 
     def test_exact_match_reuses_dir(self, tmp_path: Path):
         ws_root = tmp_path / "workspace"
         ws_root.mkdir()
-        existing = ws_root / "proj-my-new-project"
+        # Create the exact directory structure for a "general" type project
+        category_dir = ws_root / "projects"
+        category_dir.mkdir()
+        existing = category_dir / "proj_my_new_project"
         existing.mkdir()
 
         result = find_or_create_project_dir(ws_root, "my new project")
@@ -218,17 +239,21 @@ class TestFindOrCreateProjectDir:
     def test_fuzzy_match_reuses_dir(self, tmp_path: Path):
         ws_root = tmp_path / "workspace"
         ws_root.mkdir()
-        existing = ws_root / "proj-chain-peer-v2"
+        category_dir = ws_root / "projects"
+        category_dir.mkdir()
+        existing = category_dir / "proj_chain_peer_v2"
         existing.mkdir()
 
-        # "chain peer v2" → slug will have "proj-" prefix
+        # "chain peer v2" → slug will have "proj_" prefix
         result = find_or_create_project_dir(ws_root, "chain peer v2")
         assert result == existing.resolve()
 
     def test_no_match_creates_new(self, tmp_path: Path):
         ws_root = tmp_path / "workspace"
         ws_root.mkdir()
-        existing = ws_root / "totally-different"
+        category_dir = ws_root / "projects"
+        category_dir.mkdir()
+        existing = category_dir / "totally_different"
         existing.mkdir()
 
         result = find_or_create_project_dir(ws_root, "brand new project")
@@ -238,7 +263,9 @@ class TestFindOrCreateProjectDir:
     def test_skips_hidden_dirs(self, tmp_path: Path):
         ws_root = tmp_path / "workspace"
         ws_root.mkdir()
-        (ws_root / ".hidden").mkdir()
+        category_dir = ws_root / "projects"
+        category_dir.mkdir()
+        (category_dir / ".hidden").mkdir()
 
         result = find_or_create_project_dir(ws_root, "hidden project")
         # Should not reuse .hidden
@@ -250,31 +277,32 @@ class TestFindOrCreateProjectDir:
         assert ws_root.is_dir()
         assert result.is_dir()
 
-    def test_wq_type_prefix(self, tmp_path: Path):
-        """WQ tasks should get 'wq-' prefix in their directory name."""
+    def test_wq_type_hierarchy(self, tmp_path: Path):
+        """WQ tasks should create alpha/wq/ hierarchy."""
         ws_root = tmp_path / "workspace"
         result = find_or_create_project_dir(ws_root, "WorldQuant Brain alpha mining session")
-        assert result.name.startswith("wq-")
+        assert "alpha" in result.parts
+        assert "wq" in result.parts
+        assert result.name.startswith("wq_")
         assert result.is_dir()
 
     def test_wq_type_reuses_existing_wq_dir(self, tmp_path: Path):
         """Two WQ sessions with similar descriptions should reuse the same dir."""
         ws_root = tmp_path / "workspace"
-        ws_root.mkdir()
 
         # First session creates a WQ dir
         first = find_or_create_project_dir(ws_root, "WQ alpha mining momentum")
-        assert first.name.startswith("wq-")
+        assert first.name.startswith("wq_")
 
         # Second session with similar WQ task should reuse
         second = find_or_create_project_dir(ws_root, "WorldQuant alpha mining momentum")
         assert second == first
 
-    def test_quant_type_prefix(self, tmp_path: Path):
-        """Quant research tasks should get 'quant-' prefix."""
+    def test_quant_type_hierarchy(self, tmp_path: Path):
+        """Quant backtest tasks should create backtest/ hierarchy."""
         ws_root = tmp_path / "workspace"
         result = find_or_create_project_dir(ws_root, "量化策略回测")
-        assert result.name.startswith("quant-")
+        assert "backtest" in result.parts
         assert result.is_dir()
 
     def test_same_type_bonus_in_matching(self, tmp_path: Path):
@@ -282,21 +310,34 @@ class TestFindOrCreateProjectDir:
         ws_root = tmp_path / "workspace"
         ws_root.mkdir()
 
+        # Create the alpha/wq category dir
+        category_dir = ws_root / "alpha" / "wq"
+        category_dir.mkdir(parents=True)
+
         # Create a WQ dir
-        wq_dir = ws_root / "wq-alpha-momentum"
+        wq_dir = category_dir / "wq_alpha_momentum"
         wq_dir.mkdir()
 
-        # Also create a quant dir that might have some keyword overlap
-        quant_dir = ws_root / "quant-alpha-momentum"
-        quant_dir.mkdir()
-
-        # A new WQ task should prefer the WQ dir
+        # A new WQ task should find the WQ dir (fuzzy match)
         result = find_or_create_project_dir(ws_root, "WQ alpha momentum research")
-        assert result.name.startswith("wq-")
+        assert "wq" in result.parts
 
     def test_no_duplicate_prefix(self, tmp_path: Path):
-        """Prefix should not be duplicated (e.g., not 'wq-wq-alpha')."""
+        """Prefix should not be duplicated (e.g., not 'wq_wq_alpha')."""
         ws_root = tmp_path / "workspace"
         result = find_or_create_project_dir(ws_root, "WQ alpha")
-        # Should be "wq-alpha" not "wq-wq-alpha"
-        assert not result.name.startswith("wq-wq-")
+        # Should NOT start with "wq_wq_"
+        assert not result.name.startswith("wq_wq_")
+
+    def test_project_skeleton_has_readme(self, tmp_path: Path):
+        """New project dirs should have a README.md."""
+        ws_root = tmp_path / "workspace"
+        result = find_or_create_project_dir(ws_root, "WQ alpha mining test")
+        assert (result / "README.md").exists()
+
+    def test_futures_doc_hierarchy(self, tmp_path: Path):
+        """Futures doc tasks should create docs/futures/ hierarchy."""
+        ws_root = tmp_path / "workspace"
+        result = find_or_create_project_dir(ws_root, "期货合约 Binance OKX XAUUSD timeseries")
+        assert "docs" in result.parts
+        assert "futures" in result.parts

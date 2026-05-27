@@ -247,16 +247,33 @@ def switch_to_project_workspace(task_description: str) -> Path:
         task_description=task_description,
     )
 
-    _WORKSPACE_ROOT = project_dir
+    # In self-doc mode, do NOT update _WORKSPACE_ROOT — the agent must
+    # remain rooted at the repo so docs/xxx.md resolves correctly.
+    if not _SELF_DOC_MODE:
+        _WORKSPACE_ROOT = project_dir
     protected = _resolve_protected_paths_for_mode(project_dir)
     # In self-doc mode, .md files in protected areas should still be writable
     write_ext = (".md",) if _SELF_DOC_MODE else ()
     # In self-dev mode, guard root should remain repo root so agent/ etc.
-    # remain writable; in other modes guard root is the project dir.
-    # In both modes, resolve_root should be the project dir so relative
-    # paths (like write_file("data.csv")) land in the project folder.
-    guard_root = _QUANORA_REPO_ROOT if _SELF_DEV_MODE else project_dir
-    resolve_root = project_dir if _SELF_DEV_MODE else None
+    # remain writable; resolve_root is the project dir so relative paths
+    # (like write_file("data.csv")) land in the project folder.
+    # In self-doc mode, both guard_root and resolve_root should remain repo
+    # root — the whole point of self-doc is to write into docs/ under the
+    # repo, NOT to switch into an empty project sub-directory.  Previously
+    # self-doc mistakenly set guard_root=project_dir (a new empty dir) and
+    # resolve_root=None, causing .md writes to land in the empty dir instead
+    # of the real docs/ tree.
+    if _SELF_DEV_MODE:
+        guard_root = _QUANORA_REPO_ROOT
+        resolve_root = project_dir
+    elif _SELF_DOC_MODE:
+        # self-doc: keep repo root for both guard and resolve so docs/xxx.md
+        # resolves correctly.  project_dir is only used for metadata tracking.
+        guard_root = _QUANORA_REPO_ROOT
+        resolve_root = _QUANORA_REPO_ROOT
+    else:
+        guard_root = project_dir
+        resolve_root = None
     _WORKSPACE_GUARD = WorkspaceGuard(
         WorkspaceConfig(
             root=guard_root,
@@ -267,7 +284,9 @@ def switch_to_project_workspace(task_description: str) -> Path:
         )
     )
     # 同步 Config 类属性，使 runtime 等模块读取时拿到新值
-    Config.WORKSPACE_ROOT = project_dir
+    # In self-doc mode, keep Config.WORKSPACE_ROOT at repo root
+    if not _SELF_DOC_MODE:
+        Config.WORKSPACE_ROOT = project_dir
     return project_dir
 
 
@@ -317,6 +336,7 @@ def enable_self_doc_mode() -> WorkspaceGuard:
     global _SELF_DOC_MODE, _WORKSPACE_GUARD, _WORKSPACE_ROOT
     _SELF_DOC_MODE = True
     _WORKSPACE_ROOT = _QUANORA_REPO_ROOT
+    Config.WORKSPACE_ROOT = _QUANORA_REPO_ROOT
 
     # Protect the entire Quanora repo tree. .md files will be exempted
     # via protected_write_extensions, but .git and .env are fully
@@ -371,6 +391,7 @@ def disable_self_doc_mode() -> WorkspaceGuard:
     global _SELF_DOC_MODE, _WORKSPACE_GUARD, _WORKSPACE_ROOT
     _SELF_DOC_MODE = False
     _WORKSPACE_ROOT = _WORKSPACE_BASE
+    Config.WORKSPACE_ROOT = _WORKSPACE_BASE
     _WORKSPACE_GUARD = WorkspaceGuard(
         WorkspaceConfig(
             root=_WORKSPACE_ROOT,
