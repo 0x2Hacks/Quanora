@@ -1,25 +1,42 @@
 """配置模块"""
-import os
-from dotenv import load_dotenv
 from openai import OpenAI, AsyncOpenAI
 
-load_dotenv()
+from .settings_loader import AppSettings, load_settings
+
+
+_SETTINGS = load_settings()
 
 
 class Config:
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    OPENAI_API_BASE = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
-    OPENAI_USER_AGENT = os.getenv("OPENAI_USER_AGENT", "codex_cli_rs/0.0.0").strip()
-    DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-4o-mini")
-    MODEL_REASONING_EFFORT = os.getenv("MODEL_REASONING_EFFORT", "").strip()
-    TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
-    MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2000"))
+    SETTINGS: AppSettings = _SETTINGS
+    SETTINGS_PATH = str(_SETTINGS.settings_path)
+    SETTINGS_EXISTS = _SETTINGS.settings_exists
+    OPENAI_API_KEY = _SETTINGS.api_key
+    OPENAI_API_BASE = _SETTINGS.base_url
+    OPENAI_USER_AGENT = _SETTINGS.user_agent
+    DEFAULT_MODEL = _SETTINGS.model
+    MODEL_REASONING_EFFORT = _SETTINGS.reasoning_effort
+    TEMPERATURE = 0.7
+    MAX_TOKENS = 2000
 
     @classmethod
     def validate(cls):
         if not cls.OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY is required")
+            raise ValueError(f"OpenAI apiKey is required. Create {cls.SETTINGS_PATH} or set OPENAI_API_KEY.")
         return True
+
+    @classmethod
+    def reload(cls) -> AppSettings:
+        settings = load_settings()
+        cls.SETTINGS = settings
+        cls.SETTINGS_PATH = str(settings.settings_path)
+        cls.SETTINGS_EXISTS = settings.settings_exists
+        cls.OPENAI_API_KEY = settings.api_key
+        cls.OPENAI_API_BASE = settings.base_url
+        cls.OPENAI_USER_AGENT = settings.user_agent
+        cls.DEFAULT_MODEL = settings.model
+        cls.MODEL_REASONING_EFFORT = settings.reasoning_effort
+        return settings
 
     @classmethod
     def get_client(cls) -> OpenAI:

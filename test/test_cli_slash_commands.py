@@ -14,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from agent.interfaces.cli.chat_cli import ChatCLI
 from agent.interfaces.cli.commands import SlashCommandContext, SlashCommandRouter
+from agent.infrastructure.config import Config
 
 
 class FakeSession:
@@ -77,11 +78,18 @@ async def test_status_shows_session_model_debug_and_message_count() -> None:
 
 @pytest.mark.asyncio
 async def test_config_does_not_leak_api_key(monkeypatch) -> None:
-    monkeypatch.setenv("OPENAI_API_KEY", "secret-value")
+    monkeypatch.setattr(Config, "OPENAI_API_KEY", "secret-value")
+    monkeypatch.setattr(Config, "OPENAI_API_BASE", "https://example.com/v1")
+    monkeypatch.setattr(Config, "DEFAULT_MODEL", "test-model")
+    monkeypatch.setattr(Config, "MODEL_REASONING_EFFORT", "xhigh")
+    monkeypatch.setattr(Config, "SETTINGS_PATH", r"C:\Users\admin\.chainpeer\settings.json")
+    monkeypatch.setattr(Config, "SETTINGS_EXISTS", True)
 
     result = await SlashCommandRouter().execute("/config", _context())
 
-    assert "OPENAI_API_KEY: set" in result.text
+    assert "apiKey: set" in result.text
+    assert "baseUrl: https://example.com/v1" in result.text
+    assert "model: test-model" in result.text
     assert "secret-value" not in result.text
 
 

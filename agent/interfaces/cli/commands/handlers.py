@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Callable
 
@@ -100,18 +99,23 @@ async def handle_model(context: SlashCommandContext, args: list[str]) -> str:
 
 
 async def handle_login(context: SlashCommandContext, args: list[str]) -> str:
-    return "Login/config setup is not implemented yet.\nSet OPENAI_API_KEY in your environment or .env for now."
+    return "Login/config setup is not implemented yet.\nCreate settings.json under your user .chainpeer directory for now."
 
 
 async def handle_config(context: SlashCommandContext, args: list[str]) -> str:
-    api_key_state = "set" if os.getenv("OPENAI_API_KEY") else "unset"
-    api_base = os.getenv("OPENAI_API_BASE") or "unset"
+    from agent.infrastructure.config import Config
+
+    api_key_state = "set" if Config.OPENAI_API_KEY else "unset"
+    reasoning = Config.MODEL_REASONING_EFFORT or "unset"
+    settings_state = "found" if Config.SETTINGS_EXISTS else "missing"
     return "\n".join(
         [
             "Config:",
-            f"- OPENAI_API_KEY: {api_key_state}",
-            f"- OPENAI_API_BASE: {api_base}",
-            "Persistent config commands will be added later.",
+            f"- settings: {Config.SETTINGS_PATH} ({settings_state})",
+            f"- apiKey: {api_key_state}",
+            f"- baseUrl: {Config.OPENAI_API_BASE}",
+            f"- model: {Config.DEFAULT_MODEL}",
+            f"- reasoningEffort: {reasoning}",
         ]
     )
 
