@@ -26,6 +26,7 @@ from .web import fetch_web_page, search_web
 from .worldquant import (
     wq_build_generation_prompt,
     wq_crossover_alpha,
+    wq_data_review,
     wq_distill_insight,
     wq_evaluate_alpha,
     wq_list_data_fields,

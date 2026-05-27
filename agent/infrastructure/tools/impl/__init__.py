@@ -35,6 +35,7 @@ from .tools import (
     write_file,
     wq_build_generation_prompt,
     wq_crossover_alpha,
+    wq_data_review,
     wq_distill_insight,
     wq_evaluate_alpha,
     wq_list_data_fields,
@@ -94,6 +95,7 @@ TOOLS: dict[str, Callable] = {
     "wq_submit_alpha": wq_submit_alpha,
     "wq_mutate_alpha": wq_mutate_alpha,
     "wq_crossover_alpha": wq_crossover_alpha,
+    "wq_data_review": wq_data_review,
 }
 
 _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
@@ -387,6 +389,20 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
                 "description": "交叉策略",
                 "enum": ["wrap_b_in_a", "rank_pair", "add_pair", "corr_pair"],
             },
+        },
+    },
+    "wq_data_review": {
+        "description": (
+            "在 Alpha 研究开始前执行数据预审，输出数据综述供人确认。"
+            "检查指定研究方向所需的数据字段和算子是否可用，并结合"
+            "Experience Memory 的禁区/洞察给出风险标记和建议。"
+        ),
+        "param_descriptions": {
+            "direction_key": "DIRECTION_LIBRARY 中的方向 key（默认 reversal_short_term）",
+            "region": "市场区域（默认 USA）",
+            "universe": "股票池（默认 TOP3000）",
+            "delay": "数据延迟（默认 1）",
+            "check_online": "是否在线查询 Brain API 补充字段/算子信息（默认 False）",
         },
     },
     # ── Project Knowledge Cache ──────────────────────────────────────

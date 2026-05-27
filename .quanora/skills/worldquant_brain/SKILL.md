@@ -1,6 +1,6 @@
 ---
 name: worldquant_brain
-description: Autonomous WorldQuant Brain alpha mining via the Ralph Loop (Retrieve → Generate → Evaluate → Distill) on top of a persistent Experience Memory M = (S, P_succ, P_fail, I). Discovers, evaluates, and accumulates production-quality alpha factors over many iterations.
+description: Autonomous WorldQuant Brain alpha mining via the Ralph Loop (Data Review → Retrieve → Generate → Evaluate → Distill) on top of a persistent Experience Memory M = (S, P_succ, P_fail, I). Discovers, evaluates, and accumulates production-quality alpha factors over many iterations.
 triggers:
   - $worldquant_brain
   - $wq
@@ -27,14 +27,30 @@ M = (S, P_succ, P_fail, I)
 ## The Ralph Loop (one full iteration)
 
 ```
-┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│  RETRIEVE    │ → │   GENERATE   │ → │   EVALUATE   │ → │   DISTILL    │
-│  memory + KB │   │ alphas from  │   │  Stage 1-4   │   │ write lessons│
-│              │   │   M + KB     │   │ admit / drop │   │   to I       │
-└──────────────┘   └──────────────┘   └──────────────┘   └──────────────┘
-       ▲                                                          │
-       └──────────────────────── persist ◄────────────────────────┘
+┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│ DATA REVIEW  │ → │  RETRIEVE    │ → │   GENERATE   │ → │   EVALUATE   │ → │   DISTILL    │
+│ fields + ops │   │  memory + KB │   │ alphas from  │   │  Stage 1-4   │   │ write lessons│
+│ risk flags   │   │              │   │   M + KB     │   │ admit / drop │   │   to I       │
+└──────────────┘   └──────────────┘   └──────────────┘   └──────────────┘   └──────────────┘
+       ▲                                                                                  │
+       └──────────────────────────── persist ◄────────────────────────────────────────────┘
 ```
+
+### Step 0 — DATA REVIEW (数据预审，首次迭代必做)
+
+**Before starting any Ralph Loop iteration on a new direction**, run `wq_data_review(direction_key=..., region=..., universe=...)` to perform a data pre-review. This step:
+
+1. **Checks field availability**: Verifies that the direction's `key_fields` exist in `BUILTIN_FIELDS` (cached) or the Brain API (online).
+2. **Checks operator availability**: Verifies that `key_operators` are available.
+3. **Reviews Experience Memory**: Scans `P_fail` forbidden regions and strategic insights (`I`) for risks related to the chosen direction.
+4. **Outputs a human-readable report**: Markdown table of fields/operators with ✅/❌, risk flags with severity (🔴/🟡/🔵), and a recommendation: `PROCEED`, `CAUTION`, or `ABORT`.
+
+**Decision rules**:
+- `PROCEED` → Start the Ralph Loop normally.
+- `CAUTION` → Proceed but adjust the approach (e.g., avoid flagged operators, narrow the universe). Inform the user of the specific risks.
+- `ABORT` → Stop and suggest an alternative direction. Critical data fields or operators are missing.
+
+**This step is mandatory** before the first iteration of a new direction. For subsequent iterations in the same direction, a brief re-check is optional but recommended if Experience Memory has changed.
 
 ### Step 1 — RETRIEVE (always start here)
 
@@ -62,39 +78,34 @@ For **each** generated expression, call `wq_evaluate_alpha(expression=..., direc
 
 If `passed=True` and `admit_to_library=True`, the alpha is automatically appended to the local library AND its normalized template is added to `P_succ` with `hit_count` incremented. Failed evaluations are appended to `P_fail`.
 
-You may also drive a single simulation with `wq_simulate_alpha(...)` if you want to see raw metrics without the gating.
+You may also drive a single simulation with `wq_simulate_alpha(...)` if you want to see raw metrics without the gating pipeline.
 
-### Step 4 — DISTILL (the most important step!)
+### Step 4 — DISTILL
 
-After each batch of evaluations, **reflect** on what you learned and write 1-3 strategic insights to memory using `wq_distill_insight(insight=..., category=..., severity=..., tags=[direction_tag])`. Examples:
+After each batch, call `wq_distill_insight(insight=..., category=..., severity=..., tags=...)` to persist natural-language lessons. Focus on:
 
-- `wq_distill_insight("ts_rank with window > 60 frequently produces NaN clusters on TOP3000", category="operator", severity="warning", tags=["reversal_short_term"])`
-- `wq_distill_insight("Momentum signals decay sharply under INDUSTRY neutralization; try MARKET", category="regime", severity="info", tags=["momentum_mid_term"])`
-- `wq_distill_insight("Combining volume z-score with returns reversal beats either alone (sharpe +0.3)", category="general", severity="info", tags=["reversal_short_term"])`
+- What worked / what didn't (per category: operator, data_field, regime)
+- **Critical** insights that should prevent future wasted simulations (e.g. "ts_rank on windows > 60 produces NaN")
+- **Warning** insights about edge cases
+- **Info** insights about patterns worth remembering
 
-**This is the only step that makes the agent self-evolving.** Without distillation each iteration is independent; with distillation, memory `I` accumulates causal knowledge that the next `wq_build_generation_prompt` will inject back into the generation context.
+## Key parameters
 
-### Step 5 — REVIEW & SUBMIT (occasional)
+| Parameter | Default | Typical range | Notes |
+|-----------|---------|---------------|-------|
+| `min_sharpe` | 1.25 | 1.0–2.0 | Higher = fewer but stronger alphas |
+| `min_fitness` | 1.0 | 0.8–1.5 | Brain's composite quality score |
+| `max_turnover` | 0.7 | 0.3–0.8 | Lower = more stable positions |
+| `neutralization` | INDUSTRY | INDUSTRY / MARKET / SECTOR / NONE | INDUSTRY is safest default |
+| `truncation` | 0.08 | 0.05–0.10 | Tail clipping |
+| `decay` | 0 | 0–10 | Position decay |
 
-- `wq_list_library(min_sharpe=1.5, limit=20)` — inspect the local hall-of-fame
-- `wq_list_my_alphas(status="UNSUBMITTED", limit=10)` — see what Brain has waiting
-- `wq_submit_alpha(alpha_id="...")` — submit a hand-picked alpha to the Brain competition. **Beware of the daily quota**; only submit your highest-conviction candidates.
-
-## Operating principles
-
-1. **Memory-first.** Always start with `wq_memory_snapshot()`. Never generate without reading current `P_succ` and `P_fail`.
-2. **Diversify directions.** Don't camp on a single `direction_key` — rotate among `reversal_short_term`, `momentum_mid_term`, `volatility`, `volume`, `liquidity`, etc.
-3. **Distill aggressively.** Even one-line insights compound. After each iteration of 3-8 evaluations, write 1-3 insights.
-4. **Evolve winners.** If you find a high-Sharpe alpha, run `wq_mutate_alpha` on it to explore its parameter neighborhood; run `wq_crossover_alpha` against another winner to combine themes.
-5. **Stay under thresholds.** Default gates: `min_sharpe=1.25`, `min_fitness=1.0`, `max_turnover=0.7`. Don't relax these unless the user asks.
-6. **Use built-in knowledge first.** `wq_list_operators(use_cache=True)` and `wq_list_data_fields(use_cache=True)` are zero-network — prefer them. Only call with `use_cache=False` when you need a fresh online query.
-7. **Brain platform is the source of truth.** Local library is a cache; `wq_list_my_alphas` reflects what Brain actually has for the account.
-
-## Available tools (all `tool_ok`/`tool_error` payloads)
+## Tool catalogue
 
 | Step | Tool | When to call |
 |------|------|-------------|
 | auth | `wq_login` | Once per session, before any Brain-touching call |
+| review | `wq_data_review` | **Before first iteration of a new direction** — data pre-review |
 | retrieve | `wq_memory_snapshot` | At the start of every iteration |
 | retrieve | `wq_list_operators` | When you need an operator catalogue |
 | retrieve | `wq_list_data_fields` | When you need a data-field catalogue |
@@ -114,6 +125,16 @@ After each batch of evaluations, **reflect** on what you learned and write 1-3 s
 When this skill activates, your first response should be a short status check followed by a plan:
 
 1. Call `wq_login()` → `wq_memory_snapshot()` → `wq_list_directions()`.
-2. Report the current state: library size, top 3 `P_succ` templates by hit_count, top 3 `I`, available directions.
-3. Propose a concrete plan: which direction to attack next, how many alphas to generate, what evolution operators to apply.
-4. Ask the user for go/no-go before kicking off the loop, OR if the user already said "go", proceed straight to GENERATE.
+2. **Run `wq_data_review(direction_key=<chosen_direction>)`** to perform data pre-review. Report the recommendation (PROCEED/CAUTION/ABORT) to the user.
+3. Report the current state: library size, top 3 `P_succ` templates by hit_count, top 3 `I`, available directions.
+4. Propose a concrete plan: which direction to attack next, how many alphas to generate, what evolution operators to apply.
+5. Ask the user for go/no-go before kicking off the loop, OR if the user already said "go", proceed straight to GENERATE.
+
+## Hard rules
+
+1. **Never submit without explicit user approval.** `wq_submit_alpha` is the only irreversible action. Always ask.
+2. **Never fabricate simulation results.** If Brain returns an error, report it. Do not make up sharpe/fitness numbers.
+3. **Never skip RETRIEVE.** Always call `wq_memory_snapshot()` at the start of each iteration — the memory may have changed since last time.
+4. **Never skip DATA REVIEW for new directions.** Always call `wq_data_review()` before the first iteration on a new direction. Data unavailability can waste hours of simulation time.
+5. **Respect the simulate rate limit.** Do not submit more than 5 alphas in parallel without checking Brain's rate limits.
+6. **When P_fail is hot, back off.** If 3+ consecutive evaluations fail with similar patterns, distill a critical insight and switch direction.
