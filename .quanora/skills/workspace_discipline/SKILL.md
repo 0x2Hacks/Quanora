@@ -1,11 +1,11 @@
 ---
 name: workspace_discipline
 description: >
-  Project workspace boundary discipline. Activates when the user asks you to
-  scaffold, create, organize, or refactor project files. Reminds you that
-  every file you write must land inside the workspace, NEVER in Quanora's own
-  source tree or arbitrary system paths. Also governs project directory naming
-  conventions to prevent duplicate/fragmented directories across sessions.
+  Project workspace boundary & directory convention discipline. Activates when
+  the user asks you to scaffold, create, organize, or refactor project files,
+  or whenever you need to decide whether/how to create a workspace directory.
+  Governs: (1) when to create workspace dirs, (2) project naming, (3) unified
+  sub-directory layout for quant/tool/doc projects, (4) output timestamping.
 triggers:
   - "$workspace"
   - "$workspace_discipline"
@@ -18,100 +18,230 @@ triggers:
   - "scaffold"
   - "create project"
   - "new project"
-  - "organize files"
-  - "重构目录"
 ---
 
-# Workspace Discipline
+# Workspace Directory Convention
 
-You are working on a USER'S PROJECT. Quanora itself is a tool — it is NOT the
-project. Three rules:
-
-1. **All writes land inside the workspace.** The runtime resolves relative paths
-   against the workspace root, not your CWD. If in doubt, use relative paths.
-
-2. **Never modify Quanora's own code** (unless in self-dev mode and explicitly
-   told to). The guard will reject writes to `agent/`, `main.py`, etc.
-
-3. **Never scatter files** into `/tmp`, `$HOME`, or outside the workspace.
+You MUST follow these rules every time you consider creating or organizing
+files under the `workspace/` directory. Violations produce fragmented,
+inconsistent directory trees that degrade over sessions.
 
 ---
 
-## Directory Naming Convention
+## 1. Decision Gate: Do I Need a Workspace Directory?
 
-When `find_or_create_project_dir` creates a project subdirectory under
-`workspace_root`, it follows a **type-prefixed naming convention** to ensure
-that similar projects from different sessions reuse the same directory:
-
-| Project Type | Prefix | Example Directory Name |
-|---|---|---|
-| WorldQuant Brain alpha mining | `wq-` | `wq-alpha-momentum`, `wq-alpha-reversal` |
-| Quantitative research | `quant-` | `quant-strategy-backtest`, `quant-factor-analysis` |
-| Data pipeline | `data-` | `data-market-etl`, `data-cleaning` |
-| Web application | `web-` | `web-dashboard`, `web-api-server` |
-| General / other | `proj-` | `proj-my-experiment`, `proj-docs` |
-
-### How it works
-
-1. **Type detection**: The system scans the task description for keywords
-   (e.g., "WorldQuant", "WQ", "alpha", "量化", "回测") and assigns a type.
-2. **Slug generation**: The project name is slugified (lowercase, hyphens, ASCII).
-3. **Prefix application**: The type prefix is prepended: `wq-alpha-mining`.
-4. **Fuzzy matching**: Before creating a new directory, existing directories
-   are checked using a composite score:
-   - Levenshtein similarity (40% weight)
-   - Semantic-normalized Levenshtein (30% — maps synonyms like "WQ" → "worldquant")
-   - Keyword overlap / Jaccard (30%)
-   - Same-type-prefix bonus (+0.1)
-   - Threshold ≥ 0.6 → reuse existing directory
-
-### What this means for you
-
-- **Don't create ad-hoc directories.** Always use `find_or_create_project_dir`
-  (called automatically by the session manager) to get the project directory.
-- **If you see two directories like `alpha-research` and `wq-alpha-research`**
-  in the same workspace, the latter is the canonical one (type-prefixed).
-- **Chinese descriptions work**: "量化策略回测" → `quant-quant-ce-lve-hui-ce`
-  (Chinese chars are stripped to ASCII; the prefix carries the meaning).
-- **Sessions with similar tasks will reuse the same directory**, preventing
-  directory sprawl.
-
----
-
-## Standard project layout
-
-Inside a project directory, follow this layout:
+Before creating ANY directory under `workspace/`, run this decision gate:
 
 ```
-<workspace>/<project-slug>/
-├── src/             # Source code
-├── tests/           # Tests
-├── scripts/         # Scripts (backtest, data download, etc.)
-├── data/            # Generated / downloaded data (gitignored)
-├── artifacts/       # Reports, figures, exports
-├── docs/            # Documentation
-├── results/         # Simulation results, logs
-└── README.md        # Project overview
+Does the task involve:
+  ├─ Reading/querying data only (no code to write)?        → ❌ NO directory needed
+  ├─ A quick bug-fix or param tweak (single file)?          → ❌ NO directory needed
+  ├─ Pure conversation / Q&A / explanation?                 → ❌ NO directory needed
+  └─ Any of the following?                                  → ✅ YES, create directory
+       ├─ Driven by a docs/*.md document (the md name = project name)
+       ├─ Writing strategy/signal/backtest code
+       ├─ Quantitative research or backtesting
+       ├─ Multi-file tool or script development
+       └─ Output artifacts (charts, reports, CSVs) to persist
 ```
 
-**Never** put files directly in the workspace root.
+**If NO → do NOT create a workspace directory.** Work in-memory or use
+temporary output. Mention results directly in the conversation.
 
-## Quick decision table
+**If YES → proceed to naming rules below.**
 
-| User says | Where does the file go? |
+---
+
+## 2. Project Directory Naming
+
+Format: `<type>-<name>`
+
+### 2.1 Type Prefix
+
+| Type    | When to Use                                    | Examples                      |
+|---------|------------------------------------------------|-------------------------------|
+| `quant` | Quantitative strategies, backtests, research    | `quant-xauusd-macd`, `quant-sp500-momentum` |
+| `tool`  | Utility scripts, data pipelines, infrastructure | `tool-data-downloader`, `tool-risk-monitor` |
+| `doc`   | Documentation-driven tasks (from docs/*.md)     | `doc-fx-trading-guide`, `doc-api-spec`      |
+
+### 2.2 Name Rules
+
+- **kebab-case** only: lowercase letters, digits, hyphens as separators.
+- **Concise & semantic**: max 4 hyphen-separated segments.
+- **docs/*.md driven tasks**: `name` = md filename without `.md` extension.
+  - Example: `docs/fx-trading-guide.md` → `workspace/doc-fx-trading-guide/`
+- **No session IDs, no counters, no "1-agent" style names.**
+- **No duplicate directories**: before creating, check if an existing
+  directory already covers the same scope. Reuse it.
+
+### 2.3 Examples
+
+| Task | Directory |
+|------|-----------|
+| XAUUSD MACD strategy backtest | `workspace/quant-xauusd-macd/` |
+| Data download utility | `workspace/tool-data-downloader/` |
+| Task from `docs/fx-trading-guide.md` | `workspace/doc-fx-trading-guide/` |
+
+---
+
+## 3. Unified Sub-Directory Layout
+
+### 3.1 Quant Projects (`quant-*`)
+
+```
+workspace/
+└── quant-<name>/
+    ├── src/                    # Strategy / signal / indicator source code
+    │   ├── strategy.py         #   Core strategy logic
+    │   ├── signal.py           #   Signal generation
+    │   └── indicators.py       #   Technical indicators
+    ├── scripts/                # Executable entry-points
+    │   ├── backtest.py         #   Backtest runner
+    │   └── download_data.py    #   Data acquisition
+    ├── output/                 # ALL generated outputs (backtest results, charts)
+    │   ├── 20260528_153000/    #   Timestamped backtest run
+    │   │   ├── results.json    #     Metrics & summary
+    │   │   ├── equity_curve.png
+    │   │   ├── trades.csv
+    │   │   └── log.txt
+    │   └── 20260529_090000/    #   Another run
+    │       └── ...
+    ├── data/                   # Local data files (if project-specific)
+    │   └── raw/                #   Raw downloaded data
+    ├── config/                 # Configuration & parameters
+    │   └── params.yaml
+    ├── notebooks/              # Jupyter notebooks (optional)
+    └── README.md               # Project description & usage
+```
+
+**Key rules for quant projects:**
+
+1. **`output/` is the ONLY place for backtest results.** Never put results
+   in `src/`, `scripts/`, or the project root.
+2. **Every backtest run creates a `YYYYMMDD_HHMMSS/` subdirectory.**
+   - Timestamp = the moment the backtest was *launched*, not completed.
+   - Format: zero-padded, 24h clock. Example: `20260528_153000`.
+3. **At minimum, each run directory contains `results.json`** with key
+   metrics (sharpe, return, drawdown, etc.) for easy programmatic comparison.
+4. **`src/` is for importable modules** (strategy, signal, indicators).
+   **`scripts/` is for CLI entry-points** that import from `src/`.
+
+### 3.2 Tool Projects (`tool-*`)
+
+```
+workspace/
+└── tool-<name>/
+    ├── src/                    # Core library code
+    ├── scripts/                # Executable scripts
+    ├── output/                 # Generated outputs (timestamped if applicable)
+    ├── config/                 # Configuration
+    └── README.md
+```
+
+### 3.3 Doc Projects (`doc-*`)
+
+```
+workspace/
+└── doc-<name>/
+    ├── src/                    # Document source / processing code
+    ├── output/                 # Generated artifacts
+    └── README.md
+```
+
+### 3.4 Minimal Project (any type)
+
+For very small tasks, you MAY omit optional directories. The **minimum
+viable structure** is:
+
+```
+workspace/
+└── <type>-<name>/
+    ├── src/                    # (or scripts/ — at least one must exist)
+    └── README.md
+```
+
+Never create a project directory with zero files. If you only need one
+script, put it under `scripts/` and add a brief `README.md`.
+
+---
+
+## 4. Output Timestamp Convention
+
+Applies to **all project types** whenever artifacts are generated:
+
+| Convention | Value |
 |---|---|
-| "create a quant strategy called momentum_50" | `<workspace>/quant-momentum-50/strategy/...` |
-| "WQ alpha research on reversal" | `<workspace>/wq-alpha-reversal/...` |
-| "add a backtest script" | `<workspace>/<existing-project>/scripts/backtest.py` |
-| "show me the data fields" | NO write — just `read_file` / `wq_list_data_fields` |
-| "fix the bug in agent/foo.py" | STOP — that's Quanora's own code, ask user |
-| "save the simulation result" | `<workspace>/<project>/results/<timestamp>.json` |
-| "make me a quick utility script" | `<workspace>/scripts/<name>.py` (NOT workspace root) |
+| Directory name | `YYYYMMDD_HHMMSS` |
+| Timezone | UTC (use `date -u +%Y%m%d_%H%M%S`) |
+| Contents | At least one file; never empty directories |
+| Metadata | Include `results.json` (quant) or `manifest.json` (other) for traceability |
 
-## What "inside the workspace" means concretely
+**Example `results.json` for quant:**
+```json
+{
+  "run_id": "20260528_153000",
+  "strategy": "macd_crossover",
+  "instrument": "XAUUSD",
+  "timeframe": "H1",
+  "period": {"start": "2024-01-01", "end": "2025-12-31"},
+  "metrics": {
+    "sharpe": 1.45,
+    "total_return": 0.23,
+    "max_drawdown": 0.08,
+    "win_rate": 0.56,
+    "total_trades": 342
+  },
+  "parameters": {
+    "fast_period": 12,
+    "slow_period": 26,
+    "signal_period": 9
+  }
+}
+```
 
-- `path = "foo/bar.py"` (relative) → `<workspace>/foo/bar.py` ✅
-- `path = "<workspace>/foo/bar.py"` (absolute under workspace) → ✅
-- `path = "/tmp/foo.py"` → ❌ outside
-- `path = "/home/user/webapp/agent/foo.py"` → ❌ protected (Quanora code)
-- `path = "../foo.py"` (escapes via `..`) → ❌ outside (resolved by guard)
+---
+
+## 5. Anti-Patterns (MUST Avoid)
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|---|---|---|
+| `workspace/1-agent/` | Opaque, no semantic meaning | Use `<type>-<name>` prefix |
+| `workspace/backtest/bt_1/` | Nested project-type directories | `workspace/quant-<name>/` |
+| `workspace/projects/proj_1_.../` | Counter-based naming | Use semantic kebab-case |
+| `workspace/quant-1-self-doc-...-2/` | Session counter suffix | Clean name, reuse existing |
+| Results in project root | Scattered, hard to compare | Always in `output/<timestamp>/` |
+| `workspace/docs/` | Conflicts with root `docs/` | Doc projects → `workspace/doc-<name>/` |
+| Empty directories | Clutter | Only create dirs when writing files |
+| Multiple dirs for same task | Fragmentation | Reuse existing project directory |
+
+---
+
+## 6. Pre-Flight Checklist
+
+Before creating any workspace directory, mentally (or explicitly) confirm:
+
+- [ ] Task passes the **Decision Gate** (Section 1) → YES
+- [ ] No existing directory already covers this scope → check `ls workspace/`
+- [ ] Name follows `<type>-<name>` convention (Section 2)
+- [ ] Sub-directories follow the unified layout (Section 3)
+- [ ] Any output will go into `output/YYYYMMDD_HHMMSS/` (Section 4)
+- [ ] No anti-patterns from Section 5
+
+---
+
+## 7. Migration Notes (Existing Messy Directories)
+
+When you encounter existing directories that violate this convention:
+
+1. **Do NOT auto-delete or auto-move them** without user confirmation.
+2. When working IN a messy directory, follow the new convention for any NEW
+   files you create (e.g., put new backtest results in `output/<timestamp>/`).
+3. If the user asks to clean up, propose a migration plan:
+   - Map old dir → new dir name
+   - List files to move
+   - Get explicit approval before executing
+
+---
+
+This skill is active whenever you consider creating, naming, or organizing
+files under `workspace/`. When in doubt, re-read Section 1 (Decision Gate).
