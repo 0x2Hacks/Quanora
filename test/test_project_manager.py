@@ -19,6 +19,8 @@ from agent.domain.project_manager import (
     find_or_create_project_dir,
     _detect_project_type,
     _normalize_semantic,
+    list_unused_dirs,
+    _DOC_ONLY_TYPES,
 )
 
 
@@ -341,3 +343,89 @@ class TestFindOrCreateProjectDir:
         result = find_or_create_project_dir(ws_root, "期货合约 Binance OKX XAUUSD timeseries")
         assert "docs" in result.parts
         assert "futures" in result.parts
+
+
+# ---------------------------------------------------------------------------
+# _DOC_ONLY_TYPES gate
+# ---------------------------------------------------------------------------
+
+
+class TestDocOnlyTypes:
+    """Doc-only project types should NOT create skeleton sub-directories."""
+
+    def test_doc_only_no_skeleton(self, tmp_path: Path):
+        """quant_md_fx should create root dir but NOT data/ or output/."""
+        ws_root = tmp_path / "workspace"
+        result = find_or_create_project_dir(ws_root, "FX EUR/USD 日线分析")
+        assert result.is_dir()
+        # No data/ or output/ sub-directories should exist
+        subdirs = [p.name for p in result.iterdir() if p.is_dir()]
+        assert "data" not in subdirs
+        assert "output" not in subdirs
+
+    def test_code_type_has_skeleton(self, tmp_path: Path):
+        """quant_backtest should still create skeleton sub-directories."""
+        ws_root = tmp_path / "workspace"
+        result = find_or_create_project_dir(ws_root, "MACD 策略回测")
+        assert result.is_dir()
+        subdirs = [p.name for p in result.iterdir() if p.is_dir()]
+        assert "data" in subdirs
+        assert "src" in subdirs
+        assert "output" in subdirs
+
+    def test_quant_research_no_skeleton(self, tmp_path: Path):
+        """quant_research should create root dir only."""
+        ws_root = tmp_path / "workspace"
+        result = find_or_create_project_dir(ws_root, "统计套利研究笔记")
+        assert result.is_dir()
+        subdirs = [p.name for p in result.iterdir() if p.is_dir()]
+        assert "data" not in subdirs
+        assert "output" not in subdirs
+
+
+# ---------------------------------------------------------------------------
+# list_unused_dirs
+# ---------------------------------------------------------------------------
+
+
+class TestListUnusedDirs:
+    """Test the auto-cleanup scanner for unused/skeleton-only directories."""
+
+    def test_empty_dir_detected(self, tmp_path: Path):
+        """Empty directories should be flagged as unused."""
+        base = tmp_path / "workspace"
+        (base / "empty_project").mkdir(parents=True)
+        unused = list_unused_dirs(base)
+        assert base / "empty_project" in unused
+
+    def test_skeleton_only_detected(self, tmp_path: Path):
+        """Directories with only .gitkeep and README.md should be flagged."""
+        base = tmp_path / "workspace"
+        proj = base / "skeleton_project"
+        proj.mkdir(parents=True)
+        (proj / ".gitkeep").touch()
+        (proj / "README.md").write_text("# Skeleton\n")
+        unused = list_unused_dirs(base)
+        assert proj in unused
+
+    def test_real_project_not_flagged(self, tmp_path: Path):
+        """Directories with real content should NOT be flagged."""
+        base = tmp_path / "workspace"
+        proj = base / "real_project"
+        proj.mkdir(parents=True)
+        (proj / "src").mkdir()
+        (proj / "src" / "main.py").write_text("print('hello')")
+        unused = list_unused_dirs(base)
+        assert proj not in unused
+
+    def test_nonexistent_base(self, tmp_path: Path):
+        """Non-existent base should return empty list."""
+        unused = list_unused_dirs(tmp_path / "no_such_dir")
+        assert unused == []
+
+    def test_hidden_dirs_skipped(self, tmp_path: Path):
+        """Hidden dirs (.quanora, .git) should be skipped."""
+        base = tmp_path / "workspace"
+        (base / ".quanora").mkdir(parents=True)
+        unused = list_unused_dirs(base)
+        assert base / ".quanora" not in unused

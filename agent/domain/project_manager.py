@@ -16,8 +16,11 @@
   映射到 category_path 层级，使同类项目自然聚合
 """
 
+import logging
 import re
 import unicodedata
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 
 
@@ -241,14 +244,22 @@ def _levenshtein(a: str, b: str) -> int:
 
 # 标准 project layout 子目录
 # 每种项目类型都有 data/ + output/ + docs/，但 src/ 只在代码类项目中创建
+# 文档类项目类型 — 这些类型只产出 Markdown / 文档，
+# 不需要 data/、output/、src/ 等子目录骨架。
+# 只创建项目根目录，由用户按需自建子目录。
+_DOC_ONLY_TYPES: set[str] = {
+    "quant_md_futures",
+    "quant_md_fx",
+    "quant_md_crypto",
+    "quant_research",   # 研究笔记，纯 Markdown
+}
+
+# 代码类项目类型的标准子目录骨架
+# 注意：DOC_ONLY_TYPES 中的类型不在此表内，不会创建任何子目录
 _SKELETON_DIRS_BY_TYPE: dict[str, list[str]] = {
     "wq_alpha": ["data", "output/report", "output/logs", "docs"],
-    "quant_md_futures": ["data", "output/report", "docs"],
-    "quant_md_fx": ["data", "output/report", "docs"],
-    "quant_md_crypto": ["data", "output/report", "docs"],
     "quant_signal": ["data", "src", "output/report", "output/logs", "docs"],
     "quant_backtest": ["data", "src", "output/report", "output/logs", "output/artifacts", "docs"],
-    "quant_research": ["data", "output/report", "output/artifacts", "docs"],
     "data_pipeline": ["data/raw", "data/processed", "src", "output/logs", "output/artifacts", "docs"],
     "web_app": ["src", "static", "templates", "output/logs", "docs"],
     "general": ["data", "src", "output", "docs"],
@@ -430,6 +441,65 @@ def find_or_create_project_dir(
     if best_match is not None and best_score >= threshold:
         return best_match.resolve()
 
-    # 3. 无匹配 → 创建新项目目录（含标准子目录结构）
-    _create_project_skeleton(exact_dir, type_id)
+    # 3. 无匹配 → 创建新项目目录
+    # 文档类项目只创建根目录，不创建子目录骨架
+    if type_id in _DOC_ONLY_TYPES:
+        exact_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(
+            "doc-only project, skipping skeleton: type=%s dir=%s",
+            type_id, exact_dir,
+        )
+    else:
+        _create_project_skeleton(exact_dir, type_id)
     return exact_dir.resolve()
+
+
+# ────────────────────────────────────────────
+# Workspace 清理：扫描空目录 / 未使用的项目
+# ────────────────────────────────────────────
+
+def list_unused_dirs(base: str | Path) -> list[Path]:
+    """扫描 base 下的空项目目录（只含 .gitkeep / README 的骨架目录）。
+
+    返回所有可安全删除的子目录列表。判断标准：
+    - 目录为空
+    - 目录仅包含 .gitkeep 和/或 README.md
+
+    Parameters
+    ----------
+    base : str | Path
+        扫描根目录（如 workspace/ 或 projects/）
+
+    Returns
+    -------
+    list[Path]
+        可安全删除的目录路径
+    """
+    base = Path(base)
+    if not base.is_dir():
+        return []
+
+    unused: list[Path] = []
+    for child in sorted(base.iterdir()):
+        if not child.is_dir():
+            continue
+        # 跳过隐藏目录 (.quanora, .git 等)
+        if child.name.startswith("."):
+            continue
+        # 递归检查子目录树
+        files = [f for f in child.rglob("*") if f.is_file()]
+        # 只保留非隐藏文件
+        visible = [f for f in files if not f.name.startswith(".")]
+        # 如果没有可见文件 → 空目录
+        if not visible:
+            unused.append(child)
+            continue
+        # 如果仅有 .gitkeep 和/或 README.md → 骨架目录
+        non_skeleton = [
+            f for f in visible
+            if f.name not in {".gitkeep", "README.md"}
+        ]
+        if not non_skeleton:
+            unused.append(child)
+
+    return unused

@@ -86,19 +86,60 @@ Format: `<type>-<name>`
 
 ## 3. Unified Sub-Directory Layout
 
-### 3.1 Quant Projects (`quant-*`)
+The project manager (`agent/domain/project_manager.py`) distinguishes two
+categories: **Doc-Only** and **Code** types. Doc-only types skip skeleton
+creation entirely; code types get auto-created sub-directories.
 
+### 3.1 Doc-Only Types (no skeleton sub-directories)
+
+These types produce **Markdown / documentation only**. When creating a
+doc-only project, create the root directory but do NOT create `data/`,
+`output/`, `src/` or any other sub-directory. The user will add files as
+needed.
+
+**Doc-only types** (defined in `_DOC_ONLY_TYPES` in project_manager.py):
+
+| type_id | Description |
+|---|---|
+| `quant_md_futures` | Futures market research notes |
+| `quant_md_fx` | FX market research notes |
+| `quant_md_crypto` | Crypto market research notes |
+| `quant_research` | General quant research notes |
+
+Layout:
 ```
 workspace/
-└── quant-<name>/
-    ├── src/                    # Strategy / signal / indicator source code
+└── <type>-<name>/
+    ├── research_notes.md       # Added by user on demand
+    └── ...                     # No auto-created sub-dirs
+```
+
+### 3.2 Code Types (standard skeleton)
+
+These types require code, data, and output directories. The project
+manager auto-creates a standard skeleton on first use.
+
+| type_id | Skeleton sub-directories |
+|---|---|
+| `wq_alpha` | `data/`, `output/report/`, `output/logs/`, `docs/` |
+| `quant_signal` | `data/`, `src/`, `output/report/`, `output/logs/`, `docs/` |
+| `quant_backtest` | `data/`, `src/`, `output/report/`, `output/logs/`, `output/artifacts/`, `docs/` |
+| `data_pipeline` | `data/raw/`, `data/processed/`, `src/`, `output/logs/`, `output/artifacts/`, `docs/` |
+| `web_app` | `src/`, `static/`, `templates/`, `output/logs/`, `docs/` |
+| `general` | `data/`, `src/`, `output/`, `docs/` |
+
+Example (`quant_backtest`):
+```
+workspace/
+└── quant-backtest-macd-strategy/
+    ├── src/                     # Strategy / signal / indicator source code
     │   ├── strategy.py         #   Core strategy logic
     │   ├── signal.py           #   Signal generation
     │   └── indicators.py       #   Technical indicators
     ├── scripts/                # Executable entry-points
     │   ├── backtest.py         #   Backtest runner
     │   └── download_data.py    #   Data acquisition
-    ├── output/                 # ALL generated outputs (backtest results, charts)
+    ├── output/                 # ALL generated outputs
     │   ├── 20260528_153000/    #   Timestamped backtest run
     │   │   ├── results.json    #     Metrics & summary
     │   │   ├── equity_curve.png
@@ -106,15 +147,28 @@ workspace/
     │   │   └── log.txt
     │   └── 20260529_090000/    #   Another run
     │       └── ...
-    ├── data/                   # Local data files (if project-specific)
+    ├── data/                   # Local data files
     │   └── raw/                #   Raw downloaded data
-    ├── config/                 # Configuration & parameters
-    │   └── params.yaml
-    ├── notebooks/              # Jupyter notebooks (optional)
-    └── README.md               # Project description & usage
+    ├── docs/
+    └── README.md
 ```
 
-**Key rules for quant projects:**
+### 3.3 Minimal Project (code types only)
+
+For very small tasks, you MAY omit optional directories. The **minimum
+viable structure** for a code-type project is:
+
+```
+workspace/
+└── <type>-<name>/
+    ├── src/                     # At least one source file
+    └── README.md
+```
+
+Never create a project directory with zero files. If you only need one
+script, put it under `src/` and add a brief `README.md`.
+
+**Key rules for code-type projects:**
 
 1. **`output/` is the ONLY place for backtest results.** Never put results
    in `src/`, `scripts/`, or the project root.
@@ -125,43 +179,6 @@ workspace/
    metrics (sharpe, return, drawdown, etc.) for easy programmatic comparison.
 4. **`src/` is for importable modules** (strategy, signal, indicators).
    **`scripts/` is for CLI entry-points** that import from `src/`.
-
-### 3.2 Tool Projects (`tool-*`)
-
-```
-workspace/
-└── tool-<name>/
-    ├── src/                    # Core library code
-    ├── scripts/                # Executable scripts
-    ├── output/                 # Generated outputs (timestamped if applicable)
-    ├── config/                 # Configuration
-    └── README.md
-```
-
-### 3.3 Doc Projects (`doc-*`)
-
-```
-workspace/
-└── doc-<name>/
-    ├── src/                    # Document source / processing code
-    ├── output/                 # Generated artifacts
-    └── README.md
-```
-
-### 3.4 Minimal Project (any type)
-
-For very small tasks, you MAY omit optional directories. The **minimum
-viable structure** is:
-
-```
-workspace/
-└── <type>-<name>/
-    ├── src/                    # (or scripts/ — at least one must exist)
-    └── README.md
-```
-
-Never create a project directory with zero files. If you only need one
-script, put it under `scripts/` and add a brief `README.md`.
 
 ---
 
@@ -213,6 +230,7 @@ Applies to **all project types** whenever artifacts are generated:
 | `workspace/docs/` | Conflicts with root `docs/` | Doc projects → `workspace/doc-<name>/` |
 | Empty directories | Clutter | Only create dirs when writing files |
 | Multiple dirs for same task | Fragmentation | Reuse existing project directory |
+| Skeleton dirs for doc-only types | Unnecessary clutter (data/, output/ for markdown) | Doc-only types: only root dir, no sub-dirs |
 
 ---
 
@@ -245,3 +263,40 @@ When you encounter existing directories that violate this convention:
 
 This skill is active whenever you consider creating, naming, or organizing
 files under `workspace/`. When in doubt, re-read Section 1 (Decision Gate).
+
+---
+
+## 8. Auto-Cleanup: Removing Unused Directories
+
+The project manager provides `list_unused_dirs(base)` to scan a directory
+tree and identify **skeleton-only** or **empty** project directories that
+can be safely deleted.
+
+### What counts as "unused"
+
+A directory is considered unused (safe to delete) if:
+- It is **empty** (no visible files)
+- It contains only **`.gitkeep`** and/or **`README.md`** (skeleton files)
+
+### When to run cleanup
+
+- **Session start**: Before creating new projects, scan for stale ones.
+- **After project completion**: If a project produced no meaningful output,
+  consider it a candidate for cleanup.
+- **Periodic housekeeping**: When the user asks to tidy up, or when you
+  notice many empty directories in `workspace/`.
+
+### How to clean up
+
+1. Call `list_unused_dirs(workspace_root / "workspace")` to get candidates.
+2. Present the list to the user for confirmation.
+3. Delete confirmed directories using `find <dir> -type f -delete` then
+   `find <dir> -type d -empty -delete`.
+
+### Prevention
+
+- **Doc-only types** (`quant_md_*`, `quant_research`) no longer create
+  skeleton sub-directories — this prevents the most common source of empty
+  directory litter.
+- The project manager logs a warning when creating a doc-only project:
+  `"doc-only project, skipping skeleton"`.
