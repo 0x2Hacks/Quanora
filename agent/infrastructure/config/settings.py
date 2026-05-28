@@ -1,7 +1,7 @@
 """配置模块"""
 from openai import OpenAI, AsyncOpenAI
 
-from .settings_loader import AppSettings, load_settings
+from .settings_loader import AppSettings, ensure_user_settings_template, load_settings
 
 
 _SETTINGS = load_settings()
@@ -24,6 +24,10 @@ class Config:
         if not cls.OPENAI_API_KEY:
             raise ValueError(f"OpenAI apiKey is required. Create {cls.SETTINGS_PATH} or set OPENAI_API_KEY.")
         return True
+
+    @classmethod
+    def ensure_user_settings_template(cls):
+        return ensure_user_settings_template()
 
     @classmethod
     def reload(cls) -> AppSettings:

@@ -12,6 +12,12 @@ from typing import Any
 DEFAULT_MODEL = "gpt-4o-mini"
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_USER_AGENT = "codex_cli_rs/0.0.0"
+DEFAULT_SETTINGS_TEMPLATE = {
+    "model": "gpt-5.5",
+    "apiKey": "",
+    "baseUrl": "",
+    "reasoningEffort": "xhigh",
+}
 
 
 @dataclass(frozen=True)
@@ -45,6 +51,19 @@ def load_settings(path: str | Path | None = None) -> AppSettings:
         reasoning_effort=_configured_or_env(data, "reasoningEffort", "MODEL_REASONING_EFFORT"),
         user_agent=DEFAULT_USER_AGENT,
     )
+
+
+def ensure_user_settings_template() -> Path | None:
+    if os.getenv("CHAINPEER_SETTINGS_PATH", "").strip():
+        return None
+    settings_path = default_settings_path()
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    if not settings_path.exists():
+        settings_path.write_text(
+            json.dumps(DEFAULT_SETTINGS_TEMPLATE, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    return settings_path
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:

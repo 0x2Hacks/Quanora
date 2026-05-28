@@ -1,8 +1,11 @@
 import json
-import pytest
-import subprocess
-from unittest.mock import MagicMock
+import asyncio
 from agent.infrastructure.tools.impl.tools.bash import bash, _RUNNER
+
+
+def run(coro):
+    return asyncio.run(coro)
+
 
 def test_bash_truncation_large_output(monkeypatch):
     """
@@ -10,7 +13,7 @@ def test_bash_truncation_large_output(monkeypatch):
     Simulate a bash command outputting 50,000 characters and assert it truncates correctly without OOM.
     """
     # 模拟一个疯狂输出日志的命令
-    res = bash("python -c \"print('A' * 50000)\"")
+    res = run(bash("python -c \"print('A' * 50000)\""))
     parsed = json.loads(res)
     
     assert parsed["ok"] is True
@@ -37,7 +40,7 @@ def test_bash_timeout(monkeypatch):
     
     try:
         # Sleep for 3 seconds, which exceeds the 1 second timeout
-        res = bash("python -c \"import time; time.sleep(3)\"")
+        res = run(bash("python -c \"import time; time.sleep(3)\""))
         parsed = json.loads(res)
         
         assert parsed["ok"] is True

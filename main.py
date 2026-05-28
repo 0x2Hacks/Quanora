@@ -1,10 +1,10 @@
-from agent.basic_agent import BasicAgent
-from agent.infrastructure.config import Config
 from agent.version import __version__
 import argparse
 import os
+import sys
 
-if __name__ == "__main__":
+
+def main() -> int:
     parser = argparse.ArgumentParser(description="Basic Agent CLI")
     parser.add_argument("--version", action="version", version=f"chainpeer {__version__}")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode (non-streaming output)")
@@ -14,7 +14,17 @@ if __name__ == "__main__":
     parser.add_argument("--session-dir", type=str, default=None, help="Session storage directory")
     args = parser.parse_args()
 
-    Config.validate()
+    from agent.basic_agent import BasicAgent
+    from agent.infrastructure.config import Config
+
+    try:
+        Config.ensure_user_settings_template()
+        Config.reload()
+        Config.validate()
+    except ValueError as exc:
+        print(f"Configuration error: {exc}", file=sys.stderr)
+        return 1
+
     if args.allow_unsafe_bash:
         os.environ["AGENT_ALLOW_UNSAFE_BASH"] = "1"
     agent = BasicAgent(
@@ -24,3 +34,8 @@ if __name__ == "__main__":
         resume_latest=args.resume_latest,
     )
     agent.chat()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

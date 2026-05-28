@@ -1,5 +1,6 @@
 import unittest
 import json
+import asyncio
 
 from agent.infrastructure.tools.impl.tools.bash import bash
 
@@ -10,7 +11,7 @@ class TestBashJobCancel(unittest.TestCase):
     # Here we just verify that bash doesn't crash with the new parameters.
     
     def test_bash_runs_with_new_signature(self):
-        res = bash("echo 'testing bash'", session_id="test_session")
+        res = asyncio.run(bash("echo 'testing bash'", session_id="test_session"))
         parsed = json.loads(res)
         self.assertTrue(parsed["ok"])
         self.assertIn("testing bash", parsed["data"]["stdout"])

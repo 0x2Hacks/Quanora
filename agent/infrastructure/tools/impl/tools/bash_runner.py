@@ -54,23 +54,39 @@ class BashRunner:
                 state.cwd = new_path
                 return ToolExecutionResult(
                     status="ok",
-                    result_str=tool_ok("bash", {"stdout": f"Changed directory to: {state.cwd}", "stderr": "", "exit_code": 0, "cwd": state.cwd})
+                    result_str=tool_ok("bash", {
+                        "stdout": f"Changed directory to: {state.cwd}",
+                        "stderr": "",
+                        "exit_code": 0,
+                        "cwd": state.cwd,
+                        "shell_backend": state.shell_backend,
+                        "shell_executable": state.shell_executable,
+                    })
                 )
             else:
                 return ToolExecutionResult(
                     status="ok",
-                    result_str=tool_ok("bash", {"stdout": "", "stderr": f"cd: no such file or directory: {target_dir}", "exit_code": 1, "cwd": state.cwd})
+                    result_str=tool_ok("bash", {
+                        "stdout": "",
+                        "stderr": f"cd: no such file or directory: {target_dir}",
+                        "exit_code": 1,
+                        "cwd": state.cwd,
+                        "shell_backend": state.shell_backend,
+                        "shell_executable": state.shell_executable,
+                    })
                 )
         return None
 
     def _build_shell_cmd(self, command: str, state: ShellState) -> list[str]:
+        if not state.shell_executable:
+            raise RuntimeError(state.shell_error or "Shell executable is not configured.")
         shell_cmd = [state.shell_executable]
-        if "bash" in state.shell_executable.lower():
+        if state.shell_backend == "powershell":
+            shell_cmd.extend(["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command])
+        elif "bash" in state.shell_executable.lower():
             shell_cmd.extend(["-c", command])
-        elif "powershell" in state.shell_executable.lower():
-            shell_cmd.extend(["-Command", command])
         else:
-            shell_cmd.extend(["/c", command])
+            shell_cmd.extend(["-c", command])
         return shell_cmd
 
     def _build_output(self, head: list[str], tail: deque, total_len: int) -> str:
@@ -120,9 +136,8 @@ class BashRunner:
         if cd_result:
             return cd_result
 
-        shell_cmd = self._build_shell_cmd(command, state)
-
         try:
+            shell_cmd = self._build_shell_cmd(command, state)
             process = await asyncio.create_subprocess_exec(
                 *shell_cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -193,6 +208,8 @@ class BashRunner:
                     "stderr": stderr_final.strip(),
                     "exit_code": process.returncode if process.returncode is not None else -1,
                     "cwd": state.cwd,
+                    "shell_backend": state.shell_backend,
+                    "shell_executable": state.shell_executable,
                 }),
                 exit_code=process.returncode if process.returncode is not None else -1,
             )
@@ -210,9 +227,8 @@ class BashRunner:
 
     async def run_background(self, command: str, state: ShellState, session_id: str = "default") -> ToolExecutionResult:
         """Spawn a process and return immediately with a bg_id."""
-        shell_cmd = self._build_shell_cmd(command, state)
-
         try:
+            shell_cmd = self._build_shell_cmd(command, state)
             process = await asyncio.create_subprocess_exec(
                 *shell_cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -241,6 +257,8 @@ class BashRunner:
                     "status": "running",
                     "message": f"Background process started: {command[:200]}",
                     "cwd": state.cwd,
+                    "shell_backend": state.shell_backend,
+                    "shell_executable": state.shell_executable,
                 }),
             )
         except Exception as e:

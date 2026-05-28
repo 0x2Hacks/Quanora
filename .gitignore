@@ -4,11 +4,16 @@ __pycache__/
 *$py.class
 venv/
 env/
+.venv-build/
 .env
 
 # Project specific
 .chainpeer/
 sessions/
+build/
+dist/
+release/
+packaging/vendor/
 
 # Testing & Cache
 .pytest_cache/

@@ -9,6 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from agent.infrastructure.config.settings_loader import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
+    ensure_user_settings_template,
     load_settings,
 )
 
@@ -75,3 +76,24 @@ def test_load_settings_empty_reasoning_effort_does_not_fallback_to_env(tmp_path,
     settings = load_settings(path)
 
     assert settings.reasoning_effort == ""
+
+
+def test_ensure_user_settings_template_creates_neutral_template(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("CHAINPEER_SETTINGS_PATH", raising=False)
+
+    path = ensure_user_settings_template()
+
+    assert path == tmp_path / ".chainpeer" / "settings.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["apiKey"] == ""
+    assert data["baseUrl"] == ""
+    assert data["reasoningEffort"] == "xhigh"
+
+
+def test_ensure_user_settings_template_skips_custom_settings_path(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHAINPEER_SETTINGS_PATH", str(tmp_path / "custom.json"))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    assert ensure_user_settings_template() is None
+    assert not (tmp_path / ".chainpeer").exists()
