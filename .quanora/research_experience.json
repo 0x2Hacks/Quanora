@@ -1,0 +1,61 @@
+{
+  "project_id": "spec_xauusd_timeseries_signal_backtest_spec_md_backtest",
+  "version": 1,
+  "records": [
+    {
+      "id": "re_19c7373e1a7d",
+      "project_id": "spec_xauusd_timeseries_signal_backtest_spec_md_backtest",
+      "strategy_name": "macd_histogram_flip",
+      "strategy_category": "momentum",
+      "expression": "MACD(12,26,9) histogram flip + zero-line filter + ADX(14)>20 + ATR(14) anomaly filter",
+      "parameters": {
+        "fast": 12,
+        "slow": 26,
+        "signal": 9,
+        "sl_atr_mult": 2.0,
+        "tp_atr_mult": 3.0,
+        "adx_min": 20,
+        "cooldown_bars": 12
+      },
+      "instrument": "XAUUSD",
+      "universe": "",
+      "region": "",
+      "timeframe": "M5",
+      "date_range": "2024-05-01~2026-04-30",
+      "market_regime": "high_volatility",
+      "outcome": "failure",
+      "performance": {
+        "sharpe": -0.511,
+        "max_drawdown": -2.0597,
+        "total_return": -2.0575,
+        "win_rate": 0.389,
+        "total_trades": 1303
+      },
+      "what_worked": "Infrastructure works correctly - engine, data loading, visualization all function. Long trades (41.6% win rate) performed better than short (35.8%). Session filter reduced signals by ~40%.",
+      "what_failed": "Default MACD 12/26/9 on M5 produces too many histogram flips. Stop-loss at ATR×2 triggers too frequently. Zero-line and ADX filters insufficient to screen noise.",
+      "key_insight": "MACD histogram flip on M5 generates too many signals (~54/month) with default 12/26/9 params. ATR×2 SL is too tight for M5, causing frequent stop-outs. Need larger cooldown period and stronger trend filters.",
+      "pitfalls": [
+        "M5 MACD histogram flip too noisy",
+        "ATR×2 SL too tight for XAUUSD M5 volatility",
+        "Cooldown 12 bars (1hr) insufficient to prevent overtrading",
+        "Zero-line filter alone insufficient for noise reduction"
+      ],
+      "next_steps": [
+        "Increase cooldown from 12 to 48+ bars",
+        "Increase SL to ATR×3 or ATR×4",
+        "Add trend_strength_min threshold for histogram",
+        "Consider using MACD crossover (MACD line crosses signal line) instead of histogram flip",
+        "Test with H1 timeframe instead of M5"
+      ],
+      "source_session_id": "",
+      "source_turn_id": "",
+      "tags": [
+        "xauusd",
+        "macd",
+        "histogram_flip",
+        "m5"
+      ],
+      "created_at": 1779951507.0446224
+    }
+  ]
+}

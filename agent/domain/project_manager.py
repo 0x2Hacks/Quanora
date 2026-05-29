@@ -2,93 +2,95 @@
 
 负责：
 1. 从用户任务描述 / MD 文件 / 项目名提取项目标识
-2. 在 workspace_root 下按项目建子目录（层级结构）
+2. 在 workspace_root 下按项目建子目录（扁平结构）
 3. 新任务启动时自动模糊匹配已有项目目录（keyword + levenshtein）
    找到则复用该目录而非新建
 
 设计原则：
 - 每个项目在 workspace_root 下有一个独立子目录
-- 目录采用层级结构：category/subcategory/slug
-  （如 docs/futures/xauusd_timeseries_spec, alpha/wq/mean_reversion_v2）
-- slug 使用下划线风格（snake_case），层级目录也使用下划线
+- 目录采用扁平结构：workspace_root/slug（无中间类型层级）
+  （如 tokenized-stock-funding, xauusd-timeseries-signal-backtest）
+- slug 使用连字符风格（kebab-case），简洁直观
 - 支持模糊回溯已有项目（keyword match > levenshtein proximity）
-- 项目类型自动识别：根据任务描述中的关键词检测项目类型，
-  映射到 category_path 层级，使同类项目自然聚合
+- 项目类型仅用于决定骨架子目录结构，不参与目录层级
 """
 
+import logging
 import re
 import unicodedata
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 
 
 # ────────────────────────────────────────────
-# 项目类型识别 — 层级目录规范
+# 项目类型识别 — 骨架目录规范
 # ────────────────────────────────────────────
 
-# 项目类型 → (type_id, category_path, slug_prefix, keywords)
-# category_path: 在 workspace_root 下的层级路径（如 "alpha/wq", "docs/futures"）
-# slug_prefix: slug 生成时的可选前缀（仅当 slug 本身不含此前缀时追加）
+# 项目类型 → (type_id, skeleton_dirs, keywords)
+# type_id: 项目类型标识，决定创建哪些骨架子目录
+# skeleton_dirs: 该类型项目需要的子目录列表（相对于项目根目录）
 # 关键词按优先级排序，匹配到高优先级关键词即确定类型
-PROJECT_TYPE_RULES: list[tuple[str, str, str, list[str]]] = [
-    # (type_id, category_path, slug_prefix, keywords)
-    ("wq_alpha", "alpha/wq", "wq", [
+PROJECT_TYPE_RULES: list[tuple[str, list[str], list[str]]] = [
+    # (type_id, skeleton_dirs, keywords)
+    ("wq_alpha", ["src", "output", "data", "scripts", "docs"], [
         "worldquant", "brain", "wq", "alpha mining",
         "alpha 挖掘", "alpha表达式", "ralph loop",
     ]),
-    ("quant_md_futures", "docs/futures", "spec", [
+    ("quant_md_futures", ["src", "output", "data", "docs"], [
         "期货", "合约", "futures", "binance", "okx", "bybit",
         "永续", "perp", "perpetual", "交割",
     ]),
-    ("quant_md_fx", "docs/fx", "spec", [
+    ("quant_md_fx", ["src", "output", "data", "docs"], [
         "外汇", "forex", "fx", "currency", "货币",
         "xauusd", "eurusd", "gbpusd", "usdjpy",
     ]),
-    ("quant_md_crypto", "docs/crypto", "spec", [
+    ("quant_md_crypto", ["src", "output", "data", "docs"], [
         "加密", "crypto", "bitcoin", "btc", "eth",
         "defi", "链上", "on-chain",
     ]),
-    ("quant_signal", "alpha/signal", "sig", [
+    ("quant_signal", ["src", "output", "data", "scripts", "docs"], [
         "信号", "signal", "indicator", "指标",
         "因子", "factor", "特征", "feature",
     ]),
-    ("quant_backtest", "backtest", "bt", [
+    ("quant_backtest", ["src", "output", "data", "scripts", "docs"], [
         "量化", "quant", "backtest", "回测", "策略研究",
         "factor", "因子", "sharpe", "momentum", "mean_reversion",
     ]),
-    ("quant_research", "research", "rpt", [
+    ("quant_research", ["src", "output", "data", "docs"], [
         "研究", "research", "分析", "analysis",
         "调研", "investigation", "报告", "report",
     ]),
-    ("data_pipeline", "data", "pipe", [
+    ("data_pipeline", ["src", "output", "data", "scripts"], [
         "etl", "pipeline", "数据管道", "data pipeline",
         "数据清洗", "data cleaning", "ingest",
     ]),
-    ("web_app", "web", "app", [
+    ("web_app", ["src", "static", "templates", "tests"], [
         "webapp", "web app", "frontend", "backend",
         "api server", "网站", "dashboard",
     ]),
 ]
 
 
-def _detect_project_type(task_description: str) -> tuple[str, str, str]:
-    """检测项目类型，返回 (type_id, category_path, slug_prefix)。
+def _detect_project_type(task_description: str) -> tuple[str, list[str]]:
+    """检测项目类型，返回 (type_id, skeleton_dirs)。
 
-    category_path 是在 workspace_root 下的层级路径，如 "alpha/wq"，
-    使同类项目自然聚合在同一个目录树下。
+    type_id 用于日志和元数据记录；skeleton_dirs 决定创建哪些子目录。
+    项目类型不再参与目录层级或 slug 前缀。
 
     >>> _detect_project_type("WorldQuant Brain alpha mining")
-    ('wq_alpha', 'alpha/wq', 'wq')
+    ('wq_alpha', ['src', 'output', 'data', 'scripts', 'docs'])
     >>> _detect_project_type("量化策略回测")
-    ('quant_backtest', 'backtest', 'bt')
+    ('quant_backtest', ['src', 'output', 'data', 'scripts', 'docs'])
     >>> _detect_project_type("随便写个东西")
-    ('general', 'projects', 'proj')
+    ('general', ['src', 'output', 'data', 'docs'])
     """
     text_lower = task_description.lower()
-    for type_id, category_path, slug_prefix, keywords in PROJECT_TYPE_RULES:
+    for type_id, skeleton_dirs, keywords in PROJECT_TYPE_RULES:
         for kw in keywords:
             if kw in text_lower:
-                return type_id, category_path, slug_prefix
-    return "general", "projects", "proj"
+                return type_id, skeleton_dirs
+    return "general", ["src", "output", "data", "docs"]
 
 
 # ────────────────────────────────────────────
@@ -136,29 +138,55 @@ def _normalize_semantic(text: str) -> str:
     return result
 
 
-def _slugify(text: str) -> str:
-    """将自然语言文本转为 snake_case slug（用于目录名）。
+# Slug 最大长度（超过会被截断，保留最前面的完整单词）
+_MAX_SLUG_LEN = 60
 
-    使用下划线风格而非连字符，符合 Python 目录命名惯例。
+
+def _slugify(text: str) -> str:
+    """将自然语言文本转为 kebab-case slug（用于目录名）。
+
+    使用连字符风格，简洁直观，便于阅读和 shell 操作。
 
     >>> _slugify("我的量化策略项目")
-    'wo_de_liang_hua_ce_lve_xiang_mu'
+    'wo-de-liang-hua-ce-lve-xiang-mu'
     >>> _slugify("ChainPeer - Decentralized Consensus")
-    'chainpeer_decentralized_consensus'
+    'chainpeer-decentralized-consensus'
+    >>> _slugify("tokenized_stock_funding.md tokenized backtest")
+    'tokenized-stock-funding-backtest'
     """
     # Normalize unicode → ASCII equivalents where possible
     text = unicodedata.normalize("NFKD", text)
-    # Remove non-ASCII (pinyin transliteration is lossy; keep only ASCII)
-    text = text.encode("ascii", "ignore").decode("ascii")
+    # Replace non-ASCII characters with hyphen (to avoid merging words like
+    # "quant策略backtest" → "quantbacktest"; instead → "quant-backtest")
+    text = re.sub(r"[^\x00-\x7f]+", "-", text)
     # Lowercase
     text = text.lower()
-    # Replace non-alphanumeric with underscore
-    text = re.sub(r"[^a-z0-9]+", "_", text)
-    # Collapse consecutive underscores
-    text = re.sub(r"_{2,}", "_", text)
-    # Strip leading/trailing underscores
-    text = text.strip("_")
-    return text or "untitled"
+    # Remove common file extensions (.md, .txt, .py, .csv, .json, .yaml, .yml)
+    text = re.sub(r"\.(md|txt|py|csv|json|yaml|yml)\b", "", text)
+    # Replace non-alphanumeric with hyphen
+    text = re.sub(r"[^a-z0-9]+", "-", text)
+    # Collapse consecutive hyphens
+    text = re.sub(r"-{2,}", "-", text)
+    # Strip leading/trailing hyphens
+    text = text.strip("-")
+    # Remove duplicate words (e.g. "tokenized-stock-funding-tokenized-backtest"
+    # → "tokenized-stock-funding-backtest")
+    parts = text.split("-")
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for p in parts:
+        if p not in seen:
+            seen.add(p)
+            deduped.append(p)
+    text = "-".join(deduped)
+    # Truncate to max length, keeping complete words
+    if len(text) > _MAX_SLUG_LEN:
+        text = text[:_MAX_SLUG_LEN].rsplit("-", 1)[0]
+    # Fallback: if all characters were non-ASCII (e.g. pure Chinese),
+    # use the project type as the slug base
+    if not text:
+        return "untitled"
+    return text
 
 
 # ────────────────────────────────────────────
@@ -241,14 +269,22 @@ def _levenshtein(a: str, b: str) -> int:
 
 # 标准 project layout 子目录
 # 每种项目类型都有 data/ + output/ + docs/，但 src/ 只在代码类项目中创建
+# 文档类项目类型 — 这些类型只产出 Markdown / 文档，
+# 不需要 data/、output/、src/ 等子目录骨架。
+# 只创建项目根目录，由用户按需自建子目录。
+_DOC_ONLY_TYPES: set[str] = {
+    "quant_md_futures",
+    "quant_md_fx",
+    "quant_md_crypto",
+    "quant_research",   # 研究笔记，纯 Markdown
+}
+
+# 代码类项目类型的标准子目录骨架
+# 注意：DOC_ONLY_TYPES 中的类型不在此表内，不会创建任何子目录
 _SKELETON_DIRS_BY_TYPE: dict[str, list[str]] = {
     "wq_alpha": ["data", "output/report", "output/logs", "docs"],
-    "quant_md_futures": ["data", "output/report", "docs"],
-    "quant_md_fx": ["data", "output/report", "docs"],
-    "quant_md_crypto": ["data", "output/report", "docs"],
     "quant_signal": ["data", "src", "output/report", "output/logs", "docs"],
     "quant_backtest": ["data", "src", "output/report", "output/logs", "output/artifacts", "docs"],
-    "quant_research": ["data", "output/report", "output/artifacts", "docs"],
     "data_pipeline": ["data/raw", "data/processed", "src", "output/logs", "output/artifacts", "docs"],
     "web_app": ["src", "static", "templates", "output/logs", "docs"],
     "general": ["data", "src", "output", "docs"],
@@ -258,7 +294,7 @@ _SKELETON_DIRS_BY_TYPE: dict[str, list[str]] = {
 _README_TEMPLATE = """# {project_name}
 
 > Auto-created by Quanora Project Manager
-> Type: {type_id} | Category: {category_path}
+> Type: {type_id}
 
 ## Structure
 
@@ -270,16 +306,21 @@ _README_TEMPLATE = """# {project_name}
 """
 
 
-def _create_project_skeleton(project_dir: Path, type_id: str) -> None:
+def _create_project_skeleton(
+    project_dir: Path, type_id: str, skeleton_dirs: list[str] | None = None
+) -> None:
     """创建项目目录骨架，包含标准子目录和 README。
 
     :param project_dir: 项目目录绝对路径
-    :param type_id: 项目类型 ID
+    :param type_id: 项目类型 ID（仅用于 README 记录）
+    :param skeleton_dirs: 要创建的子目录列表；为 None 时从 _SKELETON_DIRS_BY_TYPE 获取
     """
     project_dir.mkdir(parents=True, exist_ok=True)
 
     # 创建标准子目录
-    subdirs = _SKELETON_DIRS_BY_TYPE.get(type_id, _SKELETON_DIRS_BY_TYPE["general"])
+    subdirs = skeleton_dirs or _SKELETON_DIRS_BY_TYPE.get(
+        type_id, _SKELETON_DIRS_BY_TYPE["general"]
+    )
     for subdir in subdirs:
         (project_dir / subdir).mkdir(parents=True, exist_ok=True)
 
@@ -288,7 +329,6 @@ def _create_project_skeleton(project_dir: Path, type_id: str) -> None:
     readme_content = _README_TEMPLATE.format(
         project_name=project_dir.name,
         type_id=type_id,
-        category_path=project_dir.parent.name,
         structure=structure_lines,
     )
     readme_path = project_dir / "README.md"
@@ -347,81 +387,57 @@ def find_or_create_project_dir(
     3. 若有 slug_prefix，将 base_slug 改为 {prefix}_{slug}（下划线风格）
     4. 项目目录 = workspace_root / category_path / project_slug
     5. 精确匹配 → 直接返回
-    6. 模糊匹配同 category_path 下的已有目录
+    6. 模糊匹配 workspace_root 下的已有目录
     7. 无匹配 → 创建新目录（含标准子目录结构）
 
-    目录层级示例：
+    目录结构示例（扁平，无中间层级）：
       workspace_root/
-        alpha/wq/mean_reversion_v2/
-        docs/futures/xauusd_timeseries_spec/
-        backtest/momentum_breakout_bt/
-        projects/my_random_project/
+        tokenized-stock-funding/
+        xauusd-timeseries-signal-backtest/
+        wq-alpha-mean-reversion/
+        my-random-project/
 
     :param workspace_root: 工作区根目录（如 ~/quanora-projects）
     :param task_description: 用户任务描述
     :param threshold: 模糊匹配阈值（0~1），默认 0.6
     :return: 项目子目录的绝对路径
     """
-    # 检测项目类型
-    type_id, category_path, slug_prefix = _detect_project_type(task_description)
+    # 检测项目类型（仅用于骨架目录和元数据，不参与目录层级）
+    type_id, skeleton_dirs = _detect_project_type(task_description)
 
-    # 提取项目名并 slugify（下划线风格）
+    # 提取项目名并 slugify（kebab-case 风格）
     project_name = extract_project_name(task_description)
-    base_slug = _slugify(project_name)
+    project_slug = _slugify(project_name)
 
-    # 加入类型前缀（避免前缀重复，如 "wq_wq_alpha" → "wq_alpha"）
-    # 也避免关键词和前缀语义重复，如 "wq_worldquant_alpha" → "wq_alpha"
-    if slug_prefix:
-        # Check if base_slug already starts with the prefix
-        if base_slug.startswith(slug_prefix + "_") or base_slug == slug_prefix:
-            project_slug = base_slug
-        else:
-            # Also check for semantic overlap: if the first "word" in base_slug
-            # overlaps with the prefix meaning, skip that word
-            words = base_slug.split("_")
-            # Prefix-to-keyword overlap map
-            _prefix_overlap = {
-                "wq": {"wq", "worldquant", "brain"},
-                "spec": {"spec", "futures", "fx", "crypto"},
-                "sig": {"sig", "signal", "indicator"},
-                "bt": {"bt", "backtest"},
-                "rpt": {"rpt", "research", "report"},
-                "pipe": {"pipe", "pipeline", "etl"},
-                "app": {"app", "webapp"},
-            }
-            overlap_words = _prefix_overlap.get(slug_prefix, set())
-            # Remove leading words that overlap with the prefix
-            while words and words[0] in overlap_words:
-                words.pop(0)
-            cleaned_slug = "_".join(words) if words else base_slug
-            project_slug = f"{slug_prefix}_{cleaned_slug}"
-    else:
-        project_slug = base_slug
+    # Fallback: if slug is "untitled" (e.g. pure Chinese with no ASCII words),
+    # use the type_id as the base slug, or extract any ASCII words from the
+    # full task_description
+    if project_slug == "untitled":
+        full_slug = _slugify(task_description)
+        if full_slug != "untitled":
+            project_slug = full_slug
+        elif type_id != "general":
+            project_slug = type_id.replace("_", "-")
 
-    # 层级目录：workspace_root / category_path / project_slug
-    category_dir = workspace_root / category_path
-    category_dir.mkdir(parents=True, exist_ok=True)
+    # 扁平目录：workspace_root / project_slug
+    workspace_root.mkdir(parents=True, exist_ok=True)
 
     # 1. 精确匹配
-    exact_dir = category_dir / project_slug
+    exact_dir = workspace_root / project_slug
     if exact_dir.is_dir():
         return exact_dir.resolve()
 
-    # 2. 模糊匹配同 category 下的已有项目目录
+    # 2. 模糊匹配 workspace_root 下的已有项目目录
     best_match: Path | None = None
     best_score: float = 0.0
 
-    for child in category_dir.iterdir():
+    for child in workspace_root.iterdir():
         if not child.is_dir():
             continue
         # 跳过隐藏目录
         if child.name.startswith("."):
             continue
         score = _fuzzy_match_score(project_slug, child.name)
-
-        # 同类型前缀加分：如果两个目录都有相同类型前缀，分数 +0.1
-        if slug_prefix and child.name.startswith(slug_prefix + "_"):
-            score = min(score + 0.1, 1.0)
 
         if score > best_score:
             best_score = score
@@ -430,6 +446,65 @@ def find_or_create_project_dir(
     if best_match is not None and best_score >= threshold:
         return best_match.resolve()
 
-    # 3. 无匹配 → 创建新项目目录（含标准子目录结构）
-    _create_project_skeleton(exact_dir, type_id)
+    # 3. 无匹配 → 创建新项目目录
+    # 文档类项目只创建根目录，不创建子目录骨架
+    if type_id in _DOC_ONLY_TYPES:
+        exact_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(
+            "doc-only project, skipping skeleton: type=%s dir=%s",
+            type_id, exact_dir,
+        )
+    else:
+        _create_project_skeleton(exact_dir, type_id, skeleton_dirs)
     return exact_dir.resolve()
+
+
+# ────────────────────────────────────────────
+# Workspace 清理：扫描空目录 / 未使用的项目
+# ────────────────────────────────────────────
+
+def list_unused_dirs(base: str | Path) -> list[Path]:
+    """扫描 base 下的空项目目录（只含 .gitkeep / README 的骨架目录）。
+
+    返回所有可安全删除的子目录列表。判断标准：
+    - 目录为空
+    - 目录仅包含 .gitkeep 和/或 README.md
+
+    Parameters
+    ----------
+    base : str | Path
+        扫描根目录（如 workspace/ 或 projects/）
+
+    Returns
+    -------
+    list[Path]
+        可安全删除的目录路径
+    """
+    base = Path(base)
+    if not base.is_dir():
+        return []
+
+    unused: list[Path] = []
+    for child in sorted(base.iterdir()):
+        if not child.is_dir():
+            continue
+        # 跳过隐藏目录 (.quanora, .git 等)
+        if child.name.startswith("."):
+            continue
+        # 递归检查子目录树
+        files = [f for f in child.rglob("*") if f.is_file()]
+        # 只保留非隐藏文件
+        visible = [f for f in files if not f.name.startswith(".")]
+        # 如果没有可见文件 → 空目录
+        if not visible:
+            unused.append(child)
+            continue
+        # 如果仅有 .gitkeep 和/或 README.md → 骨架目录
+        non_skeleton = [
+            f for f in visible
+            if f.name not in {".gitkeep", "README.md"}
+        ]
+        if not non_skeleton:
+            unused.append(child)
+
+    return unused

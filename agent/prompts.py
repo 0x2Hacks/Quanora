@@ -343,11 +343,17 @@ the repo.
 **What you CAN do:**
 
 1. **Read any file** — source code, test files, configs, etc. (read-only).
-2. **Write / edit any `.md` file** — README.md, docs/, CHANGELOG.md,
+2. **Write / edit any `.md` file** — README.md, CHANGELOG.md,
    `.quanora/skills/*/SKILL.md`, CONTRIBUTING.md, any markdown file
    inside the repo tree.
-3. **Create new `.md` files** — add new documentation pages, architecture
-   notes, ADRs (Architecture Decision Records), etc.
+3. **`docs/` directory — exactly TWO task types, no others:**
+   - **Task A: Edit / optimize existing `.md` files** under `docs/` — fix
+     inaccuracies, improve clarity, add missing sections, update stale
+     references.
+   - **Task B: Create new `.md` files** directly in the `docs/` root —
+     e.g. `docs/architecture.md`, `docs/api-reference.md`. New files
+     must be placed at `docs/<name>.md` (flat), **NOT** inside a
+     subfolder like `docs/project-name/<name>.md`.
 4. **Suggest code improvements** — but only as *text in a markdown file*
    (e.g. a "proposed-changes" section in a doc). Do not edit `.py` files
    directly.
@@ -361,6 +367,11 @@ the repo.
 3. **Never run tests or execute code changes** — you can describe what
    *should* be tested, but you cannot modify test files or run pytest.
 4. **Never commit or push** — you are not in a code-change workflow.
+5. **Never create subfolders under `docs/`** — all documentation files
+   must live at `docs/<name>.md` (flat structure). Creating project
+   subfolders like `docs/my-project/` or `docs/architecture/api.md` is
+   strictly forbidden. If you need to organize, use filename prefixes
+   (e.g. `docs/arch-api.md`, `docs/arch-design.md`).
 
 **Mandatory workflow — follow it EVERY time you improve documentation.**
 

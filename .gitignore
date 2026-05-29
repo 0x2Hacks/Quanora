@@ -45,3 +45,6 @@ backtest/
 research/
 data/
 web/
+
+# Quanora runtime cache
+.quanora/cache/
