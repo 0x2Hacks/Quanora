@@ -10,7 +10,9 @@ from .tools import (
     bash_output,
     edit_file,
     fetch_web_page,
+    generate_doc_html,
     generate_project_knowledge,
+    generate_ppt_html,
     get_research_summary,
     grep,
     kill_shell,
@@ -73,6 +75,8 @@ TOOLS: dict[str, Callable] = {
     "skill_create": skill_create,
     "search_web": search_web,
     "fetch_web_page": fetch_web_page,
+    "generate_doc_html": generate_doc_html,
+    "generate_ppt_html": generate_ppt_html,
     # Project Knowledge Cache
     "generate_project_knowledge": generate_project_knowledge,
     "load_project_knowledge": load_project_knowledge,
@@ -266,6 +270,34 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
     "fetch_web_page": {
         "description": "抓取并提取网页主要内容（自动去除导航、广告等干扰，输出Markdown）。通常在 search_web 返回 URL 后使用。",
         "param_descriptions": {"url": "网页 URL"},
+    },
+    # ──────────────────────────────────────────────────────────────────
+    # HTML PPT / Document Generation
+    # ──────────────────────────────────────────────────────────────────
+    "generate_ppt_html": {
+        "description": "生成PPT风格的HTML演示文件。每页幻灯片为1280×720像素，包含标题页、内容页和结尾页。内容写入工作区文件。",
+        "param_descriptions": {
+            "file_path": "输出HTML文件路径（相对于工作区根目录）",
+            "title": "演示标题（显示在标题页）",
+            "subtitle": "标题下方副标题",
+            "author": "作者名称",
+            "date": "日期字符串",
+            "target": "目标受众（显示在标题页右侧面板）",
+            "version": "版本号（显示在标题页右侧面板）",
+            "slides": "内容幻灯片列表，每项可包含 section_label/left_title/left_subtitle/right_title/right_subtitle/points",
+            "end_text": "结尾页文字（默认 THANK YOU）",
+            "end_subtitle": "结尾页副标题",
+        },
+    },
+    "generate_doc_html": {
+        "description": "生成时间线风格的文档HTML文件。每页为1280×720像素，包含水平时间轴和卡片式内容。内容写入工作区文件。",
+        "param_descriptions": {
+            "file_path": "输出HTML文件路径（相对于工作区根目录）",
+            "title": "文档标题",
+            "subtitle": "标题下方副标题",
+            "section_label": "章节标签（如 03 / 攻击拆解）",
+            "timeline_items": "时间线条目列表，每项可包含 day_label/number/icon/item_title/description/highlight",
+        },
     },
     # ──────────────────────────────────────────────────────────────────
     # WorldQuant Brain — 自演进 alpha 挖掘工具集 (Ralph Loop)

@@ -21,6 +21,7 @@ from .research_experience import (
     query_research_experience,
     record_research_experience,
 )
+from .presentation import generate_doc_html, generate_ppt_html
 from .skill import skill_create
 from .web import fetch_web_page, search_web
 from .worldquant import (
