@@ -440,6 +440,16 @@ class ChatCLI:
                 self._render_cost_report(cost)
                 self._last_cost_report = cost  # stored for async persist
 
+            # Self-dev mode: auto push + PR after each turn with commits
+            if self._self_dev:
+                try:
+                    from agent.infrastructure.config.settings import get_repo_root
+                    from agent.infrastructure.git_hooks import on_turn_completed_self_dev
+                    on_turn_completed_self_dev(get_repo_root())
+                except Exception as exc:
+                    # Never let the hook crash the CLI
+                    print(f"\n[self-dev] ⚠ Push hook error: {exc}", file=sys.stderr)
+
         elif isinstance(event, TurnCancelledEvent):
             self._streaming_renderer.flush()
             print(f"\n[Cancelled] Turn cancelled: {getattr(event, 'reason', 'unknown')}")
