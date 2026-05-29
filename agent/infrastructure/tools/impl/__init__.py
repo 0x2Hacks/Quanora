@@ -13,6 +13,7 @@ from .tools import (
     generate_doc_html,
     generate_project_knowledge,
     generate_ppt_html,
+    convert_html_to_pdf,
     get_research_summary,
     grep,
     kill_shell,
@@ -77,6 +78,7 @@ TOOLS: dict[str, Callable] = {
     "fetch_web_page": fetch_web_page,
     "generate_doc_html": generate_doc_html,
     "generate_ppt_html": generate_ppt_html,
+    "convert_html_to_pdf": convert_html_to_pdf,
     # Project Knowledge Cache
     "generate_project_knowledge": generate_project_knowledge,
     "load_project_knowledge": load_project_knowledge,
@@ -297,6 +299,13 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
             "subtitle": "标题下方副标题",
             "section_label": "章节标签（如 03 / 攻击拆解）",
             "timeline_items": "时间线条目列表，每项可包含 day_label/number/icon/item_title/description/highlight",
+        },
+    },
+    "convert_html_to_pdf": {
+        "description": "将HTML文件转换为PDF，保持排版与HTML完全一致。支持多页PPT HTML自动分页。使用无头浏览器渲染，确保字体、颜色、布局精确还原。",
+        "param_descriptions": {
+            "file_path": "输入HTML文件路径（相对于工作区根目录）",
+            "output_path": "输出PDF文件路径（相对于工作区根目录，默认与输入同名但扩展名为.pdf）",
         },
     },
     # ──────────────────────────────────────────────────────────────────
