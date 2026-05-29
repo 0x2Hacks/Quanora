@@ -5,7 +5,8 @@ description: >
   the user asks you to scaffold, create, organize, or refactor project files,
   or whenever you need to decide whether/how to create a workspace directory.
   Governs: (1) when to create workspace dirs, (2) project naming, (3) unified
-  sub-directory layout for quant/tool/doc projects, (4) output timestamping.
+  sub-directory layout for quant/tool/doc projects, (4) output timestamping,
+  (5) strict output/ directory enforcement.
 triggers:
   - "$workspace"
   - "$workspace_discipline"
@@ -54,23 +55,29 @@ temporary output. Mention results directly in the conversation.
 
 ## 2. Project Directory Naming
 
-Format: `<type>-<name>`
+Format: `<descriptive-name>` (kebab-case)
 
-### 2.1 Type Prefix
+### 2.1 Naming Principles
 
-| Type    | When to Use                                    | Examples                      |
-|---------|------------------------------------------------|-------------------------------|
-| `quant` | Quantitative strategies, backtests, research    | `quant-xauusd-macd`, `quant-sp500-momentum` |
-| `tool`  | Utility scripts, data pipelines, infrastructure | `tool-data-downloader`, `tool-risk-monitor` |
-| `doc`   | Documentation-driven tasks (from docs/*.md)     | `doc-fx-trading-guide`, `doc-api-spec`      |
+- **No type prefix**: The project type is detected internally and does NOT
+  appear in the directory name. Types like `quant_`, `bt_`, `wq_` are
+  forbidden as directory name prefixes.
+- **Flat structure**: All project directories live directly under
+  `workspace/`, with no intermediate category directories (no `backtest/`,
+  `alpha/`, `docs/` sub-trees).
+- **Content-derived**: The name comes from the task description / MD filename,
+  not from an artificial classification.
 
 ### 2.2 Name Rules
 
 - **kebab-case** only: lowercase letters, digits, hyphens as separators.
-- **Concise & semantic**: max 4 hyphen-separated segments.
+- **No underscores**: Use hyphens, not underscores, for readability and
+  consistency with URL/CLI conventions.
+- **Concise & semantic**: max 4 hyphen-separated segments, max 60 chars.
 - **docs/*.md driven tasks**: `name` = md filename without `.md` extension.
-  - Example: `docs/fx-trading-guide.md` → `workspace/doc-fx-trading-guide/`
+  - Example: `docs/tokenized_stock_funding.md` → `workspace/tokenized-stock-funding/`
 - **No session IDs, no counters, no "1-agent" style names.**
+- **No type prefixes**: `bt_`, `wq_`, `spec_`, `sig_` etc. are FORBIDDEN.
 - **No duplicate directories**: before creating, check if an existing
   directory already covers the same scope. Reuse it.
 
@@ -78,9 +85,10 @@ Format: `<type>-<name>`
 
 | Task | Directory |
 |------|-----------|
-| XAUUSD MACD strategy backtest | `workspace/quant-xauusd-macd/` |
-| Data download utility | `workspace/tool-data-downloader/` |
-| Task from `docs/fx-trading-guide.md` | `workspace/doc-fx-trading-guide/` |
+| XAUUSD MACD strategy backtest | `workspace/xauusd-macd-backtest/` |
+| Data download utility | `workspace/data-downloader/` |
+| Task from `docs/tokenized_stock_funding.md` | `workspace/tokenized-stock-funding/` |
+| WorldQuant alpha mining | `workspace/worldquant-alpha-mining/` |
 
 ---
 
@@ -131,7 +139,7 @@ manager auto-creates a standard skeleton on first use.
 Example (`quant_backtest`):
 ```
 workspace/
-└── quant-backtest-macd-strategy/
+└── macd-strategy-backtest/
     ├── src/                     # Strategy / signal / indicator source code
     │   ├── strategy.py         #   Core strategy logic
     │   ├── signal.py           #   Signal generation
@@ -182,6 +190,42 @@ script, put it under `src/` and add a brief `README.md`.
 
 ---
 
+## 4b. Output Directory Enforcement (CRITICAL)
+
+**`output/` is the SOLE location for ALL generated results, artifacts, and
+backtest outputs.** This rule is absolute and has zero exceptions.
+
+### What MUST go in `output/`:
+- Backtest results (equity curves, trade logs, performance metrics)
+- Generated reports, charts, and plots
+- Model artifacts (trained models, parameter snapshots)
+- Any file produced by a script/run (not hand-edited)
+
+### What MUST NOT go in `output/`:
+- Source code → `src/`
+- Raw or downloaded data → `data/`
+- Manual documentation → `docs/`
+- CLI entry-points → `scripts/`
+
+### Specifically FORBIDDEN locations for results:
+| ❌ Forbidden Location | ✅ Correct Location |
+|---|---|
+| `data/results/` | `output/<timestamp>/` |
+| `data/output/` | `output/<timestamp>/` |
+| `src/results/` | `output/<timestamp>/` |
+| Project root | `output/<timestamp>/` |
+| `scripts/results/` | `output/<timestamp>/` |
+
+### Why this matters:
+1. **Data integrity**: `data/` is for INPUT data only. Mixing results
+   with raw data creates confusion about what is source vs. derived.
+2. **Reproducibility**: Timestamped `output/` subdirectories enable
+   comparing runs across time.
+3. **Cleanup**: `output/` can be safely deleted without losing source
+   code or raw data.
+
+---
+
 ## 4. Output Timestamp Convention
 
 Applies to **all project types** whenever artifacts are generated:
@@ -227,6 +271,7 @@ Applies to **all project types** whenever artifacts are generated:
 | `workspace/projects/proj_1_.../` | Counter-based naming | Use semantic kebab-case |
 | `workspace/quant-1-self-doc-...-2/` | Session counter suffix | Clean name, reuse existing |
 | Results in project root | Scattered, hard to compare | Always in `output/<timestamp>/` |
+| Results in `data/results/` | `data/` is for INPUT data only | Always in `output/<timestamp>/` |
 | `workspace/docs/` | Conflicts with root `docs/` | Doc projects → `workspace/doc-<name>/` |
 | Empty directories | Clutter | Only create dirs when writing files |
 | Multiple dirs for same task | Fragmentation | Reuse existing project directory |
