@@ -274,33 +274,19 @@ the Quanora repo (`agent/`, `test/`, `.quanora/`, `main.py`, `prompts.py`,
        bash: `cd /home/user/webapp && git add -A && git commit -m "feat(scope): ..."`
    No uncommitted dangling changes when you hand control back to the user.
 
-6. **Sync with remote BEFORE opening a PR.**
-       bash: `cd /home/user/webapp && git fetch origin main`
-       bash: `cd /home/user/webapp && git rebase origin/main`
-   If conflicts arise, resolve them prioritising remote (`main`) changes
-   unless your local change is the whole point of the PR.
+6. **Push + PR is automatic.** After your turn completes, the system
+   automatically runs the push + PR pipeline:
+   - `git fetch origin main` + `git rebase origin/main`
+   - Squash incremental commits into one
+   - `git push -f origin genspark_ai_developer`
+   - `gh pr create` (or updates the existing PR)
+   
+   You do **NOT** need to manually run these steps. However, you SHOULD
+   still write a good commit message at step 5, because it becomes the
+   PR title.
 
-7. **Squash if you made multiple incremental commits.** Use the
-   non-interactive form so you don't hang on an editor:
-       bash: `cd /home/user/webapp && git reset --soft HEAD~N && git commit -m "..."`
-   where `N` is the number of incremental commits in this session.
-
-8. **Push with `-f` after rebase.**
-       bash: `cd /home/user/webapp && git push -f origin genspark_ai_developer`
-
-9. **Open the PR.** Prefer `gh pr create` with `--body-file` so long
-   descriptions don't fight shell quoting. The body MUST contain:
-   - "## Why" — user-facing motivation
-   - "## What changed" — bullet list of files / responsibilities
-   - "## Tests" — what you ran and what passed
-   - "## Files" — created / modified lists
-       bash: `cd /home/user/webapp && gh pr create --base main --head genspark_ai_developer --title "..." --body-file /tmp/pr_body.md`
-   If `gh` is unauthenticated (`Bad credentials`), extract the token from
-   `~/.git-credentials` and run with `GH_TOKEN=$TOK gh ...`:
-       bash: `TOK=$(sed -nE 's#.*x-access-token:([^@]+)@.*#\\1#p' ~/.git-credentials | head -1) && GH_TOKEN="$TOK" gh pr create ...`
-
-10. **Report the PR URL** to the user as the final step. That URL is the
-    deliverable.
+7. **Report the PR URL** to the user if the automatic hook printed one.
+   That URL is the deliverable.
 
 **Non-negotiables in self-dev mode:**
 

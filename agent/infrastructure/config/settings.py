@@ -32,6 +32,11 @@ load_dotenv()
 _QUANORA_REPO_ROOT = Path(__file__).resolve().parents[3]  # .../webapp
 
 
+def get_repo_root() -> Path:
+    """Return the absolute path to the Quanora repository root."""
+    return _QUANORA_REPO_ROOT
+
+
 def _resolve_workspace_root() -> Path:
     raw = os.getenv("QUANORA_WORKSPACE")
     if raw:
@@ -242,14 +247,17 @@ def switch_to_project_workspace(task_description: str) -> Path:
     """
     global _WORKSPACE_ROOT, _WORKSPACE_GUARD
 
-    project_dir = find_or_create_project_dir(
-        workspace_root=_WORKSPACE_ROOT,
-        task_description=task_description,
-    )
-
-    # In self-doc mode, do NOT update _WORKSPACE_ROOT — the agent must
-    # remain rooted at the repo so docs/xxx.md resolves correctly.
-    if not _SELF_DOC_MODE:
+    # In self-doc mode, there is no need to create a project sub-directory —
+    # the agent edits .md files under the repo root (e.g. docs/xxx.md).
+    # Skip find_or_create_project_dir entirely to avoid littering the repo
+    # root with empty folders like "tokenized-stock-funding-backtest-md/".
+    if _SELF_DOC_MODE:
+        project_dir = _QUANORA_REPO_ROOT
+    else:
+        project_dir = find_or_create_project_dir(
+            workspace_root=_WORKSPACE_ROOT,
+            task_description=task_description,
+        )
         _WORKSPACE_ROOT = project_dir
     protected = _resolve_protected_paths_for_mode(project_dir)
     # In self-doc mode, .md files in protected areas should still be writable
