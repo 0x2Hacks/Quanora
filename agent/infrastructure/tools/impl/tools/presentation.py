@@ -45,200 +45,237 @@ def _ensure_dir(path: str) -> None:
 
 _PPT_TITLE_TEMPLATE = """\
 <!DOCTYPE html>
-
 <html data-theme="light" lang="zh-CN">
 <head>
 <meta charset="utf-8"/>
 <title>{title}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet"/>
 <style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
-        body {{
-            background-color: #FFFFFF;
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-        }}
-        .slide-container {{
-            position: relative;
-            width: 1280px;
-            height: 720px;
-            overflow: hidden;
-            background-color: #FFFFFF;
-        }}
-    </style>
+    * {{
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }}
+    body {{
+        background-color: #FFFFFF;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+    }}
+    .slide-container {{
+        position: relative;
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+        background: #1a3d32;
+    }}
+</style>
 </head>
 <body style="user-select: none;">
 <div class="slide-container">
-<!-- 左侧深色大标题区域 -->
-<div data-object="true" data-object-type="shape" style="position: absolute; top: 0px; left: 0px; width: 700px; height: 720px; background: linear-gradient(135deg, #0A0A0A 0%, #2D2D2D 100%);"></div>
-<!-- 顶部细装饰线 -->
-<div data-object="true" data-object-type="shape" style="position: absolute; top: 80px; left: 60px; width: 60px; height: 3px; background-color: #FFFFFF;"></div>
-<!-- 英文小标题 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 100px; left: 60px; width: 600px; height: 30px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 3px; color: #FFFFFF; opacity: 0.6;">{tag_line}</p>
+<!-- 左侧金色装饰条 -->
+<div style="position: absolute; top: 0; left: 0; width: 6px; height: 720px; background: #D4A574;"></div>
+<!-- 左侧区域：大标题 -->
+<div style="position: absolute; top: 180px; left: 80px; width: 600px; height: 360px;">
+<p style="font-family: 'Noto Serif SC', serif; font-weight: 700; font-size: 42px; color: #FFFFFF; line-height: 1.3; letter-spacing: 1px;">{title_line1}</p>
+{title_line2}
+<div style="width: 48px; height: 3px; background: #D4A574; margin-top: 28px;"></div>
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 16px; color: #D4A574; margin-top: 20px; line-height: 1.6; max-width: 500px;">{subtitle}</p>
 </div>
-<!-- 主标题 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 160px; left: 60px; width: 600px; height: 180px;">
-<p style="font-family: 'Noto Serif SC', serif; font-weight: 900; font-size: 48px; color: #FFFFFF; line-height: 1.3; letter-spacing: 2px;">{title_line1}</p>
-<p style="font-family: 'Noto Serif SC', serif; font-weight: 900; font-size: 48px; color: #FFFFFF; line-height: 1.3; letter-spacing: 2px; margin-top: 8px;">{title_line2}</p>
-</div>
-<!-- 副标题 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 380px; left: 60px; width: 600px; height: 40px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 18px; color: #FFFFFF; opacity: 0.7; letter-spacing: 1px;">{subtitle}</p>
-</div>
+<!-- 右侧区域：信息卡片 -->
+<div style="position: absolute; top: 200px; left: 760px; width: 460px; height: 300px;">
 <!-- 日期 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 460px; left: 60px; width: 200px; height: 30px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 500; font-size: 16px; color: #FFFFFF; opacity: 0.5;">{date}</p>
+<div style="margin-bottom: 24px;">
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #D4A574; text-transform: uppercase;">DATE</p>
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 15px; color: rgba(255,255,255,0.8); margin-top: 6px;">{date}</p>
 </div>
-<!-- 右侧信息区 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 200px; left: 760px; width: 460px; height: 30px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 3px; color: #0A0A0A; opacity: 0.3;">TARGET</p>
+<!-- 目标受众 -->
+<div style="margin-bottom: 24px;">
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #D4A574; text-transform: uppercase;">TARGET</p>
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 15px; color: rgba(255,255,255,0.8); margin-top: 6px;">{target}</p>
 </div>
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 230px; left: 760px; width: 460px; height: 30px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 500; font-size: 16px; color: #0A0A0A; opacity: 0.7;">{target}</p>
+<!-- 版本 -->
+<div style="margin-bottom: 24px;">
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #D4A574; text-transform: uppercase;">VERSION</p>
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 15px; color: rgba(255,255,255,0.8); margin-top: 6px;">{version}</p>
 </div>
-<div data-object="true" data-object-type="shape" style="position: absolute; top: 280px; left: 760px; width: 30px; height: 1px; background-color: #0A0A0A; opacity: 0.2;"></div>
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 300px; left: 760px; width: 460px; height: 30px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 3px; color: #0A0A0A; opacity: 0.3;">VERSION</p>
+<!-- 作者 -->
+<div>
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #D4A574; text-transform: uppercase;">AUTHOR</p>
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 15px; color: rgba(255,255,255,0.8); margin-top: 6px;">{author}</p>
 </div>
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 330px; left: 760px; width: 460px; height: 30px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 500; font-size: 16px; color: #0A0A0A; opacity: 0.7;">{version}</p>
 </div>
-<div data-object="true" data-object-type="shape" style="position: absolute; top: 380px; left: 760px; width: 30px; height: 1px; background-color: #0A0A0A; opacity: 0.2;"></div>
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 400px; left: 760px; width: 460px; height: 30px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 3px; color: #0A0A0A; opacity: 0.3;">AUTHOR</p>
-</div>
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 430px; left: 760px; width: 460px; height: 30px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 500; font-size: 16px; color: #0A0A0A; opacity: 0.7;">{author}</p>
+<!-- 底部装饰线 -->
+<div style="position: absolute; bottom: 40px; left: 80px; width: 1120px; height: 1px; background: rgba(212,165,116,0.3);"></div>
+<!-- 底部标识 -->
+<div style="position: absolute; bottom: 18px; left: 80px; width: 1120px; height: 20px;">
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 11px; color: rgba(255,255,255,0.3); text-align: right; letter-spacing: 1px;">{tag_line}</p>
 </div>
 </div>
 </body>
-</html>"""
+</html>
+"""
 
 _PPT_CONTENT_TEMPLATE = """\
 <!DOCTYPE html>
-
-<html lang="zh-CN">
+<html data-theme="light" lang="zh-CN">
 <head>
 <meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>{slide_title}</title>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Noto+Serif+SC:wght@400;600;700;900&display=swap" rel="stylesheet"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet"/>
 <style>
-        body {{
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            background-color: #FFFFFF;
-        }}
-        .slide-container {{
-            position: relative;
-            width: 1280px;
-            height: 720px;
-            overflow: hidden;
-            background-color: #FFFFFF;
-        }}
-    </style>
-</head>
-<body>
-<div class="slide-container">
-<!-- 左侧深色面板 -->
-<div data-object="true" data-object-type="shape" style="position: absolute; top: 0px; left: 0px; width: 420px; height: 720px; background: linear-gradient(180deg, #0A0A0A 0%, #1A1A1A 100%);"></div>
-<!-- 左侧章节小标签 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 60px; left: 50px; width: 320px; height: 25px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 3px; color: #FFFFFF; opacity: 0.5;">{section_label}</p>
-</div>
-<!-- 左侧大标题 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 110px; left: 50px; width: 320px; height: 200px;">
-<p style="font-family: 'Noto Serif SC', serif; font-weight: 900; font-size: 36px; color: #FFFFFF; line-height: 1.3; letter-spacing: 1px;">{left_title}</p>
-</div>
-<!-- 左侧副标题 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 320px; left: 50px; width: 320px; height: 80px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 14px; color: #FFFFFF; opacity: 0.6; line-height: 1.6;">{left_subtitle}</p>
-</div>
-<!-- 右侧内容区 -->
-{right_content}
-</div>
-</body>
-</html>"""
-
-_PPT_END_TEMPLATE = """\
-<!DOCTYPE html>
-
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8"/>
-<title>Thank You</title>
-<style>
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
-        body {{
-            background-color: #FFFFFF;
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-        }}
-        .slide-container {{
-            position: relative;
-            width: 1280px;
-            height: 720px;
-            overflow: hidden;
-            background: linear-gradient(135deg, #0A0A0A 0%, #2D2D2D 100%);
-        }}
-    </style>
+    * {{
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }}
+    body {{
+        background-color: #FFFFFF;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+    }}
+    .slide-container {{
+        position: relative;
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+        background: #FFFFFF;
+    }}
+</style>
 </head>
 <body style="user-select: none;">
 <div class="slide-container">
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 280px; left: 0px; width: 1280px; height: 80px; text-align: center;">
-<p style="font-family: 'Noto Serif SC', serif; font-weight: 900; font-size: 56px; color: #FFFFFF; letter-spacing: 8px;">{end_text}</p>
+<!-- 章节标签 -->
+<div style="position: absolute; top: 30px; left: 40px; width: 400px; height: 20px;">
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #A3A3A3; text-transform: uppercase;">{section_label}</p>
 </div>
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 400px; left: 0px; width: 1280px; height: 40px; text-align: center;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 18px; color: #FFFFFF; opacity: 0.5; letter-spacing: 2px;">{end_subtitle}</p>
+<!-- 顶部装饰线 -->
+<div style="position: absolute; top: 56px; left: 40px; width: 1200px; height: 1px; background: #E5E7EB;"></div>
+<!-- 左侧面板 -->
+<div style="position: absolute; top: 76px; left: 40px; width: 360px; height: 560px;">
+<p style="font-family: 'Noto Serif SC', serif; font-weight: 700; font-size: 24px; color: #0A0A0A; line-height: 1.3;">{left_title}</p>
+{left_subtitle}
+</div>
+<!-- 左侧分隔线 -->
+<div style="position: absolute; top: 76px; left: 420px; width: 1px; height: 560px; background: #E5E7EB;"></div>
+<!-- 右侧面板 -->
+<div style="position: absolute; top: 76px; left: 450px; width: 790px; height: 560px;">
+{right_content}
+</div>
+<!-- 底部分隔线 -->
+<div style="position: absolute; bottom: 50px; left: 40px; width: 1200px; height: 1px; background: #E5E7EB;"></div>
+<!-- 页脚 -->
+<div style="position: absolute; bottom: 14px; left: 40px; width: 1200px; height: 20px;">
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 10px; color: #6B7280;">{footer_text}</p>
 </div>
 </div>
 </body>
-</html>"""
+</html>
+"""
 
+_PPT_END_TEMPLATE = """\
+<!DOCTYPE html>
+<html data-theme="light" lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<title>End</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet"/>
+<style>
+    * {{
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }}
+    body {{
+        background-color: #FFFFFF;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+    }}
+    .slide-container {{
+        position: relative;
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+        background: #1a3d32;
+    }}
+</style>
+</head>
+<body style="user-select: none;">
+<div class="slide-container">
+<!-- 左侧金色装饰条 -->
+<div style="position: absolute; top: 0; left: 0; width: 6px; height: 720px; background: #D4A574;"></div>
+<!-- 居中内容 -->
+<div style="position: absolute; top: 0; left: 0; width: 1280px; height: 720px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+<p style="font-family: 'Noto Serif SC', serif; font-weight: 700; font-size: 48px; color: #FFFFFF; letter-spacing: 2px;">{end_text}</p>
+<div style="width: 48px; height: 3px; background: #D4A574; margin-top: 28px;"></div>
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 16px; color: #D4A574; margin-top: 20px; line-height: 1.6; max-width: 500px; text-align: center;">{end_subtitle}</p>
+</div>
+<!-- 底部装饰线 -->
+<div style="position: absolute; bottom: 40px; left: 80px; width: 1120px; height: 1px; background: rgba(212,165,116,0.3);"></div>
+<!-- 底部标识 -->
+<div style="position: absolute; bottom: 18px; left: 80px; width: 1120px; height: 20px;">
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 11px; color: rgba(255,255,255,0.3); text-align: right; letter-spacing: 1px;">{tag_line}</p>
+</div>
+</div>
+</body>
+</html>
+"""
 
 def _build_right_content(
     case_title: str,
     case_subtitle: str,
     points: list[str],
 ) -> str:
-    """Build the right-side content block for a PPT content slide."""
-    # Build points HTML
-    points_html = ""
-    for pt in points:
-        safe_pt = html_mod.escape(pt)
-        points_html += (
-            '<p style="font-family: \'Noto Sans SC\', sans-serif; font-weight: 400; '
-            'font-size: 13px; color: #333333; line-height: 1.6; margin-top: 6px;">'
-            f'· {safe_pt}</p>\n'
+    """Build the right-side content area for a content slide.
+
+    Layout matches html_format.txt reference:
+    - Right title (Noto Sans SC 700, 20px)
+    - Right subtitle (Noto Sans SC 400, 13px, #6B7280)
+    - Points as bullet items with custom dot markers
+    """
+    parts: list[str] = []
+
+    # Right title
+    if case_title:
+        parts.append(
+            "<p style=\"font-family: 'Noto Sans SC', sans-serif; font-weight: 700; "
+            "font-size: 20px; color: #0A0A0A; margin-bottom: 6px;\">"
+            + case_title
+            + "</p>"
         )
 
-    return f"""\
-<!-- 右侧顶部标题区 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 60px; left: 480px; width: 740px; height: 30px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #0A0A0A; opacity: 0.4;">{html_mod.escape(case_title)}</p>
-</div>
-<!-- 右侧大标题 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 100px; left: 480px; width: 740px; height: 60px;">
-<p style="font-family: 'Noto Serif SC', serif; font-weight: 700; font-size: 28px; color: #0A0A0A; line-height: 1.3;">{html_mod.escape(case_subtitle)}</p>
-</div>
-<!-- 右侧分割线 -->
-<div data-object="true" data-object-type="shape" style="position: absolute; top: 175px; left: 480px; width: 60px; height: 2px; background-color: #0A0A0A;"></div>
-<!-- 右侧要点列表 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 200px; left: 480px; width: 740px; height: 480px;">
-{points_html}
-</div>"""
+    # Right subtitle
+    if case_subtitle:
+        parts.append(
+            "<p style=\"font-family: 'Noto Sans SC', sans-serif; font-weight: 400; "
+            "font-size: 13px; color: #6B7280; margin-bottom: 20px; line-height: 1.5;\">"
+            + case_subtitle
+            + "</p>"
+        )
 
+    # Points with styled dot markers
+    if points:
+        for pt in points:
+            safe_pt = html_mod.escape(pt)
+            parts.append(
+                '<div style="display: flex; align-items: flex-start; margin-bottom: 12px;">'
+                '<div style="width: 6px; height: 6px; border-radius: 50%; background: #1a3d32; '
+                'margin-top: 7px; margin-right: 10px; flex-shrink: 0;"></div>'
+                "<p style=\"font-family: 'Noto Sans SC', sans-serif; font-weight: 400; "
+                "font-size: 13px; color: #374151; line-height: 1.6; margin: 0;\">"
+                + safe_pt
+                + "</p></div>"
+            )
+
+    return "\n".join(parts)
 
 def generate_ppt_html(
     file_path: str,
@@ -357,6 +394,7 @@ def generate_ppt_html(
                     left_title=left_title,
                     left_subtitle=left_subtitle,
                     right_content=right_content,
+                    footer_text=html_mod.escape(title),
                 )
                 content_slides_html += "\n" + slide_html
 
@@ -364,6 +402,7 @@ def generate_ppt_html(
         end_html = _PPT_END_TEMPLATE.format(
             end_text=html_mod.escape(end_text),
             end_subtitle=html_mod.escape(end_subtitle),
+            tag_line=tag_line,
         )
 
         # --- Combine all slides into one file ---
@@ -766,7 +805,7 @@ _PDF_WRAPPER_TEMPLATE = """\
 <title>{title}</title>
 <style>
 @page {{
-    size: {width_mm}mm {height_mm}mm;
+    size: 1280px 720px;
     margin: 0;
 }}
 html, body {{
@@ -780,12 +819,16 @@ html, body {{
     width: 1280px;
     height: 720px;
     page-break-after: always;
+    page-break-inside: avoid;
+    break-after: page;
+    break-inside: avoid;
     overflow: hidden;
     position: relative;
     box-sizing: border-box;
 }}
 .slide-page:last-child {{
     page-break-after: auto;
+    break-after: auto;
 }}
 </style>
 {head_extras}
@@ -885,8 +928,6 @@ def _build_single_doc_html(
 
     return _PDF_WRAPPER_TEMPLATE.format(
         title=html_mod.escape(title),
-        width_mm=_PDF_PAGE_WIDTH_MM,
-        height_mm=_PDF_PAGE_HEIGHT_MM,
         head_extras=head_extras,
         slide_pages=slide_pages_html,
     )
@@ -998,10 +1039,10 @@ def _inject_page_css(html_content: str) -> str:
     For documents generated by generate_doc_html (single page, 1280×720).
     """
     page_css = (
-        f"@page {{ size: {_PDF_PAGE_WIDTH_MM}mm {_PDF_PAGE_HEIGHT_MM}mm; margin: 0; }}\n"
-        "html, body { "
-        "  -webkit-print-color-adjust: exact; "
-        "  print-color-adjust: exact; "
+        f"@page {{ size: 1280px 720px; margin: 0; }}\n"
+        "html, body { margin: 0 !important; padding: 0 !important; "
+        "-webkit-print-color-adjust: exact; "
+        "print-color-adjust: exact; "
         "}\n"
     )
 
@@ -1053,8 +1094,8 @@ def _render_pdf_with_playwright(html_content: str, output_path: str) -> tuple[in
 
             page.pdf(
                 path=output_path,
-                width=f"{_PDF_PAGE_WIDTH_MM}mm",
-                height=f"{_PDF_PAGE_HEIGHT_MM}mm",
+                width="1280px",
+                height="720px",
                 print_background=True,
                 margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
             )

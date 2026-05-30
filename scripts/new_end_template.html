@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html data-theme="light" lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<title>End</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet"/>
+<style>
+    * {{
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }}
+    body {{
+        background-color: #FFFFFF;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+    }}
+    .slide-container {{
+        position: relative;
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+        background: #1a3d32;
+    }}
+</style>
+</head>
+<body style="user-select: none;">
+<div class="slide-container">
+<!-- 左侧金色装饰条 -->
+<div style="position: absolute; top: 0; left: 0; width: 6px; height: 720px; background: #D4A574;"></div>
+<!-- 居中内容 -->
+<div style="position: absolute; top: 0; left: 0; width: 1280px; height: 720px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+<p style="font-family: 'Noto Serif SC', serif; font-weight: 700; font-size: 48px; color: #FFFFFF; letter-spacing: 2px;">{end_text}</p>
+<div style="width: 48px; height: 3px; background: #D4A574; margin-top: 28px;"></div>
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 16px; color: #D4A574; margin-top: 20px; line-height: 1.6; max-width: 500px; text-align: center;">{end_subtitle}</p>
+</div>
+<!-- 底部装饰线 -->
+<div style="position: absolute; bottom: 40px; left: 80px; width: 1120px; height: 1px; background: rgba(212,165,116,0.3);"></div>
+<!-- 底部标识 -->
+<div style="position: absolute; bottom: 18px; left: 80px; width: 1120px; height: 20px;">
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 11px; color: rgba(255,255,255,0.3); text-align: right; letter-spacing: 1px;">{tag_line}</p>
+</div>
+</div>
+</body>
+</html>
