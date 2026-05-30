@@ -247,13 +247,13 @@ class TestGenerateDocHtml:
         assert parsed["meta"]["item_count"] == 0
 
     def test_doc_highlight_vs_normal(self, _mock_workspace: Path):
-        """Highlighted items use dark background; normal items use white."""
+        """Highlighted items use accent CSS class; normal items don't."""
         result = generate_doc_html(
             file_path="highlight.html",
             title="Highlight Test",
             timeline_items=[
-                {"day_label": "DAY 01", "number": 1, "icon": "fa-solid fa-bug", "item_title": "Highlighted", "description": "Dark card", "highlight": True},
-                {"day_label": "DAY 02", "number": 2, "icon": "fa-solid fa-shield-halved", "item_title": "Normal", "description": "White card", "highlight": False},
+                {"day_label": "DAY 01", "number": 1, "icon": "fa-solid fa-bug", "item_title": "Highlighted", "description": "Accent card", "highlight": True},
+                {"day_label": "DAY 02", "number": 2, "icon": "fa-solid fa-shield-halved", "item_title": "Normal", "description": "Default card", "highlight": False},
             ],
         )
         parsed = _parse_result(result)
@@ -261,8 +261,8 @@ class TestGenerateDocHtml:
 
         fpath = _mock_workspace / "highlight.html"
         content = fpath.read_text(encoding="utf-8")
-        # Highlighted card should have #0A0A0A background
-        assert "background-color: #0A0A0A" in content
+        # Highlighted card should have "highlight" CSS class
+        assert "content-card highlight" in content
 
     def test_doc_html_escaping(self, _mock_workspace: Path):
         """HTML special characters are escaped in doc output."""

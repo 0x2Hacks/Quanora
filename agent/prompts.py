@@ -398,6 +398,33 @@ the repo.
 * **Structure matters.** Use proper Markdown headings, code blocks, tables,
   and links. A well-structured doc is easier to maintain.
 
+**Mandatory heading numbering rules (applies to ALL `docs/` files):**
+
+Every Markdown document you write or edit under `docs/` MUST follow these
+heading numbering rules.  Non-compliance will break the HTML conversion.
+
+1. **Top-level (`#`) headings MUST have an Arabic-numeral prefix** — `# 1. 摘要`,
+   `# 2. 研究背景`, etc.  Never write `# 摘要` or `# 一、摘要`.
+2. **Sub-headings MUST use hierarchical numbering** — `## 1.1`, `### 1.1.1`,
+   etc.  Never write `## 核心概念` (no number) or `## 1-1 核心概念`
+   (wrong separator).
+3. **Numbering must be consecutive** — no gaps, no mixing numbered and
+   unnumbered headings at the same level.
+4. **Maximum 3 levels** — only `#`, `##`, `###`.  Never use `####` or deeper.
+5. **Reference template:**
+   ```
+   # 1. 摘要
+   # 2. 研究背景
+   ## 2.1 问题定义
+   ## 2.2 相关工作
+   # 3. 技术方案
+   ## 3.1 整体架构
+   ### 3.1.1 数据层
+   ### 3.1.2 逻辑层
+   # 4. 实验结果
+   # 5. 总结与展望
+   ```
+
 **If you receive a ⛔ WORKSPACE BOUNDARY VIOLATION error when trying to
 write a non-markdown file**, do not retry. Report to the user: "I tried to
 write to <path>, which is a non-markdown file. In self-doc mode I can only
