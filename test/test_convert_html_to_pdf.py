@@ -220,8 +220,9 @@ class TestInjectPageCss:
         html = "<html><head><style>body { color: red; }</style></head><body></body></html>"
         result = _inject_page_css(html)
         assert "@page" in result
-        assert f"{_PDF_PAGE_WIDTH_MM}mm" in result
-        assert f"{_PDF_PAGE_HEIGHT_MM}mm" in result
+        assert "1280px 720px" in result
+        assert "margin: 0 !important" in result
+        assert "padding: 0 !important" in result
         assert "-webkit-print-color-adjust: exact" in result
         assert result.index("@page") < result.index("</style>")
 

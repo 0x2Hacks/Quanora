@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html data-theme="light" lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<title>{title}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet"/>
+<style>
+    * {{
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }}
+    body {{
+        background-color: #FFFFFF;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+    }}
+    .slide-container {{
+        position: relative;
+        width: 1280px;
+        height: 720px;
+        overflow: hidden;
+        background: #1a3d32;
+    }}
+</style>
+</head>
+<body style="user-select: none;">
+<div class="slide-container">
+<!-- 左侧金色装饰条 -->
+<div style="position: absolute; top: 0; left: 0; width: 6px; height: 720px; background: #D4A574;"></div>
+<!-- 左侧区域：大标题 -->
+<div style="position: absolute; top: 180px; left: 80px; width: 600px; height: 360px;">
+<p style="font-family: 'Noto Serif SC', serif; font-weight: 700; font-size: 42px; color: #FFFFFF; line-height: 1.3; letter-spacing: 1px;">{title_line1}</p>
+{title_line2}
+<div style="width: 48px; height: 3px; background: #D4A574; margin-top: 28px;"></div>
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 16px; color: #D4A574; margin-top: 20px; line-height: 1.6; max-width: 500px;">{subtitle}</p>
+</div>
+<!-- 右侧区域：信息卡片 -->
+<div style="position: absolute; top: 200px; left: 760px; width: 460px; height: 300px;">
+<!-- 日期 -->
+<div style="margin-bottom: 24px;">
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #D4A574; text-transform: uppercase;">DATE</p>
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 15px; color: rgba(255,255,255,0.8); margin-top: 6px;">{date}</p>
+</div>
+<!-- 目标受众 -->
+<div style="margin-bottom: 24px;">
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #D4A574; text-transform: uppercase;">TARGET</p>
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 15px; color: rgba(255,255,255,0.8); margin-top: 6px;">{target}</p>
+</div>
+<!-- 版本 -->
+<div style="margin-bottom: 24px;">
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #D4A574; text-transform: uppercase;">VERSION</p>
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 15px; color: rgba(255,255,255,0.8); margin-top: 6px;">{version}</p>
+</div>
+<!-- 作者 -->
+<div>
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #D4A574; text-transform: uppercase;">AUTHOR</p>
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 15px; color: rgba(255,255,255,0.8); margin-top: 6px;">{author}</p>
+</div>
+</div>
+<!-- 底部装饰线 -->
+<div style="position: absolute; bottom: 40px; left: 80px; width: 1120px; height: 1px; background: rgba(212,165,116,0.3);"></div>
+<!-- 底部标识 -->
+<div style="position: absolute; bottom: 18px; left: 80px; width: 1120px; height: 20px;">
+<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 11px; color: rgba(255,255,255,0.3); text-align: right; letter-spacing: 1px;">{tag_line}</p>
+</div>
+</div>
+</body>
+</html>
