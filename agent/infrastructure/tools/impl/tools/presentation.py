@@ -1,11 +1,15 @@
-"""
-HTML PPT & Document Generation Tools for Quanora Agent.
+"""Presentation generation tools – PPT-style slides and timeline documents.
 
-Provides two tool functions:
-- generate_ppt_html: Create multi-slide PPT-style HTML files
-- generate_doc_html: Create timeline-style document HTML files
+Provides three tools:
+1. ``generate_ppt_html``  – create an HTML slide-deck file (1280×720 per slide)
+2. ``generate_doc_html``  – create an HTML timeline-document file (1280×720 per page)
+3. ``convert_html_to_pdf`` – render an HTML file to PDF using Playwright
 
-Both tools write the output file to the workspace and return a tool_ok result.
+Design follows the visual spec in ``html_format.txt``:
+  • 1280 × 720 px fixed-viewport slides
+  • Noto Sans SC / Noto Serif SC fonts via Google Fonts
+  • Absolute-positioned layouts with thick dark dividers
+  • Colour palette: #0A0A0A text, #A3A3A3 labels, #8B1E1E accent, #E5E7EB borders
 """
 
 from __future__ import annotations
@@ -16,17 +20,15 @@ import re
 from datetime import datetime
 from typing import Any
 
-from agent.domain import tool_error, tool_ok
+from agent.domain.tool_result import tool_error, tool_ok
 
-# ---------------------------------------------------------------------------
-# Workspace helper
-# ---------------------------------------------------------------------------
+
+# ──────────────────────────────────────────────────────────────────────
+# Workspace path helper
+# ──────────────────────────────────────────────────────────────────────
 
 def _resolve_workspace_path(file_path: str) -> tuple[Any, str]:
-    """Resolve *file_path* against the workspace root using WorkspaceGuard.
-
-    Returns (guard, resolved_path) so the caller can also do boundary checks.
-    """
+    """Resolve *file_path* against the workspace root using WorkspaceGuard."""
     from agent.infrastructure.config.settings import get_workspace_guard
     guard = get_workspace_guard()
     path = guard.resolve_under_root(file_path)
@@ -39,243 +41,492 @@ def _ensure_dir(path: str) -> None:
         os.makedirs(d, exist_ok=True)
 
 
-# ===================================================================
-#  PPT HTML Generation
-# ===================================================================
+# ──────────────────────────────────────────────────────────────────────
+# Shared CSS – matches html_format.txt design spec
+# ──────────────────────────────────────────────────────────────────────
 
-_PPT_TITLE_TEMPLATE = """\
-<!DOCTYPE html>
-<html data-theme="light" lang="zh-CN">
-<head>
-<meta charset="utf-8"/>
-<title>{title}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet"/>
-<style>
-    * {{
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-    }}
-    body {{
-        background-color: #FFFFFF;
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-    }}
-    .slide-container {{
-        position: relative;
-        width: 1280px;
-        height: 720px;
-        overflow: hidden;
-        background: #1a3d32;
-    }}
-</style>
-</head>
-<body style="user-select: none;">
-<div class="slide-container">
-<!-- 左侧金色装饰条 -->
-<div style="position: absolute; top: 0; left: 0; width: 6px; height: 720px; background: #D4A574;"></div>
-<!-- 左侧区域：大标题 -->
-<div style="position: absolute; top: 180px; left: 80px; width: 600px; height: 360px;">
-<p style="font-family: 'Noto Serif SC', serif; font-weight: 700; font-size: 42px; color: #FFFFFF; line-height: 1.3; letter-spacing: 1px;">{title_line1}</p>
-{title_line2}
-<div style="width: 48px; height: 3px; background: #D4A574; margin-top: 28px;"></div>
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 16px; color: #D4A574; margin-top: 20px; line-height: 1.6; max-width: 500px;">{subtitle}</p>
-</div>
-<!-- 右侧区域：信息卡片 -->
-<div style="position: absolute; top: 200px; left: 760px; width: 460px; height: 300px;">
-<!-- 日期 -->
-<div style="margin-bottom: 24px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #D4A574; text-transform: uppercase;">DATE</p>
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 15px; color: rgba(255,255,255,0.8); margin-top: 6px;">{date}</p>
-</div>
-<!-- 目标受众 -->
-<div style="margin-bottom: 24px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #D4A574; text-transform: uppercase;">TARGET</p>
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 15px; color: rgba(255,255,255,0.8); margin-top: 6px;">{target}</p>
-</div>
-<!-- 版本 -->
-<div style="margin-bottom: 24px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #D4A574; text-transform: uppercase;">VERSION</p>
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 15px; color: rgba(255,255,255,0.8); margin-top: 6px;">{version}</p>
-</div>
-<!-- 作者 -->
-<div>
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #D4A574; text-transform: uppercase;">AUTHOR</p>
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 15px; color: rgba(255,255,255,0.8); margin-top: 6px;">{author}</p>
-</div>
-</div>
-<!-- 底部装饰线 -->
-<div style="position: absolute; bottom: 40px; left: 80px; width: 1120px; height: 1px; background: rgba(212,165,116,0.3);"></div>
-<!-- 底部标识 -->
-<div style="position: absolute; bottom: 18px; left: 80px; width: 1120px; height: 20px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 11px; color: rgba(255,255,255,0.3); text-align: right; letter-spacing: 1px;">{tag_line}</p>
-</div>
-</div>
-</body>
-</html>
+_SHARED_FONT_LINKS = """\
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">"""
+
+_SHARED_STYLE = """\
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+body {
+    font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #FFFFFF;
+    color: #0A0A0A;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
 """
 
-_PPT_CONTENT_TEMPLATE = """\
+# ──────────────────────────────────────────────────────────────────────
+# PPT HTML – slide templates
+# ──────────────────────────────────────────────────────────────────────
+
+_PPT_SLIDE_TEMPLATE = """\
 <!DOCTYPE html>
-<html data-theme="light" lang="zh-CN">
+<html lang="zh-CN">
 <head>
-<meta charset="utf-8"/>
-<title>{slide_title}</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet"/>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280">
+{font_links}
 <style>
-    * {{
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-    }}
-    body {{
-        background-color: #FFFFFF;
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-    }}
-    .slide-container {{
-        position: relative;
-        width: 1280px;
-        height: 720px;
-        overflow: hidden;
-        background: #FFFFFF;
-    }}
+{shared_style}
+@page {{
+    size: 1280px 720px;
+    margin: 0;
+}}
+.slide-page {{
+    width: 1280px;
+    height: 720px;
+    position: relative;
+    overflow: hidden;
+    page-break-after: always;
+    background: #FFFFFF;
+}}
+{slide_style}
 </style>
 </head>
-<body style="user-select: none;">
-<div class="slide-container">
-<!-- 章节标签 -->
-<div style="position: absolute; top: 30px; left: 40px; width: 400px; height: 20px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #A3A3A3; text-transform: uppercase;">{section_label}</p>
-</div>
-<!-- 顶部装饰线 -->
-<div style="position: absolute; top: 56px; left: 40px; width: 1200px; height: 1px; background: #E5E7EB;"></div>
-<!-- 左侧面板 -->
-<div style="position: absolute; top: 76px; left: 40px; width: 360px; height: 560px;">
-<p style="font-family: 'Noto Serif SC', serif; font-weight: 700; font-size: 24px; color: #0A0A0A; line-height: 1.3;">{left_title}</p>
-{left_subtitle}
-</div>
-<!-- 左侧分隔线 -->
-<div style="position: absolute; top: 76px; left: 420px; width: 1px; height: 560px; background: #E5E7EB;"></div>
-<!-- 右侧面板 -->
-<div style="position: absolute; top: 76px; left: 450px; width: 790px; height: 560px;">
-{right_content}
-</div>
-<!-- 底部分隔线 -->
-<div style="position: absolute; bottom: 50px; left: 40px; width: 1200px; height: 1px; background: #E5E7EB;"></div>
-<!-- 页脚 -->
-<div style="position: absolute; bottom: 14px; left: 40px; width: 1200px; height: 20px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 10px; color: #6B7280;">{footer_text}</p>
-</div>
+<body>
+<div class="slide-page">
+{slide_body}
 </div>
 </body>
-</html>
-"""
+</html>"""
 
-_PPT_END_TEMPLATE = """\
-<!DOCTYPE html>
-<html data-theme="light" lang="zh-CN">
-<head>
-<meta charset="utf-8"/>
-<title>End</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet"/>
-<style>
-    * {{
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-    }}
-    body {{
-        background-color: #FFFFFF;
-        margin: 0;
-        padding: 0;
-        overflow: hidden;
-    }}
-    .slide-container {{
-        position: relative;
-        width: 1280px;
-        height: 720px;
-        overflow: hidden;
-        background: #1a3d32;
-    }}
-</style>
-</head>
-<body style="user-select: none;">
-<div class="slide-container">
-<!-- 左侧金色装饰条 -->
-<div style="position: absolute; top: 0; left: 0; width: 6px; height: 720px; background: #D4A574;"></div>
-<!-- 居中内容 -->
-<div style="position: absolute; top: 0; left: 0; width: 1280px; height: 720px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
-<p style="font-family: 'Noto Serif SC', serif; font-weight: 700; font-size: 48px; color: #FFFFFF; letter-spacing: 2px;">{end_text}</p>
-<div style="width: 48px; height: 3px; background: #D4A574; margin-top: 28px;"></div>
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 16px; color: #D4A574; margin-top: 20px; line-height: 1.6; max-width: 500px; text-align: center;">{end_subtitle}</p>
+# ── Title Slide ──
+
+_PPT_TITLE_BODY = """\
+<!-- Title Slide -->
+<div style="position:absolute; left:96px; top:0; width:680px; height:100%; display:flex; flex-direction:column; justify-content:center;">
+    {section_badge}
+    <h1 style="font-family:'Noto Serif SC',serif; font-size:48px; font-weight:700; line-height:1.3; color:#0A0A0A; letter-spacing:-0.02em;">{title}</h1>
+    {subtitle_html}
 </div>
-<!-- 底部装饰线 -->
-<div style="position: absolute; bottom: 40px; left: 80px; width: 1120px; height: 1px; background: rgba(212,165,116,0.3);"></div>
-<!-- 底部标识 -->
-<div style="position: absolute; bottom: 18px; left: 80px; width: 1120px; height: 20px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 11px; color: rgba(255,255,255,0.3); text-align: right; letter-spacing: 1px;">{tag_line}</p>
+<!-- Thick vertical divider -->
+<div style="position:absolute; left:800px; top:80px; width:4px; height:560px; background:#0A0A0A; border-radius:2px;"></div>
+<!-- Right info panel -->
+<div style="position:absolute; left:840px; top:0; width:360px; height:100%; display:flex; flex-direction:column; justify-content:center;">
+    {author_html}
+    {date_html}
+    {version_html}
+    {target_html}
+</div>"""
+
+# ── Content Slide ──
+
+_PPT_CONTENT_BODY = """\
+<!-- Content Slide -->
+<!-- Section label + thick horizontal divider -->
+<div style="position:absolute; left:96px; top:40px; width:1088px;">
+    {section_badge}
+    <div style="height:4px; background:#0A0A0A; border-radius:2px; margin-top:8px;"></div>
 </div>
+<!-- Left column: section heading -->
+<div style="position:absolute; left:96px; top:80px; width:380px;">
+    {left_title_html}
+    {left_subtitle_html}
 </div>
-</body>
-</html>
-"""
+<!-- Right column: bullet points -->
+<div style="position:absolute; left:560px; top:80px; width:624px;">
+    {points_html}
+</div>"""
 
-def _build_right_content(
-    case_title: str,
-    case_subtitle: str,
-    points: list[str],
-) -> str:
-    """Build the right-side content area for a content slide.
+# ── End Slide ──
 
-    Layout matches html_format.txt reference:
-    - Right title (Noto Sans SC 700, 20px)
-    - Right subtitle (Noto Sans SC 400, 13px, #6B7280)
-    - Points as bullet items with custom dot markers
-    """
-    parts: list[str] = []
+_PPT_END_BODY = """\
+<!-- End Slide -->
+<div style="position:absolute; left:0; top:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+    <h1 style="font-family:'Noto Serif SC',serif; font-size:56px; font-weight:700; color:#0A0A0A; letter-spacing:0.05em;">{end_text}</h1>
+    {end_subtitle_html}
+</div>"""
 
-    # Right title
-    if case_title:
-        parts.append(
-            "<p style=\"font-family: 'Noto Sans SC', sans-serif; font-weight: 700; "
-            "font-size: 20px; color: #0A0A0A; margin-bottom: 6px;\">"
-            + case_title
-            + "</p>"
+
+def _build_section_badge(label: str) -> str:
+    if not label:
+        return ""
+    return (
+        f'<span style="display:inline-block; font-size:14px; font-weight:600; '
+        f'letter-spacing:2px; text-transform:uppercase; color:#A3A3A3; '
+        f'padding:6px 16px; border:1.5px solid #E5E7EB; border-radius:4px; '
+        f'margin-bottom:24px;">{html_mod.escape(label)}</span>'
+    )
+
+
+def _build_ppt_slides(
+    title: str,
+    subtitle: str,
+    author: str,
+    date_str: str,
+    version: str,
+    target: str,
+    slides: list[dict[str, Any]],
+    end_text: str,
+    end_subtitle: str,
+) -> list[str]:
+    """Build a list of complete HTML documents (one per slide)."""
+
+    result: list[str] = []
+
+    # ── 1. Title slide ──
+    section_badge = _build_section_badge("")
+    subtitle_html = (
+        f'<p style="font-size:18px; font-weight:400; color:#A3A3A3; margin-top:20px; line-height:1.6;">'
+        f'{html_mod.escape(subtitle)}</p>'
+    ) if subtitle else ""
+
+    author_html = (
+        f'<p style="font-size:15px; color:#A3A3A3; margin-bottom:8px;">{html_mod.escape(author)}</p>'
+    ) if author else ""
+    date_html = (
+        f'<p style="font-size:14px; color:#A3A3A3; margin-bottom:8px;">{html_mod.escape(date_str)}</p>'
+    ) if date_str else ""
+    version_html = (
+        f'<p style="font-size:14px; color:#A3A3A3; margin-bottom:8px;">Version {html_mod.escape(version)}</p>'
+    ) if version else ""
+    target_html = (
+        f'<p style="font-size:14px; color:#8B1E1E; font-weight:500;">{html_mod.escape(target)}</p>'
+    ) if target else ""
+
+    title_body = _PPT_TITLE_BODY.format(
+        section_badge=section_badge,
+        title=html_mod.escape(title),
+        subtitle_html=subtitle_html,
+        author_html=author_html,
+        date_html=date_html,
+        version_html=version_html,
+        target_html=target_html,
+    )
+    result.append(
+        _PPT_SLIDE_TEMPLATE.format(
+            font_links=_SHARED_FONT_LINKS,
+            shared_style=_SHARED_STYLE,
+            slide_style="",
+            slide_body=title_body,
         )
+    )
 
-    # Right subtitle
-    if case_subtitle:
-        parts.append(
-            "<p style=\"font-family: 'Noto Sans SC', sans-serif; font-weight: 400; "
-            "font-size: 13px; color: #6B7280; margin-bottom: 20px; line-height: 1.5;\">"
-            + case_subtitle
-            + "</p>"
-        )
+    # ── 2. Content slides ──
+    for s in slides:
+        s_label = s.get("section_label", "")
+        l_title = s.get("left_title", "")
+        l_sub = s.get("left_subtitle", "")
+        r_title = s.get("right_title", "")
+        r_sub = s.get("right_subtitle", "")
+        points = s.get("points", [])
 
-    # Points with styled dot markers
-    if points:
-        for pt in points:
-            safe_pt = html_mod.escape(pt)
-            parts.append(
-                '<div style="display: flex; align-items: flex-start; margin-bottom: 12px;">'
-                '<div style="width: 6px; height: 6px; border-radius: 50%; background: #1a3d32; '
-                'margin-top: 7px; margin-right: 10px; flex-shrink: 0;"></div>'
-                "<p style=\"font-family: 'Noto Sans SC', sans-serif; font-weight: 400; "
-                "font-size: 13px; color: #374151; line-height: 1.6; margin: 0;\">"
-                + safe_pt
-                + "</p></div>"
+        s_badge = _build_section_badge(s_label)
+
+        left_title_html = (
+            f'<h2 style="font-family:\'Noto Serif SC\',serif; font-size:32px; font-weight:700; '
+            f'color:#0A0A0A; line-height:1.4;">{html_mod.escape(l_title)}</h2>'
+        ) if l_title else ""
+
+        left_subtitle_html = (
+            f'<p style="font-size:16px; color:#A3A3A3; margin-top:12px; line-height:1.6;">'
+            f'{html_mod.escape(l_sub)}</p>'
+        ) if l_sub else ""
+
+        # Build points
+        points_parts: list[str] = []
+        if r_title:
+            points_parts.append(
+                f'<h3 style="font-family:\'Noto Serif SC\',serif; font-size:22px; font-weight:600; '
+                f'color:#0A0A0A; margin-bottom:8px;">{html_mod.escape(r_title)}</h3>'
+            )
+        if r_sub:
+            points_parts.append(
+                f'<p style="font-size:14px; color:#A3A3A3; margin-bottom:20px; line-height:1.5;">'
+                f'{html_mod.escape(r_sub)}</p>'
             )
 
-    return "\n".join(parts)
+        for pt in points:
+            if isinstance(pt, str):
+                text = pt
+                is_accent = False
+            elif isinstance(pt, dict):
+                text = pt.get("text", str(pt))
+                is_accent = pt.get("highlight", False) or pt.get("accent", False)
+            else:
+                text = str(pt)
+                is_accent = False
+
+            dot_color = "#8B1E1E" if is_accent else "#A3A3A3"
+            text_weight = "600" if is_accent else "400"
+            text_color = "#0A0A0A" if is_accent else "#374151"
+            points_parts.append(
+                f'<div style="display:flex; align-items:flex-start; margin-bottom:14px;">'
+                f'<div style="width:8px; height:8px; border-radius:50%; background:{dot_color}; '
+                f'margin-top:7px; margin-right:12px; flex-shrink:0;"></div>'
+                f'<p style="font-size:16px; font-weight:{text_weight}; color:{text_color}; '
+                f'line-height:1.6;">{html_mod.escape(text)}</p>'
+                f'</div>'
+            )
+
+        points_html = "\n".join(points_parts)
+
+        content_body = _PPT_CONTENT_BODY.format(
+            section_badge=s_badge,
+            left_title_html=left_title_html,
+            left_subtitle_html=left_subtitle_html,
+            points_html=points_html,
+        )
+        result.append(
+            _PPT_SLIDE_TEMPLATE.format(
+                font_links=_SHARED_FONT_LINKS,
+                shared_style=_SHARED_STYLE,
+                slide_style="",
+                slide_body=content_body,
+            )
+        )
+
+    # ── 3. End slide ──
+    end_subtitle_html = (
+        f'<p style="font-size:20px; color:#A3A3A3; margin-top:16px;">{html_mod.escape(end_subtitle)}</p>'
+    ) if end_subtitle else ""
+
+    end_body = _PPT_END_BODY.format(
+        end_text=html_mod.escape(end_text),
+        end_subtitle_html=end_subtitle_html,
+    )
+    result.append(
+        _PPT_SLIDE_TEMPLATE.format(
+            font_links=_SHARED_FONT_LINKS,
+            shared_style=_SHARED_STYLE,
+            slide_style="",
+            slide_body=end_body,
+        )
+    )
+
+    return result
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Document HTML – timeline template
+# ──────────────────────────────────────────────────────────────────────
+
+_DOC_TEMPLATE = """\
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280">
+{font_links}
+<style>
+{shared_style}
+@page {{
+    size: 1280px 720px;
+    margin: 0;
+}}
+body {{
+    width: 1280px;
+    min-height: 720px;
+}}
+
+/* ── Page wrapper ── */
+.doc-page {{
+    width: 1280px;
+    min-height: 720px;
+    position: relative;
+    padding: 48px 64px;
+    background: #FFFFFF;
+}}
+
+/* ── Header area ── */
+.doc-header {{
+    margin-bottom: 8px;
+}}
+.doc-section-label {{
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #A3A3A3;
+    margin-bottom: 8px;
+}}
+.doc-title {{
+    font-family: 'Noto Serif SC', serif;
+    font-size: 36px;
+    font-weight: 700;
+    color: #0A0A0A;
+    line-height: 1.3;
+    margin-bottom: 6px;
+}}
+.doc-subtitle {{
+    font-size: 16px;
+    color: #A3A3A3;
+    line-height: 1.5;
+}}
+
+/* ── Thick divider ── */
+.doc-divider {{
+    height: 4px;
+    background: #0A0A0A;
+    border-radius: 2px;
+    margin: 20px 0 28px 0;
+}}
+
+/* ── Timeline axis ── */
+.timeline-axis {{
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 0 20px;
+    margin-bottom: 24px;
+}}
+
+/* ── Timeline nodes ── */
+.timeline-node {{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    z-index: 2;
+}}
+.node-circle {{
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: #0A0A0A;
+    color: #FFFFFF;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 600;
+    border: 3px solid #FFFFFF;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}}
+.node-circle.highlight {{
+    background: #8B1E1E;
+    border-color: #FFFFFF;
+}}
+.node-label {{
+    font-size: 12px;
+    color: #A3A3A3;
+    margin-top: 8px;
+    white-space: nowrap;
+    font-weight: 500;
+}}
+
+/* ── Horizontal line behind nodes ── */
+.timeline-line {{
+    position: absolute;
+    top: 20px;
+    left: 40px;
+    right: 40px;
+    height: 3px;
+    background: #E5E7EB;
+    z-index: 1;
+}}
+
+/* ── Card grid ── */
+.card-grid {{
+    display: grid;
+    grid-template-columns: repeat({grid_cols}, 1fr);
+    gap: 16px;
+    padding: 0 20px;
+}}
+.card-grid.single-column {{
+    grid-template-columns: 1fr;
+    max-width: 560px;
+}}
+
+/* ── Content card ── */
+.content-card {{
+    background: #F9FAFB;
+    border: 1.5px solid #E5E7EB;
+    border-radius: 8px;
+    padding: 20px;
+    transition: box-shadow 0.2s;
+}}
+.content-card.highlight {{
+    border-color: #8B1E1E;
+    background: #FEF2F2;
+}}
+
+.card-icon {{
+    font-size: 22px;
+    margin-bottom: 10px;
+    color: #A3A3A3;
+}}
+.card-title {{
+    font-family: 'Noto Serif SC', serif;
+    font-size: 18px;
+    font-weight: 600;
+    color: #0A0A0A;
+    margin-bottom: 8px;
+    line-height: 1.4;
+}}
+.card-desc {{
+    font-size: 14px;
+    color: #374151;
+    line-height: 1.6;
+}}
+.highlight-tag {{
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    color: #8B1E1E;
+    background: #FEF2F2;
+    border: 1px solid #8B1E1E;
+    border-radius: 3px;
+    padding: 2px 8px;
+    margin-top: 10px;
+}}
+
+/* ── Footer ── */
+.doc-footer {{
+    position: absolute;
+    bottom: 32px;
+    left: 64px;
+    right: 64px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: #A3A3A3;
+}}
+</style>
+</head>
+<body>
+<div class="doc-page">
+    <!-- Header -->
+    <div class="doc-header">
+        {section_label_html}
+        <h1 class="doc-title">{doc_title}</h1>
+        {subtitle_html}
+    </div>
+    <div class="doc-divider"></div>
+
+    <!-- Timeline axis -->
+    <div class="timeline-axis">
+        <div class="timeline-line"></div>
+        {timeline_nodes_html}
+    </div>
+
+    <!-- Card grid -->
+    <div class="card-grid {grid_class}">
+        {timeline_items_html}
+    </div>
+
+    <!-- Footer -->
+    <div class="doc-footer">
+        <span>{gen_date}</span>
+        <span>{item_count} items</span>
+    </div>
+</div>
+</body>
+</html>"""
+
+
+# ──────────────────────────────────────────────────────────────────────
+# generate_ppt_html tool
+# ──────────────────────────────────────────────────────────────────────
 
 def generate_ppt_html(
     file_path: str,
@@ -283,400 +534,56 @@ def generate_ppt_html(
     subtitle: str = "",
     author: str = "",
     date: str = "",
-    target: str = "",
     version: str = "",
+    target: str = "",
     slides: list[dict[str, Any]] | None = None,
     end_text: str = "THANK YOU",
     end_subtitle: str = "",
 ) -> dict:
     """Generate a PPT-style HTML presentation file.
 
-    Each slide is rendered as a 1280×720 px container.  The file is written
-    to *file_path* (relative to workspace root).
-
-    Parameters
-    ----------
-    file_path : str
-        Output HTML file path (relative to workspace root).
-    title : str
-        Presentation title (shown on title slide).
-    subtitle : str
-        Subtitle shown below the main title.
-    author : str
-        Author name shown on title slide.
-    date : str
-        Date string shown on title slide.
-    target : str
-        Target audience (shown on title slide right panel).
-    version : str
-        Version string (shown on title slide right panel).
-    slides : list[dict]
-        List of content slides.  Each dict may contain:
-          - section_label (str): e.g. "02 / 风险全景"
-          - left_title (str): Large text on dark left panel
-          - left_subtitle (str): Small text on dark left panel
-          - right_title (str): Category label above right content
-          - right_subtitle (str): Bold heading on right side
-          - points (list[str]): Bullet points on right side
-    end_text : str
-        Text for the final slide (default "THANK YOU").
-    end_subtitle : str
-        Subtitle for the final slide.
-
-    Returns
-    -------
-    dict
-        tool_ok / tool_error result.
+    Each slide is 1280×720 pixels. The output is a single HTML file containing
+    multiple ``<!DOCTYPE html>`` blocks (one per slide) so that
+    ``convert_html_to_pdf`` can split them into separate PDF pages.
     """
-    try:
-        guard, resolved = _resolve_workspace_path(file_path)
-        _ensure_dir(resolved)
+    if not title:
+        return tool_error("generate_ppt_html", "title is required", "ValueError")
 
-        # Workspace boundary check
-        violation = guard.check_write(resolved)
-        if violation is not None:
-            return tool_error(
-                "generate_ppt_html",
-                f"WORKSPACE BOUNDARY VIOLATION: {violation.reason} | Fix: {violation.suggested_fix}",
-                "WorkspaceViolation",
-                meta={"path": str(violation.path)},
-            )
+    date_str = date or datetime.now().strftime("%Y-%m-%d")
+    slides = slides or []
 
-        # --- Build title slide ---
-        # Auto-split title into two lines if it's long
-        title_len = len(title)
-        if title_len > 14:
-            mid = title_len // 2
-            # Try to split at a natural break
-            for offset in range(min(5, mid)):
-                if mid + offset < title_len and title[mid + offset] in " ·—–,，":
-                    mid = mid + offset + 1
-                    break
-                if mid - offset > 0 and title[mid - offset] in " ·—–,，":
-                    mid = mid - offset + 1
-                    break
-            title_line1 = html_mod.escape(title[:mid])
-            title_line2 = html_mod.escape(title[mid:])
-        else:
-            title_line1 = html_mod.escape(title)
-            title_line2 = ""
+    slide_htmls = _build_ppt_slides(
+        title=title,
+        subtitle=subtitle,
+        author=author,
+        date_str=date_str,
+        version=version,
+        target=target,
+        slides=slides,
+        end_text=end_text,
+        end_subtitle=end_subtitle,
+    )
 
-        tag_line = html_mod.escape(title.upper()[:60])
+    # Join all slides – each is a full HTML doc, which the PDF converter splits
+    html_content = "\n".join(slide_htmls)
 
-        title_html = _PPT_TITLE_TEMPLATE.format(
-            title=html_mod.escape(title),
-            tag_line=tag_line,
-            title_line1=title_line1,
-            title_line2=title_line2,
-            subtitle=html_mod.escape(subtitle),
-            date=html_mod.escape(date),
-            target=html_mod.escape(target),
-            version=html_mod.escape(version),
-            author=html_mod.escape(author),
-        )
+    # Write to file
+    guard, resolved = _resolve_workspace_path(file_path)
+    guard.check_write(resolved)
+    _ensure_dir(resolved)
+    with open(resolved, "w", encoding="utf-8") as f:
+        f.write(html_content)
 
-        # --- Build content slides ---
-        content_slides_html = ""
-        if slides:
-            for idx, sl in enumerate(slides):
-                section_label = html_mod.escape(sl.get("section_label", f"{idx+2:02d}"))
-                left_title = html_mod.escape(sl.get("left_title", ""))
-                left_subtitle = html_mod.escape(sl.get("left_subtitle", ""))
-                right_title = html_mod.escape(sl.get("right_title", ""))
-                right_subtitle = html_mod.escape(sl.get("right_subtitle", ""))
-                points = sl.get("points", [])
-
-                right_content = _build_right_content(right_title, right_subtitle, points)
-
-                slide_html = _PPT_CONTENT_TEMPLATE.format(
-                    slide_title=html_mod.escape(sl.get("left_title", f"Slide {idx+2}")),
-                    section_label=section_label,
-                    left_title=left_title,
-                    left_subtitle=left_subtitle,
-                    right_content=right_content,
-                    footer_text=html_mod.escape(title),
-                )
-                content_slides_html += "\n" + slide_html
-
-        # --- Build end slide ---
-        end_html = _PPT_END_TEMPLATE.format(
-            end_text=html_mod.escape(end_text),
-            end_subtitle=html_mod.escape(end_subtitle),
-            tag_line=tag_line,
-        )
-
-        # --- Combine all slides into one file ---
-        full_html = title_html + content_slides_html + end_html
-
-        with open(resolved, "w", encoding="utf-8") as f:
-            f.write(full_html)
-
-        slide_count = 1 + (len(slides) if slides else 0) + 1  # title + content + end
-        return tool_ok(
-            "generate_ppt_html",
-            f"Generated PPT HTML with {slide_count} slides → {file_path}",
-            meta={"file_path": file_path, "slide_count": slide_count, "bytes": len(full_html)},
-        )
-    except Exception as exc:
-        return tool_error("generate_ppt_html", f"generate_ppt_html failed: {exc}", type(exc).__name__)
+    return tool_ok(
+        "generate_ppt_html",
+        data={"file_path": file_path, "size_bytes": os.path.getsize(resolved)},
+        meta={"slide_count": len(slide_htmls)},
+    )
 
 
-# ===================================================================
-#  Document HTML Generation
-# ===================================================================
-
-_DOC_TEMPLATE = """\
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<title>{doc_title}</title>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Noto+Serif+SC:wght@400;600;700;900&display=swap" rel="stylesheet"/>
-<link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet"/>
-<style>
-    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-    body {{
-        margin: 0;
-        padding: 0;
-        background: #FFFFFF;
-        -webkit-font-smoothing: antialiased;
-    }}
-    .doc-page {{
-        width: 1280px;
-        height: 720px;
-        position: relative;
-        overflow: hidden;
-        background: #FFFFFF;
-        font-family: 'Noto Sans SC', sans-serif;
-    }}
-    .doc-left-panel {{
-        position: absolute;
-        top: 0; left: 0;
-        width: 380px; height: 720px;
-        background: #0A0A0A;
-        padding: 60px 40px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-    }}
-    .doc-left-panel .section-tag {{
-        display: inline-block;
-        font-family: 'Noto Sans SC', sans-serif;
-        font-weight: 500;
-        font-size: 11px;
-        color: #1a3d32;
-        background: rgba(26,61,50,0.15);
-        border: 1px solid rgba(26,61,50,0.3);
-        padding: 4px 14px;
-        border-radius: 20px;
-        letter-spacing: 2px;
-        text-transform: uppercase;
-        margin-bottom: 24px;
-        width: fit-content;
-    }}
-    .doc-left-panel h1 {{
-        font-family: 'Noto Serif SC', serif;
-        font-weight: 900;
-        font-size: 42px;
-        color: #FFFFFF;
-        line-height: 1.25;
-        margin-bottom: 16px;
-    }}
-    .doc-left-panel .subtitle {{
-        font-family: 'Noto Sans SC', sans-serif;
-        font-weight: 300;
-        font-size: 14px;
-        color: #A3A3A3;
-        line-height: 1.6;
-    }}
-    .doc-left-panel .deco-line {{
-        width: 60px; height: 4px;
-        background: #1a3d32;
-        border-radius: 2px;
-        margin-bottom: 28px;
-    }}
-    .doc-right-panel {{
-        position: absolute;
-        top: 0; left: 380px; right: 0; bottom: 0;
-        padding: 48px 48px 80px 48px;
-        overflow-y: auto;
-    }}
-    .doc-right-panel::before {{
-        content: '';
-        position: absolute;
-        top: 40px; left: 0;
-        width: 1px; height: calc(100% - 80px);
-        background: #E5E7EB;
-    }}
-    .cards-grid {{
-        display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 20px;
-    }}
-    .cards-grid.single-column {{
-        grid-template-columns: 1fr;
-    }}
-    .content-card {{
-        background: #FAFAFA;
-        border-radius: 10px;
-        padding: 22px 20px;
-        position: relative;
-        border-left: 3px solid #1a3d32;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-    }}
-    .content-card:hover {{
-        transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(0,0,0,0.06);
-    }}
-    .content-card.highlight {{
-        border-left-color: #D4A574;
-        background: #FFFBF5;
-    }}
-    .card-header {{
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-bottom: 10px;
-    }}
-    .card-day-label {{
-        font-family: 'Noto Sans SC', sans-serif;
-        font-weight: 700;
-        font-size: 10px;
-        color: #1a3d32;
-        background: #E8F0ED;
-        padding: 3px 10px;
-        border-radius: 10px;
-        letter-spacing: 1px;
-    }}
-    .content-card.highlight .card-day-label {{
-        color: #D4A574;
-        background: #FFF3E6;
-    }}
-    .card-number {{
-        width: 24px; height: 24px;
-        border-radius: 50%;
-        background: #1a3d32;
-        color: #FFFFFF;
-        font-family: 'Noto Sans SC', sans-serif;
-        font-weight: 700;
-        font-size: 11px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin-left: auto;
-    }}
-    .content-card.highlight .card-number {{
-        background: #D4A574;
-    }}
-    .card-icon {{
-        font-size: 16px;
-        color: #1a3d32;
-        margin-bottom: 6px;
-    }}
-    .content-card.highlight .card-icon {{
-        color: #D4A574;
-    }}
-    .card-title {{
-        font-family: 'Noto Serif SC', serif;
-        font-weight: 700;
-        font-size: 14px;
-        color: #0A0A0A;
-        line-height: 1.3;
-        margin-bottom: 6px;
-    }}
-    .card-desc {{
-        font-family: 'Noto Sans SC', sans-serif;
-        font-weight: 400;
-        font-size: 12px;
-        color: #4B5563;
-        line-height: 1.6;
-    }}
-    .card-highlight-tag {{
-        display: inline-block;
-        font-family: 'Noto Sans SC', sans-serif;
-        font-weight: 500;
-        font-size: 10px;
-        color: #D4A574;
-        background: #FFF3E6;
-        padding: 2px 8px;
-        border-radius: 4px;
-        margin-top: 8px;
-    }}
-    .doc-insight-bar {{
-        position: absolute;
-        bottom: 20px; left: 380px; right: 0;
-        padding: 0 48px;
-    }}
-    .doc-insight-inner {{
-        background: #F9FAFB;
-        border-left: 3px solid #1a3d32;
-        border-radius: 0 8px 8px 0;
-        padding: 10px 16px;
-    }}
-    .doc-insight-inner .insight-label {{
-        font-family: 'Noto Sans SC', sans-serif;
-        font-weight: 700;
-        font-size: 10px;
-        color: #1a3d32;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-        margin-bottom: 2px;
-    }}
-    .doc-insight-inner .insight-text {{
-        font-family: 'Noto Sans SC', sans-serif;
-        font-weight: 400;
-        font-size: 11px;
-        color: #4B5563;
-        line-height: 1.4;
-    }}
-    .doc-footer {{
-        position: absolute;
-        bottom: 12px; left: 40px;
-        font-family: 'Noto Sans SC', sans-serif;
-        font-weight: 400;
-        font-size: 9px;
-        color: #4B5563;
-    }}
-</style>
-</head>
-<body>
-<div class="doc-page" data-object="doc-page">
-    <div class="doc-left-panel" data-object="left-panel">
-        <div class="section-tag" data-object="section-tag">{section_label}</div>
-        <div class="deco-line" data-object="deco-line"></div>
-        <h1 data-object="title">{title}</h1>
-        <p class="subtitle" data-object="subtitle">{subtitle}</p>
-    </div>
-    <div class="doc-right-panel" data-object="right-panel">
-        <div class="cards-grid {grid_class}" data-object="cards-grid">
-            {timeline_items_html}
-        </div>
-    </div>
-    <div class="doc-insight-bar" data-object="insight-bar">
-        <div class="doc-insight-inner">
-            <div class="insight-label">Insight</div>
-            <div class="insight-text">{item_count} items · {gen_date}</div>
-        </div>
-    </div>
-    <div class="doc-footer" data-object="footer">Generated by Quanora</div>
-</div>
-</body>
-</html>"""
-
-_TIMELINE_ITEM_TEMPLATE = """\
-<!-- {day_label} -->
-<div class="content-card {highlight_class}" data-object="card-{card_index}">
-    <div class="card-header">
-        <span class="card-day-label">{day_label}</span>
-        <span class="card-number">{circle_number}</span>
-    </div>
-    <div class="card-icon"><i class="{icon_class}"></i></div>
-    <div class="card-title">{item_title}</div>
-    <div class="card-desc">{item_desc}</div>
-    {highlight_tag}
-</div>"""
-
+# ──────────────────────────────────────────────────────────────────────
+# generate_doc_html tool
+# ──────────────────────────────────────────────────────────────────────
 
 def generate_doc_html(
     file_path: str,
@@ -685,170 +592,186 @@ def generate_doc_html(
     section_label: str = "",
     timeline_items: list[dict[str, Any]] | None = None,
 ) -> dict:
-    """Generate a PPT-style document HTML file.
+    """Generate a timeline-style document HTML file.
 
-    Each page is a 1280×720 px container with a left dark panel
-    and right content cards grid.
-
-    Parameters
-    ----------
-    file_path : str
-        Output HTML file path (relative to workspace root).
-    title : str
-        Document title.
-    subtitle : str
-        Subtitle below the title.
-    section_label : str
-        Section label shown at top-left (e.g. "03 / 攻击拆解").
-    timeline_items : list[dict]
-        List of content entries.  Each dict may contain:
-          - day_label (str): e.g. "DAY 01", "Phase 1"
-          - number (int/str): Number in the circle badge
-          - icon (str): FontAwesome icon class, e.g. "fa-solid fa-crosshairs"
-          - item_title (str): Bold title for the card
-          - description (str): Description text
-          - highlight (bool or str): If True, use accent style; if str, use
-            accent style and show the string as a highlight tag
-
-    Returns
-    -------
-    dict
-        tool_ok / tool_error result.
+    Each page is 1280×720 pixels, containing a horizontal timeline axis with
+    card-style content items below.
     """
-    try:
-        guard, resolved = _resolve_workspace_path(file_path)
-        _ensure_dir(resolved)
+    if not title:
+        return tool_error("generate_doc_html", "title is required", "ValueError")
 
-        # Workspace boundary check
-        violation = guard.check_write(resolved)
-        if violation is not None:
-            return tool_error(
-                "generate_doc_html",
-                f"WORKSPACE BOUNDARY VIOLATION: {violation.reason} | Fix: {violation.suggested_fix}",
-                "WorkspaceViolation",
-                meta={"path": str(violation.path)},
-            )
+    timeline_items = timeline_items or []
 
-        # Build timeline items HTML
-        items_html_parts: list[str] = []
-        if timeline_items:
-            for idx, item in enumerate(timeline_items):
-                day_label = html_mod.escape(str(item.get("day_label", f"#{idx+1}")))
-                number = item.get("number", idx + 1)
-                icon_class = html_mod.escape(item.get("icon", "fa-solid fa-circle"))
-                item_title = html_mod.escape(str(item.get("item_title", "")))
-                item_desc = html_mod.escape(str(item.get("description", "")))
-                highlight = item.get("highlight", False)
+    # Build timeline nodes (the circles on the axis)
+    node_parts: list[str] = []
+    for i, item in enumerate(timeline_items):
+        num = i + 1
+        is_hl = item.get("highlight", False)
+        day_label = item.get("day_label", "")
+        hl_class = " highlight" if is_hl else ""
+        node_parts.append(
+            f'<div class="timeline-node">'
+            f'<div class="node-circle{hl_class}">{num}</div>'
+            f'<div class="node-label">{html_mod.escape(day_label)}</div>'
+            f'</div>'
+        )
+    timeline_nodes_html = "\n".join(node_parts)
 
-                highlight_class = "highlight" if highlight else ""
-                highlight_tag_html = (
-                    f'<span class="card-highlight-tag">{html_mod.escape(str(highlight))}</span>'
-                    if highlight and isinstance(highlight, str)
-                    else ""
-                )
+    # Build content cards
+    card_parts: list[str] = []
+    for i, item in enumerate(timeline_items):
+        is_hl = item.get("highlight", False)
+        hl_class = " highlight" if is_hl else ""
+        icon_str = item.get("icon", "")
+        icon_html = f'<div class="card-icon">{html_mod.escape(icon_str)}</div>' if icon_str else ""
+        item_title = item.get("item_title", "")
+        desc = item.get("description", "")
+        hl_tag = (
+            f'<span class="highlight-tag">Key Event</span>'
+            if is_hl else ""
+        )
+        card_parts.append(
+            f'<div class="content-card{hl_class}">'
+            f'{icon_html}'
+            f'<div class="card-title">{html_mod.escape(item_title)}</div>'
+            f'<div class="card-desc">{html_mod.escape(desc)}</div>'
+            f'{hl_tag}'
+            f'</div>'
+        )
+    timeline_items_html = "\n".join(card_parts)
 
-                item_html = _TIMELINE_ITEM_TEMPLATE.format(
-                    day_label=day_label,
-                    highlight_class=highlight_class,
-                    card_index=idx,
-                    circle_number=html_mod.escape(str(number)),
-                    icon_class=icon_class,
-                    item_title=item_title,
-                    item_desc=item_desc,
-                    highlight_tag=highlight_tag_html,
-                )
-                items_html_parts.append(item_html)
+    grid_cols = min(len(timeline_items), 5) if timeline_items else 1
+    grid_class = "single-column" if len(timeline_items) <= 2 else ""
+    item_count = len(timeline_items)
+    gen_date = datetime.now().strftime("%Y-%m-%d")
 
-        timeline_items_html = "\n".join(items_html_parts)
-        grid_class = "single-column" if timeline_items and len(timeline_items) <= 2 else ""
-        item_count = len(timeline_items) if timeline_items else 0
-        gen_date = datetime.now().strftime("%Y-%m-%d")
+    section_label_html = (
+        f'<div class="doc-section-label">{html_mod.escape(section_label)}</div>'
+    ) if section_label else ""
+    subtitle_html = (
+        f'<p class="doc-subtitle">{html_mod.escape(subtitle)}</p>'
+    ) if subtitle else ""
 
-        doc_html = _DOC_TEMPLATE.format(
-            doc_title=html_mod.escape(title),
-            section_label=html_mod.escape(section_label),
-            title=html_mod.escape(title),
-            subtitle=html_mod.escape(subtitle),
-            timeline_items_html=timeline_items_html,
-            grid_class=grid_class,
-            item_count=item_count,
-            gen_date=gen_date,
+    doc_html = _DOC_TEMPLATE.format(
+        font_links=_SHARED_FONT_LINKS,
+        shared_style=_SHARED_STYLE,
+        doc_title=html_mod.escape(title),
+        section_label_html=section_label_html,
+        subtitle_html=subtitle_html,
+        timeline_nodes_html=timeline_nodes_html,
+        timeline_items_html=timeline_items_html,
+        grid_class=grid_class,
+        grid_cols=grid_cols,
+        item_count=item_count,
+        gen_date=gen_date,
+    )
+
+    guard, resolved = _resolve_workspace_path(file_path)
+    guard.check_write(resolved)
+    _ensure_dir(resolved)
+    with open(resolved, "w", encoding="utf-8") as f:
+        f.write(doc_html)
+
+    return tool_ok(
+        "generate_doc_html",
+        data={"file_path": file_path, "size_bytes": os.path.getsize(resolved)},
+        meta={"item_count": item_count},
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# convert_html_to_pdf tool
+# ──────────────────────────────────────────────────────────────────────
+
+def convert_html_to_pdf(
+    file_path: str,
+    output_path: str = "",
+) -> dict:
+    """Convert an HTML file to PDF using Playwright (headless Chromium).
+
+    Supports both:
+    - **Multi-slide PPT HTML**: multiple ``<!DOCTYPE html>`` blocks, each
+      rendered as a separate 1280×720 landscape page.
+    - **Single-page Doc HTML**: one ``<!DOCTYPE html>`` block rendered as
+      a single page.
+
+    PDF pages are 1280×720 px (16:9 landscape) with zero margins, matching
+    the HTML viewport exactly.
+    """
+    if not file_path:
+        return tool_error("convert_html_to_pdf", "file_path is required", "ValueError")
+
+    _, resolved_input = _resolve_workspace_path(file_path)
+
+    if not os.path.isfile(resolved_input):
+        return tool_error(
+            "convert_html_to_pdf",
+            f"HTML file not found: {file_path}",
+            "FileNotFoundError",
         )
 
-        with open(resolved, "w", encoding="utf-8") as f:
-            f.write(doc_html)
+    if not output_path:
+        base, _ = os.path.splitext(file_path)
+        output_path = base + ".pdf"
 
-        item_count = len(timeline_items) if timeline_items else 0
-        return tool_ok(
-            "generate_doc_html",
-            f"Generated document HTML with {item_count} timeline items → {file_path}",
-            meta={"file_path": file_path, "item_count": item_count, "bytes": len(doc_html)},
+    _, resolved_output = _resolve_workspace_path(output_path)
+    _ensure_dir(resolved_output)
+
+    # Read the HTML content
+    with open(resolved_input, "r", encoding="utf-8") as f:
+        html_content = f.read()
+
+    # Detect if multi-DOCTYPE (PPT-style) or single-DOCTYPE (doc-style)
+    doctype_count = html_content.count("<!DOCTYPE html>")
+
+    if doctype_count > 1:
+        # Multi-slide PPT HTML → split and recombine
+        slides = _split_multi_doctype_html(html_content)
+        if not slides:
+            return tool_error(
+                "convert_html_to_pdf",
+                "No valid slide content found in the HTML file",
+                "ParseError",
+            )
+        single_html = _build_single_doc_html(slides, title="Presentation")
+    else:
+        single_html = html_content
+
+    # Render to PDF
+    try:
+        page_count, file_size = _render_pdf_with_playwright(single_html, resolved_output)
+    except ImportError:
+        return tool_error(
+            "convert_html_to_pdf",
+            "Playwright is not installed. Install with: pip install playwright && playwright install chromium",
+            "ImportError",
         )
     except Exception as exc:
-        return tool_error("generate_doc_html", f"generate_doc_html failed: {exc}", type(exc).__name__)
+        return tool_error(
+            "convert_html_to_pdf",
+            f"PDF rendering failed: {exc}",
+            "RuntimeError",
+        )
+
+    return tool_ok(
+        "convert_html_to_pdf",
+        data={"input_path": file_path, "output_path": output_path, "file_size_bytes": file_size},
+        meta={"page_count": page_count},
+    )
 
 
-# ===================================================================
-#  HTML → PDF Conversion
-# ===================================================================
-
-# Page size matching our 1280×720 slide design, converted to mm at 96 DPI.
-# 1280px / 96 * 25.4 ≈ 338.67mm,  720px / 96 * 25.4 ≈ 190.5mm
-_PDF_PAGE_WIDTH_MM = 338.67
-_PDF_PAGE_HEIGHT_MM = 190.50
-
-_PDF_WRAPPER_TEMPLATE = """\
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8"/>
-<title>{title}</title>
-<style>
-@page {{
-    size: 1280px 720px;
-    margin: 0;
-}}
-html, body {{
-    margin: 0;
-    padding: 0;
-    background: #FFFFFF;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-}}
-.slide-page {{
-    width: 1280px;
-    height: 720px;
-    page-break-after: always;
-    page-break-inside: avoid;
-    break-after: page;
-    break-inside: avoid;
-    overflow: hidden;
-    position: relative;
-    box-sizing: border-box;
-}}
-.slide-page:last-child {{
-    page-break-after: auto;
-    break-after: auto;
-}}
-</style>
-{head_extras}
-</head>
-<body>
-{slide_pages}
-</body>
-</html>"""
-
+# ──────────────────────────────────────────────────────────────────────
+# Internal helpers
+# ──────────────────────────────────────────────────────────────────────
 
 def _split_multi_doctype_html(html_content: str) -> list[dict[str, str]]:
-    """Split a multi-DOCTYPE HTML file into individual slide parts.
+    """Split a multi-DOCTYPE HTML string into per-slide dicts.
 
-    Returns a list of dicts with keys:
-      - ``body``: the inner content of each <body> tag
-      - ``style``: any <style> content from each <head> tag (first occurrence used)
-      - ``link``: any <link> tags from the <head>
+    Each dict has keys: ``body``, ``style``, ``link``.
     """
-    # Split on DOCTYPE boundaries
-    parts = re.split(r"<!DOCTYPE\s+html\s*>", html_content, flags=re.IGNORECASE)
+    # Split on <!DOCTYPE html>
+    parts = re.split(r"<!DOCTYPE\s+html[^>]*>", html_content, flags=re.IGNORECASE)
+
     slides: list[dict[str, str]] = []
 
     for part in parts:
@@ -856,26 +779,30 @@ def _split_multi_doctype_html(html_content: str) -> list[dict[str, str]]:
         if not part:
             continue
 
-        # Extract <body>…</body> content
-        body_match = re.search(
-            r"<body[^>]*>(.*?)</body>", part, re.DOTALL | re.IGNORECASE
-        )
-        if not body_match:
-            continue
-
-        body_content = body_match.group(1).strip()
-        if not body_content:
-            continue
-
-        # Extract <style>…</style> from <head>
-        style_match = re.search(
-            r"<style[^>]*>(.*?)</style>", part, re.DOTALL | re.IGNORECASE
-        )
+        # Extract <style> content
+        style_match = re.search(r"<style[^>]*>(.*?)</style>", part, re.DOTALL | re.IGNORECASE)
         style_content = style_match.group(1).strip() if style_match else ""
 
-        # Extract <link> tags (e.g., fonts, icons)
-        link_tags = re.findall(r"<link[^>]+/>", part, re.IGNORECASE)
-        link_html = "\n".join(link_tags)
+        # Extract <link> tags (for fonts etc.)
+        link_matches = re.findall(r"<link[^>]+rel=\"stylesheet\"[^>]*>", part, re.IGNORECASE)
+        link_html = "\n".join(link_matches)
+
+        # Extract <body> content – try <body> tag first
+        body_match = re.search(r"<body[^>]*>(.*?)</body>", part, re.DOTALL | re.IGNORECASE)
+        if body_match:
+            body_content = body_match.group(1).strip()
+        else:
+            # Fallback: take everything after </head> or </style>
+            after_head = re.split(r"</head>", part, flags=re.IGNORECASE)
+            if len(after_head) > 1:
+                body_content = after_head[1].strip()
+            else:
+                body_content = part.strip()
+            # Remove trailing </html>
+            body_content = re.sub(r"</html>\s*$", "", body_content, flags=re.IGNORECASE).strip()
+
+        if not body_content:
+            continue
 
         slides.append({
             "body": body_content,
@@ -901,177 +828,85 @@ def _build_single_doc_html(
     merged_styles: list[str] = []
     link_tags: list[str] = []
 
-    for sl in slides:
-        if sl["style"]:
-            # Normalise whitespace for dedup
-            key = re.sub(r"\s+", " ", sl["style"]).strip()
-            if key not in seen_styles:
-                seen_styles.add(key)
-                merged_styles.append(sl["style"])
-        if sl["link"]:
-            for tag in sl["link"].split("\n"):
-                tag = tag.strip()
-                if tag and tag not in link_tags:
-                    link_tags.append(tag)
+    for slide in slides:
+        style_text = slide.get("style", "")
+        if style_text and style_text not in seen_styles:
+            seen_styles.add(style_text)
+            merged_styles.append(style_text)
 
-    # Build slide pages HTML
-    slide_pages_parts: list[str] = []
-    for sl in slides:
-        slide_pages_parts.append(
-            f'<div class="slide-page">\n{sl["body"]}\n</div>'
+        link_html = slide.get("link", "")
+        if link_html and link_html not in link_tags:
+            link_tags.append(link_html)
+
+    # Deduplicate Google Fonts links – keep only one set
+    font_links_deduped: list[str] = []
+    seen_font_urls: set[str] = set()
+    for lnk in link_tags:
+        for line in lnk.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            # Extract href for dedup
+            href_match = re.search(r'href="([^"]+)"', line)
+            if href_match:
+                href = href_match.group(1)
+                if href in seen_font_urls:
+                    continue
+                seen_font_urls.add(href)
+            font_links_deduped.append(line)
+
+    # Build slide pages
+    slide_pages: list[str] = []
+    for slide in slides:
+        body = slide.get("body", "")
+        slide_pages.append(
+            f'<div class="slide-page">\n{body}\n</div>'
         )
 
-    slide_pages_html = "\n".join(slide_pages_parts)
-    head_extras = "\n".join(link_tags)
-    if merged_styles:
-        head_extras += "\n<style>\n" + "\n".join(merged_styles) + "\n</style>"
+    all_styles = "\n".join(merged_styles)
+    all_links = "\n".join(font_links_deduped)
+    all_pages = "\n\n".join(slide_pages)
 
-    return _PDF_WRAPPER_TEMPLATE.format(
-        title=html_mod.escape(title),
-        head_extras=head_extras,
-        slide_pages=slide_pages_html,
-    )
-
-
-def convert_html_to_pdf(
-    file_path: str,
-    output_path: str = "",
-) -> dict:
-    """Convert an HTML file (generated by generate_ppt_html or generate_doc_html)
-    to a PDF file, preserving the exact layout and styling.
-
-    The function handles multi-DOCTYPE HTML files (where each slide is a
-    separate HTML document) by recombining them into a single paginated
-    document with CSS ``@page`` rules and ``page-break-after``.
-
-    Uses Playwright (headless Chromium) for pixel-perfect rendering.
-
-    Parameters
-    ----------
-    file_path : str
-        Input HTML file path (relative to workspace root).
-    output_path : str
-        Output PDF file path (relative to workspace root).
-        If empty, replaces the input extension with ``.pdf``.
-
-    Returns
-    -------
-    dict
-        tool_ok / tool_error result with metadata including page count and bytes.
-    """
-    try:
-        guard, resolved_input = _resolve_workspace_path(file_path)
-
-        if not output_path:
-            base, _ = os.path.splitext(file_path)
-            output_path = base + ".pdf"
-        guard_out, resolved_output = _resolve_workspace_path(output_path)
-
-        # Workspace boundary checks
-        violation = guard.check_write(resolved_output)
-        if violation is not None:
-            return tool_error(
-                "convert_html_to_pdf",
-                f"WORKSPACE BOUNDARY VIOLATION: {violation.reason} | Fix: {violation.suggested_fix}",
-                "WorkspaceViolation",
-                meta={"path": str(violation.path)},
-            )
-
-        if not os.path.isfile(resolved_input):
-            return tool_error(
-                "convert_html_to_pdf",
-                f"Input file not found: {file_path}",
-                "FileNotFound",
-            )
-
-        # Read the HTML content
-        with open(resolved_input, "r", encoding="utf-8") as f:
-            html_content = f.read()
-
-        # Detect if multi-DOCTYPE (PPT-style) or single-DOCTYPE (doc-style)
-        doctype_count = html_content.count("<!DOCTYPE html>")
-
-        if doctype_count > 1:
-            # Multi-slide PPT HTML → split and recombine
-            slides = _split_multi_doctype_html(html_content)
-            if not slides:
-                return tool_error(
-                    "convert_html_to_pdf",
-                    "No valid slide content found in the HTML file",
-                    "ParseError",
-                )
-            single_html = _build_single_doc_html(slides, title="Presentation")
-        else:
-            # Single-DOCTYPE doc HTML → inject @page CSS
-            single_html = _inject_page_css(html_content)
-
-        # Ensure output directory exists
-        _ensure_dir(resolved_output)
-
-        # Render with Playwright
-        page_count, pdf_bytes = _render_pdf_with_playwright(
-            single_html, resolved_output
-        )
-
-        return tool_ok(
-            "convert_html_to_pdf",
-            f"Converted {file_path} → {output_path} ({page_count} pages, {pdf_bytes:,} bytes)",
-            meta={
-                "file_path": output_path,
-                "page_count": page_count,
-                "bytes": pdf_bytes,
-                "input_file": file_path,
-            },
-        )
-    except ImportError:
-        return tool_error(
-            "convert_html_to_pdf",
-            "Playwright is not installed. Run: pip install playwright && playwright install chromium",
-            "DependencyMissing",
-        )
-    except Exception as exc:
-        return tool_error("convert_html_to_pdf", f"convert_html_to_pdf failed: {exc}", type(exc).__name__)
-
-
-def _inject_page_css(html_content: str) -> str:
-    """Inject @page CSS rules into a single-DOCTYPE HTML for proper PDF sizing.
-
-    For documents generated by generate_doc_html (single page, 1280×720).
-    """
-    page_css = (
-        f"@page {{ size: 1280px 720px; margin: 0; }}\n"
-        "html, body { margin: 0 !important; padding: 0 !important; "
-        "-webkit-print-color-adjust: exact; "
-        "print-color-adjust: exact; "
-        "}\n"
-    )
-
-    if "</style>" in html_content:
-        # Insert before the closing </style> tag
-        html_content = html_content.replace(
-            "</style>", page_css + "</style>", 1
-        )
-    else:
-        # No <style> tag — inject one in <head>
-        page_block = f"<style>\n{page_css}</style>"
-        if "</head>" in html_content:
-            html_content = html_content.replace(
-                "</head>", page_block + "\n</head>", 1
-            )
-        else:
-            html_content = page_block + html_content
-
-    return html_content
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280">
+{all_links}
+<style>
+{_SHARED_STYLE}
+@page {{
+    size: 1280px 720px;
+    margin: 0;
+}}
+.slide-page {{
+    width: 1280px;
+    height: 720px;
+    position: relative;
+    overflow: hidden;
+    page-break-after: always;
+    background: #FFFFFF;
+}}
+{all_styles}
+</style>
+</head>
+<body>
+{all_pages}
+</body>
+</html>"""
 
 
 def _render_pdf_with_playwright(html_content: str, output_path: str) -> tuple[int, int]:
     """Render *html_content* to a PDF file using Playwright.
 
+    Each ``.slide-page`` div becomes one 1280×720 landscape page in the PDF.
+    For documents without ``.slide-page``, the content is rendered as a single
+    page whose size matches the document's natural dimensions.
+
     Returns (page_count, file_size_bytes).
     """
     from playwright.sync_api import sync_playwright
 
-    # Convert html_content to a file:// URI for Playwright
     import tempfile
 
     with tempfile.NamedTemporaryFile(
@@ -1090,7 +925,7 @@ def _render_pdf_with_playwright(html_content: str, output_path: str) -> tuple[in
             page.goto(f"file://{tmp_path}", wait_until="networkidle")
 
             # Wait for fonts to load
-            page.wait_for_timeout(500)
+            page.wait_for_timeout(800)
 
             page.pdf(
                 path=output_path,
@@ -1108,7 +943,6 @@ def _render_pdf_with_playwright(html_content: str, output_path: str) -> tuple[in
             pass
 
     file_size = os.path.getsize(output_path)
-    # Count pages by reading PDF metadata (simple heuristic)
     page_count = _count_pdf_pages(output_path)
 
     return page_count, file_size
@@ -1124,7 +958,6 @@ def _count_pdf_pages(pdf_path: str) -> int:
         data = f.read()
 
     # Count /Type /Page but not /Type /Pages
-    # In well-formed PDFs, each page has /Type /Page
     pages_pattern = rb"/Type\s*/Page[^s]"
     matches = re.findall(pages_pattern, data)
     if matches:

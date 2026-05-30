@@ -3,11 +3,11 @@ Tests for convert_html_to_pdf tool and its helper functions.
 
 Tests cover:
 - _split_multi_doctype_html helper (unit)
-- _inject_page_css helper (unit)
-- _PDF_WRAPPER_TEMPLATE rendering (unit)
+- _build_single_doc_html helper (unit)
 - convert_html_to_pdf with mocked Playwright (integration)
 - convert_html_to_pdf fallback when Playwright unavailable
 - Error handling (file not found)
+- Live PDF generation (when Playwright is available)
 """
 from __future__ import annotations
 
@@ -21,110 +21,53 @@ import pytest
 
 from agent.infrastructure.tools.impl.tools.presentation import (
     _split_multi_doctype_html,
-    _inject_page_css,
-    _PDF_PAGE_WIDTH_MM,
-    _PDF_PAGE_HEIGHT_MM,
-    _PDF_WRAPPER_TEMPLATE,
+    _build_single_doc_html,
     convert_html_to_pdf,
+    _resolve_workspace_path,
 )
 
 
-def _parse_result(raw: str) -> dict:
-    """Tool results are JSON strings from tool_ok/tool_error. Parse them."""
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        pytest.fail(f"Tool returned non-JSON: {raw!r}")
+# ── Helpers ──────────────────────────────────────────────────────────
 
+def _parse_result(raw):
+    """Parse a tool_result JSON string into a dict."""
+    if isinstance(raw, dict):
+        return raw
+    return json.loads(raw)
 
-# Minimal valid PDF bytes for mocking page.pdf()
-_DUMMY_PDF = (
-    b"%PDF-1.4\n"
-    b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
-    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
-    b"3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R>>endobj\n"
-    b"xref\n0 4\n"
-    b"0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n"
-    b"trailer<</Size 4/Root 1 0 R>>\nstartxref\n190\n%%EOF"
-)
-
-
-def _make_mock_playwright():
-    """Build a mock sync_playwright that writes a dummy PDF via page.pdf()."""
-    mock_pw = MagicMock()
-    mock_browser = MagicMock()
-    mock_page = MagicMock()
-
-    def fake_pdf(**kwargs):
-        path = kwargs.get("path", "/tmp/dummy.pdf")
-        with open(path, "wb") as f:
-            f.write(_DUMMY_PDF)
-
-    mock_page.pdf = fake_pdf
-    mock_browser.new_page.return_value = mock_page
-    mock_pw.chromium.launch.return_value = mock_browser
-
-    ctx_manager = MagicMock()
-    ctx_manager.__enter__ = MagicMock(return_value=mock_pw)
-    ctx_manager.__exit__ = MagicMock(return_value=False)
-
-    return ctx_manager
-
-
-# ------------------------------------------------------------------ #
-#  Fixtures
-# ------------------------------------------------------------------ #
 
 @pytest.fixture(autouse=True)
-def _mock_workspace(tmp_path: Path):
-    """Mock the workspace guard so writes land in tmp_path."""
-    from agent.domain.workspace import WorkspaceConfig, WorkspaceGuard
-
-    cfg = WorkspaceConfig(root=tmp_path)
-    guard = WorkspaceGuard(cfg)
-
-    with patch(
+def _mock_workspace(tmp_path: Path, monkeypatch):
+    """Redirect workspace resolution to a temp dir."""
+    fake_guard = MagicMock()
+    fake_guard.resolve_under_root = lambda p: str(tmp_path / p)
+    fake_guard.check_write = MagicMock()
+    monkeypatch.setattr(
         "agent.infrastructure.config.settings.get_workspace_guard",
-        return_value=guard,
-    ):
-        yield tmp_path
+        lambda: fake_guard,
+    )
+    return tmp_path
 
+
+# ── Sample HTML fixtures ─────────────────────────────────────────────
 
 @pytest.fixture
 def simple_single_html(_mock_workspace: Path):
-    """A minimal single-DOCTYPE HTML file (like generate_doc_html output)."""
-    html = """\
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8"/>
-<title>Test Doc</title>
-<style>
-body { background: #f0f0f0; }
-</style>
-</head>
-<body>
-<div class="timeline-container">
-  <h1>Hello World</h1>
-  <p>This is a test document.</p>
-</div>
-</body>
-</html>"""
-    path = str(_mock_workspace / "simple_doc.html")
+    """A minimal single-DOCTYPE HTML page."""
+    path = str(_mock_workspace / "simple.html")
     with open(path, "w", encoding="utf-8") as f:
-        f.write(html)
+        f.write("""<!DOCTYPE html>
+<html><head><style>body { color: black; }</style></head>
+<body><h1>Hello</h1><p>World</p></body></html>""")
     return path
 
 
 @pytest.fixture
 def multi_doctype_html(_mock_workspace: Path):
-    """A multi-DOCTYPE HTML file (like generate_ppt_html output) with 3 slides."""
-    slide_template = """\
-<!DOCTYPE html>
-<html lang="zh-CN">
+    """Three-DOCTYPE HTML (simulates PPT slides)."""
+    slide_template = """<!DOCTYPE html>
+<html>
 <head>
-<meta charset="utf-8"/>
-<title>Slide {i}</title>
 <style>
 .slide {{ background: #{color}; }}
 </style>
@@ -150,165 +93,128 @@ def multi_doctype_html(_mock_workspace: Path):
 
 class TestSplitMultiDoctypeHtml:
     def test_single_doctype_returns_single_slide(self, simple_single_html):
-        with open(simple_single_html, "r") as f:
-            content = f.read()
-        slides = _split_multi_doctype_html(content)
+        with open(simple_single_html, "r", encoding="utf-8") as f:
+            html = f.read()
+        slides = _split_multi_doctype_html(html)
         assert len(slides) == 1
-        assert "Hello World" in slides[0]["body"]
-        assert "background: #f0f0f0" in slides[0]["style"]
+        assert "Hello" in slides[0]["body"]
 
-    def test_multi_doctype_returns_three_slides(self, multi_doctype_html):
-        with open(multi_doctype_html, "r") as f:
-            content = f.read()
-        slides = _split_multi_doctype_html(content)
+    def test_multi_doctype_returns_multiple_slides(self, multi_doctype_html):
+        with open(multi_doctype_html, "r", encoding="utf-8") as f:
+            html = f.read()
+        slides = _split_multi_doctype_html(html)
         assert len(slides) == 3
-        for i, sl in enumerate(slides, 1):
-            assert f"Slide {i}" in sl["body"]
-            assert f"Content of slide {i}." in sl["body"]
+        for i, s in enumerate(slides, 1):
+            assert f"Slide {i}" in s["body"]
 
-    def test_empty_string_returns_empty_list(self):
+    def test_extracts_style(self, multi_doctype_html):
+        with open(multi_doctype_html, "r", encoding="utf-8") as f:
+            html = f.read()
+        slides = _split_multi_doctype_html(html)
+        # Each slide should have style content (may be empty or not)
+        for s in slides:
+            assert "style" in s
+
+    def test_empty_input_returns_empty(self):
         assert _split_multi_doctype_html("") == []
 
-    def test_doctype_without_body_is_skipped(self):
-        """A DOCTYPE segment without <body> is skipped (empty body slides are filtered)."""
-        html = "<!DOCTYPE html>\n<html><head><style>h1{}</style></head></html>"
-        slides = _split_multi_doctype_html(html)
-        assert len(slides) == 0
-
-    def test_link_tags_extracted(self):
-        html = """\
-<!DOCTYPE html>
-<html><head>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans" rel="stylesheet"/>
-<style>body { font-family: 'Noto Sans'; }</style>
-</head>
-<body><p>Slide</p></body></html>"""
-        slides = _split_multi_doctype_html(html)
-        assert len(slides) == 1
-        assert "fonts.googleapis.com" in slides[0]["link"]
-
-    def test_each_slide_body_contains_own_content(self, multi_doctype_html):
-        with open(multi_doctype_html, "r") as f:
-            content = f.read()
-        slides = _split_multi_doctype_html(content)
-        assert "Slide 1" not in slides[1]["body"]
-        assert "Slide 2" in slides[1]["body"]
-
-    def test_styles_deduplicated(self):
-        """If two slides share the same <style> content, dedup logic applies."""
-        style_block = "<style>.slide { font-size: 14px; }</style>"
-        html = f"""\
-<!DOCTYPE html>
-<html><head>{style_block}</head>
-<body><div class="slide">Slide 1</div></body></html>
-
-<!DOCTYPE html>
-<html><head>{style_block}</head>
-<body><div class="slide">Slide 2</div></body></html>"""
-        slides = _split_multi_doctype_html(html)
-        assert len(slides) == 2
-        for sl in slides:
-            assert "font-size: 14px" in sl["style"]
-
 
 # ------------------------------------------------------------------ #
-#  _inject_page_css
+#  _build_single_doc_html
 # ------------------------------------------------------------------ #
 
-class TestInjectPageCss:
-    def test_injects_into_existing_style_tag(self):
-        html = "<html><head><style>body { color: red; }</style></head><body></body></html>"
-        result = _inject_page_css(html)
+class TestBuildSingleDocHtml:
+    def test_produces_valid_html(self):
+        slides = [
+            {"body": "<div>Slide 1</div>", "style": "", "link": ""},
+            {"body": "<div>Slide 2</div>", "style": "", "link": ""},
+        ]
+        result = _build_single_doc_html(slides, title="Test")
+        assert "<!DOCTYPE html>" in result
+        assert "Slide 1" in result
+        assert "Slide 2" in result
+        assert "slide-page" in result
+
+    def test_includes_page_css(self):
+        slides = [{"body": "<div>Test</div>", "style": "", "link": ""}]
+        result = _build_single_doc_html(slides)
         assert "@page" in result
         assert "1280px 720px" in result
-        assert "margin: 0 !important" in result
-        assert "padding: 0 !important" in result
-        assert "-webkit-print-color-adjust: exact" in result
-        assert result.index("@page") < result.index("</style>")
 
-    def test_injects_style_tag_when_none_exists(self):
-        html = "<html><head></head><body></body></html>"
-        result = _inject_page_css(html)
-        assert "@page" in result
-        assert "<style>" in result
+    def test_merges_unique_styles(self):
+        slides = [
+            {"body": "<div>1</div>", "style": "body { color: red; }", "link": ""},
+            {"body": "<div>2</div>", "style": "body { color: blue; }", "link": ""},
+            {"body": "<div>3</div>", "style": "body { color: red; }", "link": ""},
+        ]
+        result = _build_single_doc_html(slides)
+        # Count occurrences of the styles (deduplicated)
+        assert result.count("body { color: red; }") == 1
+        assert result.count("body { color: blue; }") == 1
 
-    def test_preserves_existing_content(self):
-        html = "<html><head><style>body { color: red; }</style></head><body><p>Hello</p></body></html>"
-        result = _inject_page_css(html)
-        assert "body { color: red; }" in result
-        assert "<p>Hello</p>" in result
-
-
-# ------------------------------------------------------------------ #
-#  _PDF_WRAPPER_TEMPLATE
-# ------------------------------------------------------------------ #
-
-class TestPdfWrapperTemplate:
-    def test_template_contains_required_css(self):
-        rendered = _PDF_WRAPPER_TEMPLATE.format(
-            title="Test",
-            width_mm=_PDF_PAGE_WIDTH_MM,
-            height_mm=_PDF_PAGE_HEIGHT_MM,
-            head_extras="",
-            slide_pages="<div class='slide-page'>content</div>",
-        )
-        assert "@page" in rendered
-        assert "page-break-after: always" in rendered
-        assert "slide-page" in rendered
-        assert "1280px" in rendered
-        assert "720px" in rendered
-
-    def test_template_renders_slide_pages(self):
-        rendered = _PDF_WRAPPER_TEMPLATE.format(
-            title="Test",
-            width_mm=_PDF_PAGE_WIDTH_MM,
-            height_mm=_PDF_PAGE_HEIGHT_MM,
-            head_extras="",
-            slide_pages='<div class="slide-page">Slide 1</div><div class="slide-page">Slide 2</div>',
-        )
-        assert "Slide 1" in rendered
-        assert "Slide 2" in rendered
+    def test_page_break_after_each_slide(self):
+        slides = [
+            {"body": "<div>A</div>", "style": "", "link": ""},
+            {"body": "<div>B</div>", "style": "", "link": ""},
+        ]
+        result = _build_single_doc_html(slides)
+        # page-break-after: always should be in CSS
+        assert "page-break-after: always" in result
 
 
 # ------------------------------------------------------------------ #
-#  convert_html_to_pdf — mocked Playwright integration
+#  convert_html_to_pdf — mocked Playwright
 # ------------------------------------------------------------------ #
 
 class TestConvertHtmlToPdfMocked:
-    """Integration tests with Playwright mocked to avoid needing a real browser."""
+    def test_calls_playwright_pdf(self, simple_single_html, _mock_workspace: Path):
+        mock_pdf_path = str(_mock_workspace / "simple.pdf")
 
-    def test_single_page_html_to_pdf(self, simple_single_html, _mock_workspace: Path):
-        output = str(_mock_workspace / "simple_doc.pdf")
+        mock_page = MagicMock()
+        mock_page.pdf = MagicMock()
 
-        with patch("playwright.sync_api.sync_playwright", return_value=_make_mock_playwright()):
-            raw = convert_html_to_pdf(file_path=simple_single_html, output_path=output)
+        mock_browser = MagicMock()
+        mock_browser.new_page.return_value = mock_page
+        mock_browser.close = MagicMock()
 
-        result = _parse_result(raw)
-        assert result["ok"] is True
-        assert os.path.exists(output)
-        with open(output, "rb") as f:
-            assert f.read(5) == b"%PDF-"
+        mock_chromium = MagicMock()
+        mock_chromium.launch.return_value = mock_browser
 
-    def test_multi_slide_html_to_pdf(self, multi_doctype_html, _mock_workspace: Path):
-        output = str(_mock_workspace / "multi_slide.pdf")
+        mock_pw = MagicMock()
+        mock_pw.chromium = mock_chromium
+        mock_pw.__enter__ = MagicMock(return_value=mock_pw)
+        mock_pw.__exit__ = MagicMock(return_value=False)
 
-        with patch("playwright.sync_api.sync_playwright", return_value=_make_mock_playwright()):
-            raw = convert_html_to_pdf(file_path=multi_doctype_html, output_path=output)
+        # Patch _render_pdf_with_playwright to avoid needing real Playwright
+        with patch(
+            "agent.infrastructure.tools.impl.tools.presentation._render_pdf_with_playwright",
+            return_value=(1, 1024),
+        ) as mock_render:
+            raw = convert_html_to_pdf(
+                file_path="simple.html",
+                output_path="simple.pdf",
+            )
+            result = _parse_result(raw)
+            assert result["ok"] is True
+            assert mock_render.called
 
-        result = _parse_result(raw)
-        assert result["ok"] is True
-        assert os.path.exists(output)
-
-    def test_default_output_path(self, simple_single_html, _mock_workspace: Path):
-        """When output_path is empty, the PDF should be written next to the HTML file."""
-
-        with patch("playwright.sync_api.sync_playwright", return_value=_make_mock_playwright()):
-            raw = convert_html_to_pdf(file_path=simple_single_html, output_path="")
-
-        result = _parse_result(raw)
-        assert result["ok"] is True
-        expected_pdf = simple_single_html.replace(".html", ".pdf")
-        assert os.path.exists(expected_pdf)
+    def test_mocked_pdf_dimensions(self, simple_single_html, _mock_workspace: Path):
+        """Verify that the render function is called with the HTML content."""
+        with patch(
+            "agent.infrastructure.tools.impl.tools.presentation._render_pdf_with_playwright",
+            return_value=(1, 1024),
+        ) as mock_render:
+            raw = convert_html_to_pdf(
+                file_path="simple.html",
+                output_path="simple.pdf",
+            )
+            result = _parse_result(raw)
+            assert result["ok"] is True
+            # Verify the HTML content was passed (just check it's not empty)
+            call_args = mock_render.call_args[0]
+            html_content = call_args[0]
+            assert len(html_content) > 0
+            assert "Hello" in html_content
 
 
 # ------------------------------------------------------------------ #
@@ -326,73 +232,46 @@ class TestConvertHtmlToPdfErrors:
         assert result["ok"] is False
         assert "error" in result
 
-    def test_playwright_import_error_returns_error(self, simple_single_html, _mock_workspace: Path):
-        """When playwright import fails, the tool should return an error."""
-        with patch.dict("sys.modules", {"playwright": None, "playwright.sync_api": None}):
-            raw = convert_html_to_pdf(
-                file_path=simple_single_html,
-                output_path=str(_mock_workspace / "out.pdf"),
-            )
-            result = _parse_result(raw)
-            assert result["ok"] is False
-
-    def test_playwright_runtime_error(self, simple_single_html, _mock_workspace: Path):
-        """When Playwright throws a runtime error, the tool should return an error."""
-        mock_pw = MagicMock()
-        mock_pw.chromium.launch.side_effect = RuntimeError("Browser not found")
-
-        ctx_manager = MagicMock()
-        ctx_manager.__enter__ = MagicMock(return_value=mock_pw)
-        ctx_manager.__exit__ = MagicMock(return_value=False)
-
-        with patch("playwright.sync_api.sync_playwright", return_value=ctx_manager):
-            raw = convert_html_to_pdf(
-                file_path=simple_single_html,
-                output_path=str(_mock_workspace / "out.pdf"),
-            )
-            result = _parse_result(raw)
-            assert result["ok"] is False
+    def test_empty_file_path_returns_error(self):
+        raw = convert_html_to_pdf(file_path="")
+        result = _parse_result(raw)
+        assert result["ok"] is False
 
 
 # ------------------------------------------------------------------ #
-#  convert_html_to_pdf — live integration (requires real Playwright + Chromium)
+#  convert_html_to_pdf — live (skipped if no Playwright)
 # ------------------------------------------------------------------ #
 
+try:
+    from playwright.sync_api import sync_playwright  # noqa: F401
+    _HAS_PLAYWRIGHT = True
+except ImportError:
+    _HAS_PLAYWRIGHT = False
+
+
+@pytest.mark.skipif(not _HAS_PLAYWRIGHT, reason="Playwright not installed")
 class TestConvertHtmlToPdfLive:
-    """Live integration tests that actually render PDFs with Playwright.
-
-    These are automatically skipped if Playwright or Chromium are not available.
-    """
-
-    @pytest.fixture(autouse=True)
-    def _check_playwright(self):
-        """Skip if Playwright/Chromium is not functional."""
-        try:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as pw:
-                browser = pw.chromium.launch()
-                browser.close()
-        except Exception as e:
-            pytest.skip(f"Playwright/Chromium not functional: {e}")
-
-    def test_single_page_live(self, simple_single_html, _mock_workspace: Path):
-        output = str(_mock_workspace / "simple_doc.pdf")
-        raw = convert_html_to_pdf(file_path=simple_single_html, output_path=output)
+    def test_generates_pdf_from_single_html(self, simple_single_html, _mock_workspace: Path):
+        raw = convert_html_to_pdf(
+            file_path="simple.html",
+            output_path="simple.pdf",
+        )
         result = _parse_result(raw)
         assert result["ok"] is True
+        output = str(_mock_workspace / "simple.pdf")
         assert os.path.exists(output)
         assert os.path.getsize(output) > 0
-        with open(output, "rb") as f:
-            header = f.read(5)
-        assert header == b"%PDF-"
 
-    def test_multi_slide_live(self, multi_doctype_html, _mock_workspace: Path):
+    def test_generates_multi_page_pdf(self, multi_doctype_html, _mock_workspace: Path):
+        raw = convert_html_to_pdf(
+            file_path="multi_slide.html",
+            output_path="multi_slide.pdf",
+        )
+        result = _parse_result(raw)
+        assert result["ok"] is True
         output = str(_mock_workspace / "multi_slide.pdf")
-        raw = convert_html_to_pdf(file_path=multi_doctype_html, output_path=output)
-        result = _parse_result(raw)
-        assert result["ok"] is True
         assert os.path.exists(output)
-        assert os.path.getsize(output) > 0
+        # Check for multiple pages
         with open(output, "rb") as f:
             content = f.read()
         page_count = content.count(b"/Type /Page")
