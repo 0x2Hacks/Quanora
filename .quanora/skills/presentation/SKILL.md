@@ -1,32 +1,102 @@
 ---
 name: "presentation"
-description: "通过HTML生成PPT演示文稿和时间线文档。提供 generate_ppt_html 和 generate_doc_html 两个工具。"
+description: "通过HTML生成PPT演示文稿和PPT风格文档。提供 generate_ppt_html 和 generate_doc_html 两个工具。"
 triggers:
   - "生成PPT"
   - "做PPT"
   - "制作幻灯片"
   - "生成演示文稿"
   - "生成文档"
-  - "时间线文档"
+  - "PPT文档"
   - "generate PPT"
   - "make slides"
   - "create presentation"
-  - "timeline document"
+  - "PPT document"
   - "做演示"
 ---
 
 # Presentation & Document Generation Skill
 
-When the user asks to create a PPT, slides, presentation, or a timeline-style
+When the user asks to create a PPT, slides, presentation, or a PPT-style
 document/report, activate this skill.  It provides two tools:
 
 | Tool | Purpose | Output |
 |------|---------|--------|
 | `generate_ppt_html` | Multi-slide PPT-style HTML (1280×720 px per slide) | `.html` file in workspace |
-| `generate_doc_html` | Timeline-style document HTML (1280×720 px) | `.html` file in workspace |
+| `generate_doc_html` | PPT-style document HTML (1280×720 px per page) | `.html` file in workspace |
 
 Both tools write the result into the workspace as a self-contained HTML file
 that can be opened in any browser or printed to PDF.
+
+---
+
+## ⚠ MANDATORY: Markdown Document Structure Rules
+
+When you generate a Markdown document (`.md`) that will later be converted to
+HTML, you **MUST** follow these structure rules. Violating any rule will cause
+the HTML output to look wrong and the conversion to fail.
+
+### Rule 1: Top-level sections MUST be numbered
+
+Every `#` heading MUST have a number prefix in the format `N.` or `N、`:
+
+```
+✅ # 1. 摘要
+✅ # 2. 研究背景
+✅ # 3. 技术方案
+❌ # 摘要          ← NO number
+❌ # 一、摘要      ← Wrong format (use Arabic numerals)
+❌ # Chapter 1     ← Wrong format (use N. not Chapter N)
+```
+
+### Rule 2: Sub-sections MUST use hierarchical numbering
+
+Every `##` heading MUST use `N.N` format, every `###` MUST use `N.N.N` format:
+
+```
+✅ ## 1.1 核心概念
+✅ ## 1.2 研究目标
+✅ ### 1.2.1 主目标
+✅ ### 1.2.2 子目标
+❌ ## 核心概念      ← No number
+❌ ## 1-1 核心概念  ← Wrong separator
+❌ ### 1.1 核心概念 ← Level mismatch (should be ## 1.1)
+```
+
+### Rule 3: Numbering MUST be consecutive and consistent
+
+- Section numbers must not skip: `1 → 2 → 3`, NOT `1 → 3 → 5`
+- Sub-section numbers must be under the correct parent: `2.1, 2.2` under `2.`
+- Do NOT mix numbered and unnumbered headings at the same level
+
+### Rule 4: Maximum 3 levels of headings
+
+Only use `#`, `##`, and `###`. Never use `####` or deeper.
+
+### Rule 5: Reference template
+
+Follow this template structure:
+
+```markdown
+# 1. 摘要
+> Brief summary of the document
+
+# 2. 研究背景
+## 2.1 问题定义
+## 2.2 相关工作
+
+# 3. 技术方案
+## 3.1 整体架构
+### 3.1.1 数据层
+### 3.1.2 逻辑层
+## 3.2 核心算法
+
+# 4. 实验结果
+## 4.1 实验设置
+## 4.2 结果分析
+
+# 5. 总结与展望
+```
 
 ---
 
@@ -36,7 +106,7 @@ that can be opened in any browser or printed to PDF.
 
 Ask the user (or infer from context):
 
-- **Type**: PPT (slides) or Document (timeline)?
+- **Type**: PPT (slides) or Document (multi-page)?
 - **Topic / Title**: What is the presentation about?
 - **Audience**: Who is it for?
 - **Key sections / slides**: What content should each slide cover?
@@ -51,9 +121,9 @@ yourself and confirm before generating.
   - Visual presentations for meetings, pitches, or reports
 
 - **`generate_doc_html`** — when the user wants:
-  - A single-page timeline or roadmap document
-  - Phase-by-phase breakdown (e.g., attack chain, project phases, roadmap)
-  - Any content that fits a horizontal timeline with 3-7 items
+  - A multi-page PPT-style document (each page 1280×720 px)
+  - Research reports, analysis documents, or structured overviews
+  - Content organized in numbered sections with hierarchical structure
 
 ### Step 3 — Prepare the content
 
@@ -116,74 +186,72 @@ Gather:
 - **subtitle** (str): Subtitle
 - **section_label** (str): Section label (e.g. "03 / 攻击拆解")
 - **timeline_items** (list of dicts): Each item with:
-  - `day_label`: e.g. "DAY 01", "Phase 1"
-  - `number`: Number displayed in the circle
-  - `icon`: FontAwesome icon class (e.g. "fa-solid fa-crosshairs")
-  - `item_title`: Bold title under the icon
-  - `description`: Description text
-  - `highlight` (bool): If True, use dark/highlighted card style
+  - `day_label`: e.g. "DAY 01", "Phase 1", "01"
+  - `number`: Optional numeric label
+  - `icon`: Optional emoji or icon
+  - `item_title`: Heading for this item
+  - `description`: Body text
+  - `highlight`: Optional highlight text
 
 Example call:
 ```
 generate_doc_html(
     file_path="output/attack_timeline.html",
-    title="攻击链分析",
-    subtitle="7天攻击事件全流程拆解",
+    title="攻击链拆解",
+    subtitle="供应链攻击全流程分析",
     section_label="03 / 攻击拆解",
     timeline_items=[
-        {"day_label": "DAY 01", "number": 1, "icon": "fa-solid fa-crosshairs", "item_title": "初始侦察", "description": "攻击者通过端口扫描识别目标开放服务", "highlight": True},
-        {"day_label": "DAY 02", "number": 2, "icon": "fa-solid fa-key", "item_title": "凭证获取", "description": "通过钓鱼邮件获取初始访问凭证"},
-        {"day_label": "DAY 03", "number": 3, "icon": "fa-solid fa-network-wired", "item_title": "横向移动", "description": "利用获取的凭证在内网中扩散"},
-        {"day_label": "DAY 04", "number": 4, "icon": "fa-solid fa-server", "item_title": "权限提升", "description": "利用漏洞获取域管理员权限"},
+        {
+            "day_label": "PHASE 1",
+            "icon": "🎯",
+            "item_title": "初始入侵",
+            "description": "攻击者通过钓鱼邮件获取开发者凭证",
+            "highlight": "0-click exploit",
+        },
+        {
+            "day_label": "PHASE 2",
+            "icon": "🔑",
+            "item_title": "权限提升",
+            "description": "利用CI/CD配置错误获取管理员权限",
+        },
     ],
 )
 ```
 
-### Step 4 — Generate and inform
+### Step 4 — Generate the HTML
 
-1. Call the appropriate tool with all parameters.
-2. After the file is generated, inform the user:
-   - The file path
-   - Number of slides (for PPT) or timeline items (for doc)
-   - How to view it: "Open the HTML file in your browser, or print to PDF for sharing."
+Call the chosen tool with the prepared parameters. The tool writes the file
+to `file_path` inside the workspace.
 
-### Step 5 — Offer refinements
+### Step 5 — Convert to PDF (optional)
 
-Common refinements the user may request:
-- Add/remove slides or timeline items
-- Change colors or highlight specific items
-- Add more bullet points
-- Change the title or section labels
+If the user wants a PDF, use `convert_html_to_pdf`:
 
-Simply re-call the tool with updated parameters.
+```
+convert_html_to_pdf(
+    file_path="output/pitch_deck.html",
+    output_path="output/pitch_deck.pdf"
+)
+```
+
+### Step 6 — Verify and deliver
+
+1. Report the generated file path to the user
+2. If they want changes, adjust the parameters and re-generate
+3. Common adjustments:
+   - Add/remove slides or timeline items
+   - Change section labels or titles
+   - Adjust content in `points` or `description`
 
 ---
 
-## Design Principles
+## Tips
 
-The HTML templates use a **minimalist dark-and-white aesthetic**:
-
-- **PPT slides**: Left dark panel (gradient `#0A0A0A → #2D2D2D`) with title, right white panel with content
-- **Doc pages**: White background with a horizontal timeline, alternating white/dark cards for highlighted items
-- **Fonts**: Noto Sans SC + Noto Serif SC (Chinese-optimized)
-- **Icons**: FontAwesome 6 (for timeline items)
-
-## Common FontAwesome Icons for Timeline Items
-
-| Purpose | Icon Class |
-|---------|-----------|
-| Target/Recon | `fa-solid fa-crosshairs` |
-| Key/Access | `fa-solid fa-key` |
-| Network | `fa-solid fa-network-wired` |
-| Server | `fa-solid fa-server` |
-| Shield | `fa-solid fa-shield-halved` |
-| Code | `fa-solid fa-code` |
-| Bug | `fa-solid fa-bug` |
-| Lock | `fa-solid fa-lock` |
-| Warning | `fa-solid fa-triangle-exclamation` |
-| Check | `fa-solid fa-circle-check` |
-| Rocket | `fa-solid fa-rocket` |
-| Chart | `fa-solid fa-chart-line` |
-| Document | `fa-solid fa-file-lines` |
-| User | `fa-solid fa-user` |
-| Globe | `fa-solid fa-globe` |
+- **Keep it concise.** PPT slides and document pages work best with short,
+  punchy content. Long paragraphs should be broken into bullet points.
+- **Use section labels.** They help organize content visually (e.g. "02 / 市场").
+- **Test in browser.** Open the generated HTML file in a browser to verify
+  layout before converting to PDF.
+- **Markdown structure.** When creating a Markdown document first, ALWAYS
+  follow the structure rules above (numbered headings, hierarchical numbering,
+  max 3 levels). This ensures clean conversion to HTML later.

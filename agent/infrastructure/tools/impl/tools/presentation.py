@@ -13,6 +13,7 @@ from __future__ import annotations
 import html as html_mod
 import os
 import re
+from datetime import datetime
 from typing import Any
 
 from agent.domain import tool_error, tool_ok
@@ -387,7 +388,6 @@ def generate_ppt_html(
 
 _DOC_TEMPLATE = """\
 <!DOCTYPE html>
-
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"/>
@@ -396,60 +396,246 @@ _DOC_TEMPLATE = """\
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700&family=Noto+Serif+SC:wght@400;600;700;900&display=swap" rel="stylesheet"/>
 <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet"/>
 <style>
-        body {{
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            background-color: #FFFFFF;
-        }}
-        .slide-container {{
-            position: relative;
-            width: 1280px;
-            height: 720px;
-            overflow: hidden;
-            background-color: #FFFFFF;
-        }}
-        p {{ margin: 0; padding: 0; }}
-    </style>
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{
+        margin: 0;
+        padding: 0;
+        background: #FFFFFF;
+        -webkit-font-smoothing: antialiased;
+    }}
+    .doc-page {{
+        width: 1280px;
+        height: 720px;
+        position: relative;
+        overflow: hidden;
+        background: #FFFFFF;
+        font-family: 'Noto Sans SC', sans-serif;
+    }}
+    .doc-left-panel {{
+        position: absolute;
+        top: 0; left: 0;
+        width: 380px; height: 720px;
+        background: #0A0A0A;
+        padding: 60px 40px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+    }}
+    .doc-left-panel .section-tag {{
+        display: inline-block;
+        font-family: 'Noto Sans SC', sans-serif;
+        font-weight: 500;
+        font-size: 11px;
+        color: #1a3d32;
+        background: rgba(26,61,50,0.15);
+        border: 1px solid rgba(26,61,50,0.3);
+        padding: 4px 14px;
+        border-radius: 20px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        margin-bottom: 24px;
+        width: fit-content;
+    }}
+    .doc-left-panel h1 {{
+        font-family: 'Noto Serif SC', serif;
+        font-weight: 900;
+        font-size: 42px;
+        color: #FFFFFF;
+        line-height: 1.25;
+        margin-bottom: 16px;
+    }}
+    .doc-left-panel .subtitle {{
+        font-family: 'Noto Sans SC', sans-serif;
+        font-weight: 300;
+        font-size: 14px;
+        color: #A3A3A3;
+        line-height: 1.6;
+    }}
+    .doc-left-panel .deco-line {{
+        width: 60px; height: 4px;
+        background: #1a3d32;
+        border-radius: 2px;
+        margin-bottom: 28px;
+    }}
+    .doc-right-panel {{
+        position: absolute;
+        top: 0; left: 380px; right: 0; bottom: 0;
+        padding: 48px 48px 80px 48px;
+        overflow-y: auto;
+    }}
+    .doc-right-panel::before {{
+        content: '';
+        position: absolute;
+        top: 40px; left: 0;
+        width: 1px; height: calc(100% - 80px);
+        background: #E5E7EB;
+    }}
+    .cards-grid {{
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 20px;
+    }}
+    .cards-grid.single-column {{
+        grid-template-columns: 1fr;
+    }}
+    .content-card {{
+        background: #FAFAFA;
+        border-radius: 10px;
+        padding: 22px 20px;
+        position: relative;
+        border-left: 3px solid #1a3d32;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }}
+    .content-card:hover {{
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.06);
+    }}
+    .content-card.highlight {{
+        border-left-color: #D4A574;
+        background: #FFFBF5;
+    }}
+    .card-header {{
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+    }}
+    .card-day-label {{
+        font-family: 'Noto Sans SC', sans-serif;
+        font-weight: 700;
+        font-size: 10px;
+        color: #1a3d32;
+        background: #E8F0ED;
+        padding: 3px 10px;
+        border-radius: 10px;
+        letter-spacing: 1px;
+    }}
+    .content-card.highlight .card-day-label {{
+        color: #D4A574;
+        background: #FFF3E6;
+    }}
+    .card-number {{
+        width: 24px; height: 24px;
+        border-radius: 50%;
+        background: #1a3d32;
+        color: #FFFFFF;
+        font-family: 'Noto Sans SC', sans-serif;
+        font-weight: 700;
+        font-size: 11px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: auto;
+    }}
+    .content-card.highlight .card-number {{
+        background: #D4A574;
+    }}
+    .card-icon {{
+        font-size: 16px;
+        color: #1a3d32;
+        margin-bottom: 6px;
+    }}
+    .content-card.highlight .card-icon {{
+        color: #D4A574;
+    }}
+    .card-title {{
+        font-family: 'Noto Serif SC', serif;
+        font-weight: 700;
+        font-size: 14px;
+        color: #0A0A0A;
+        line-height: 1.3;
+        margin-bottom: 6px;
+    }}
+    .card-desc {{
+        font-family: 'Noto Sans SC', sans-serif;
+        font-weight: 400;
+        font-size: 12px;
+        color: #4B5563;
+        line-height: 1.6;
+    }}
+    .card-highlight-tag {{
+        display: inline-block;
+        font-family: 'Noto Sans SC', sans-serif;
+        font-weight: 500;
+        font-size: 10px;
+        color: #D4A574;
+        background: #FFF3E6;
+        padding: 2px 8px;
+        border-radius: 4px;
+        margin-top: 8px;
+    }}
+    .doc-insight-bar {{
+        position: absolute;
+        bottom: 20px; left: 380px; right: 0;
+        padding: 0 48px;
+    }}
+    .doc-insight-inner {{
+        background: #F9FAFB;
+        border-left: 3px solid #1a3d32;
+        border-radius: 0 8px 8px 0;
+        padding: 10px 16px;
+    }}
+    .doc-insight-inner .insight-label {{
+        font-family: 'Noto Sans SC', sans-serif;
+        font-weight: 700;
+        font-size: 10px;
+        color: #1a3d32;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        margin-bottom: 2px;
+    }}
+    .doc-insight-inner .insight-text {{
+        font-family: 'Noto Sans SC', sans-serif;
+        font-weight: 400;
+        font-size: 11px;
+        color: #4B5563;
+        line-height: 1.4;
+    }}
+    .doc-footer {{
+        position: absolute;
+        bottom: 12px; left: 40px;
+        font-family: 'Noto Sans SC', sans-serif;
+        font-weight: 400;
+        font-size: 9px;
+        color: #4B5563;
+    }}
+</style>
 </head>
 <body>
-<div class="slide-container">
-<!-- 章节小标签 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 40px; left: 60px; width: 200px; height: 20px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 14px; letter-spacing: 2px; color: #0A0A0A;">{section_label}</p>
-</div>
-<!-- 顶部粗分割线 -->
-<div data-object="true" data-object-type="shape" style="position: absolute; top: 70px; left: 0px; width: 1280px; height: 2px; background-color: #0A0A0A;"></div>
-<!-- 标题 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 100px; left: 60px; width: 1160px; height: 60px;">
-<p style="font-family: 'Noto Serif SC', serif; font-weight: 900; font-size: 42px; letter-spacing: 1px; color: #0A0A0A; line-height: 1.2;">{title}</p>
-</div>
-<!-- 副标题 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 165px; left: 60px; width: 1160px; height: 35px;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 20px; color: #6B7280; line-height: 1.5;">{subtitle}</p>
-</div>
-<!-- 水平时间轴 -->
-<div data-object="true" data-object-type="shape" style="position: absolute; top: 275px; left: 60px; width: 1160px; height: 2px; background-color: #0A0A0A; z-index: 1;"></div>
-<!-- 时间线节点容器 -->
-<div data-object="true" data-object-type="textbox" style="position: absolute; top: 225px; left: 60px; width: 1160px; height: 400px; display: flex; gap: 8px; z-index: 2;">
-{timeline_items_html}
-</div>
+<div class="doc-page" data-object="doc-page">
+    <div class="doc-left-panel" data-object="left-panel">
+        <div class="section-tag" data-object="section-tag">{section_label}</div>
+        <div class="deco-line" data-object="deco-line"></div>
+        <h1 data-object="title">{title}</h1>
+        <p class="subtitle" data-object="subtitle">{subtitle}</p>
+    </div>
+    <div class="doc-right-panel" data-object="right-panel">
+        <div class="cards-grid {grid_class}" data-object="cards-grid">
+            {timeline_items_html}
+        </div>
+    </div>
+    <div class="doc-insight-bar" data-object="insight-bar">
+        <div class="doc-insight-inner">
+            <div class="insight-label">Insight</div>
+            <div class="insight-text">{item_count} items · {gen_date}</div>
+        </div>
+    </div>
+    <div class="doc-footer" data-object="footer">Generated by Quanora</div>
 </div>
 </body>
 </html>"""
 
 _TIMELINE_ITEM_TEMPLATE = """\
 <!-- {day_label} -->
-<div style="flex: 1; text-align: center; position: relative;">
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 700; font-size: 12px; letter-spacing: 2px; color: #A3A3A3;">{day_label}</p>
-<div style="width: 40px; height: 40px; border-radius: 50%; background-color: {circle_bg}; border: 2px solid {circle_border}; display: flex; align-items: center; justify-content: center; margin: 8px auto 0 auto; box-sizing: border-box; z-index: 5; position: relative;">
-<span style="font-family: 'Noto Serif SC', serif; font-weight: 900; font-size: 18px; color: {circle_text};">{circle_number}</span>
-</div>
-<div style="margin-top: 18px; border: 1px solid #E5E7EB; padding: 14px 10px; height: 260px; box-sizing: border-box; display: flex; flex-direction: column; background-color: {card_bg};">
-<i class="{icon_class}" style="font-size: 20px; color: {icon_color}; margin: 0 auto;"></i>
-<p style="font-family: 'Noto Serif SC', serif; font-weight: 700; font-size: 13px; color: {item_title_color}; margin-top: 10px;">{item_title}</p>
-<p style="font-family: 'Noto Sans SC', sans-serif; font-weight: 400; font-size: 11px; color: #333333; line-height: 1.4; margin-top: 8px;">{item_desc}</p>
-</div>
+<div class="content-card {highlight_class}" data-object="card-{card_index}">
+    <div class="card-header">
+        <span class="card-day-label">{day_label}</span>
+        <span class="card-number">{circle_number}</span>
+    </div>
+    <div class="card-icon"><i class="{icon_class}"></i></div>
+    <div class="card-title">{item_title}</div>
+    <div class="card-desc">{item_desc}</div>
+    {highlight_tag}
 </div>"""
 
 
@@ -460,9 +646,10 @@ def generate_doc_html(
     section_label: str = "",
     timeline_items: list[dict[str, Any]] | None = None,
 ) -> dict:
-    """Generate a timeline-style document HTML file.
+    """Generate a PPT-style document HTML file.
 
-    Each page is a 1280×720 px container with a horizontal timeline.
+    Each page is a 1280×720 px container with a left dark panel
+    and right content cards grid.
 
     Parameters
     ----------
@@ -475,13 +662,14 @@ def generate_doc_html(
     section_label : str
         Section label shown at top-left (e.g. "03 / 攻击拆解").
     timeline_items : list[dict]
-        List of timeline entries.  Each dict may contain:
+        List of content entries.  Each dict may contain:
           - day_label (str): e.g. "DAY 01", "Phase 1"
-          - number (int/str): Number in the circle
+          - number (int/str): Number in the circle badge
           - icon (str): FontAwesome icon class, e.g. "fa-solid fa-crosshairs"
-          - item_title (str): Bold title under the icon
+          - item_title (str): Bold title for the card
           - description (str): Description text
-          - highlight (bool): If True, use dark background for this card
+          - highlight (bool or str): If True, use accent style; if str, use
+            accent style and show the string as a highlight tag
 
     Returns
     -------
@@ -513,37 +701,29 @@ def generate_doc_html(
                 item_desc = html_mod.escape(str(item.get("description", "")))
                 highlight = item.get("highlight", False)
 
-                if highlight:
-                    circle_bg = "#0A0A0A"
-                    circle_border = "#0A0A0A"
-                    circle_text = "#FFFFFF"
-                    card_bg = "#0A0A0A"
-                    icon_color = "#FFFFFF"
-                    item_title_color = "#FFFFFF"
-                else:
-                    circle_bg = "#FFFFFF"
-                    circle_border = "#0A0A0A"
-                    circle_text = "#0A0A0A"
-                    card_bg = "#FFFFFF"
-                    icon_color = "#0A0A0A"
-                    item_title_color = "#0A0A0A"
+                highlight_class = "highlight" if highlight else ""
+                highlight_tag_html = (
+                    f'<span class="card-highlight-tag">{html_mod.escape(str(highlight))}</span>'
+                    if highlight and isinstance(highlight, str)
+                    else ""
+                )
 
                 item_html = _TIMELINE_ITEM_TEMPLATE.format(
                     day_label=day_label,
-                    circle_bg=circle_bg,
-                    circle_border=circle_border,
-                    circle_text=circle_text,
+                    highlight_class=highlight_class,
+                    card_index=idx,
                     circle_number=html_mod.escape(str(number)),
-                    card_bg=card_bg,
                     icon_class=icon_class,
-                    icon_color=icon_color,
                     item_title=item_title,
-                    item_title_color=item_title_color,
                     item_desc=item_desc,
+                    highlight_tag=highlight_tag_html,
                 )
                 items_html_parts.append(item_html)
 
         timeline_items_html = "\n".join(items_html_parts)
+        grid_class = "single-column" if timeline_items and len(timeline_items) <= 2 else ""
+        item_count = len(timeline_items) if timeline_items else 0
+        gen_date = datetime.now().strftime("%Y-%m-%d")
 
         doc_html = _DOC_TEMPLATE.format(
             doc_title=html_mod.escape(title),
@@ -551,6 +731,9 @@ def generate_doc_html(
             title=html_mod.escape(title),
             subtitle=html_mod.escape(subtitle),
             timeline_items_html=timeline_items_html,
+            grid_class=grid_class,
+            item_count=item_count,
+            gen_date=gen_date,
         )
 
         with open(resolved, "w", encoding="utf-8") as f:
