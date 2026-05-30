@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;600;700&family=Noto+Serif+SC:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+body {
+    font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #FFFFFF;
+    color: #0A0A0A;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+@page {
+    size: 1280px 720px;
+    margin: 0;
+}
+body {
+    width: 1280px;
+    min-height: 720px;
+}
+
+/* ── Page wrapper ── */
+.doc-page {
+    width: 1280px;
+    min-height: 720px;
+    position: relative;
+    padding: 48px 64px;
+    background: #FFFFFF;
+}
+
+/* ── Header area ── */
+.doc-header {
+    margin-bottom: 8px;
+}
+.doc-section-label {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #A3A3A3;
+    margin-bottom: 8px;
+}
+.doc-title {
+    font-family: 'Noto Serif SC', serif;
+    font-size: 36px;
+    font-weight: 700;
+    color: #0A0A0A;
+    line-height: 1.3;
+    margin-bottom: 6px;
+}
+.doc-subtitle {
+    font-size: 16px;
+    color: #A3A3A3;
+    line-height: 1.5;
+}
+
+/* ── Thick divider ── */
+.doc-divider {
+    height: 4px;
+    background: #0A0A0A;
+    border-radius: 2px;
+    margin: 20px 0 28px 0;
+}
+
+/* ── Timeline axis ── */
+.timeline-axis {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 0 20px;
+    margin-bottom: 24px;
+}
+
+/* ── Timeline nodes ── */
+.timeline-node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    z-index: 2;
+}
+.node-circle {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: #0A0A0A;
+    color: #FFFFFF;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 600;
+    border: 3px solid #FFFFFF;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+.node-circle.highlight {
+    background: #8B1E1E;
+    border-color: #FFFFFF;
+}
+.node-label {
+    font-size: 12px;
+    color: #A3A3A3;
+    margin-top: 8px;
+    white-space: nowrap;
+    font-weight: 500;
+}
+
+/* ── Horizontal line behind nodes ── */
+.timeline-line {
+    position: absolute;
+    top: 20px;
+    left: 40px;
+    right: 40px;
+    height: 3px;
+    background: #E5E7EB;
+    z-index: 1;
+}
+
+/* ── Card grid ── */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(1, 1fr);
+    gap: 16px;
+    padding: 0 20px;
+}
+.card-grid.single-column {
+    grid-template-columns: 1fr;
+    max-width: 560px;
+}
+
+/* ── Content card ── */
+.content-card {
+    background: #F9FAFB;
+    border: 1.5px solid #E5E7EB;
+    border-radius: 8px;
+    padding: 20px;
+    transition: box-shadow 0.2s;
+}
+.content-card.highlight {
+    border-color: #8B1E1E;
+    background: #FEF2F2;
+}
+
+.card-icon {
+    font-size: 22px;
+    margin-bottom: 10px;
+    color: #A3A3A3;
+}
+.card-title {
+    font-family: 'Noto Serif SC', serif;
+    font-size: 18px;
+    font-weight: 600;
+    color: #0A0A0A;
+    margin-bottom: 8px;
+    line-height: 1.4;
+}
+.card-desc {
+    font-size: 14px;
+    color: #374151;
+    line-height: 1.6;
+}
+.highlight-tag {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    color: #8B1E1E;
+    background: #FEF2F2;
+    border: 1px solid #8B1E1E;
+    border-radius: 3px;
+    padding: 2px 8px;
+    margin-top: 10px;
+}
+
+/* ── Footer ── */
+.doc-footer {
+    position: absolute;
+    bottom: 32px;
+    left: 64px;
+    right: 64px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: #A3A3A3;
+}
+</style>
+</head>
+<body>
+<div class="doc-page">
+    <!-- Header -->
+    <div class="doc-header">
+        <div class="doc-section-label">05 / Roadmap</div>
+        <h1 class="doc-title">Full Doc</h1>
+        <p class="doc-subtitle">Complete subtitle</p>
+    </div>
+    <div class="doc-divider"></div>
+
+    <!-- Timeline axis -->
+    <div class="timeline-axis">
+        <div class="timeline-line"></div>
+        <div class="timeline-node"><div class="node-circle highlight">1</div><div class="node-label">Phase 1</div></div>
+    </div>
+
+    <!-- Card grid -->
+    <div class="card-grid single-column">
+        <div class="content-card highlight"><div class="card-icon">fa-solid fa-rocket</div><div class="card-title">Launch</div><div class="card-desc">Initial deployment</div><span class="highlight-tag">Key Event</span></div>
+    </div>
+
+    <!-- Footer -->
+    <div class="doc-footer">
+        <span>2026-05-30</span>
+        <span>1 items</span>
+    </div>
+</div>
+</body>
+</html>
