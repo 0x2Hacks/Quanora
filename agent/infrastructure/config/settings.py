@@ -162,6 +162,9 @@ def enable_self_dev_mode() -> WorkspaceGuard:
       ``agent/``, ``test/``, ``main.py``, ``.quanora/skills/``, prompts,
       docs, etc. ``.git/`` stays protected so the agent uses ``git``
       commands (via ``bash``) rather than tampering with git internals.
+    * **workspace/ directory is fully protected** — in self-dev mode the
+      agent must not write into the user's project workspace. All writes
+      should go to the Quanora repo source tree instead.
     * Global flag :func:`is_self_dev_mode` returns True so other layers
       (system prompt, CLI banner, skills) can branch on it.
 
@@ -182,6 +185,7 @@ def enable_self_dev_mode() -> WorkspaceGuard:
     # protect a few read-only files (.env containing secrets) as well, to
     # avoid the agent accidentally rewriting credentials.
     protected: list[Path] = []
+    fully_protected: list[Path] = []
     for candidate in (
         _QUANORA_REPO_ROOT / ".git",
         _QUANORA_REPO_ROOT / ".env",
@@ -192,6 +196,17 @@ def enable_self_dev_mode() -> WorkspaceGuard:
             continue
         if rp.exists():
             protected.append(rp)
+
+    # In self-dev mode, the workspace/ directory (user project directory)
+    # must be FULLY protected — no writes allowed. This prevents the agent
+    # from accidentally creating files in the user's project when it should
+    # be editing its own source tree. fully_protected_paths blocks ALL
+    # writes regardless of file extension.
+    # NOTE: We add the path unconditionally — _is_under() uses string
+    # prefix matching, so even if the directory doesn't exist yet we still
+    # want to block writes that would create it.
+    workspace_dir = _WORKSPACE_ROOT.resolve()
+    fully_protected.append(workspace_dir)
 
     # Honour optional extra protected paths from the environment.
     extra = os.getenv("QUANORA_PROTECTED_PATHS", "").strip()
@@ -209,6 +224,7 @@ def enable_self_dev_mode() -> WorkspaceGuard:
     new_cfg = WorkspaceConfig(
         root=_QUANORA_REPO_ROOT,
         protected_paths=tuple(protected),
+        fully_protected_paths=tuple(fully_protected),
         allow_outside_reads=True,
     )
     _WORKSPACE_GUARD = WorkspaceGuard(new_cfg)

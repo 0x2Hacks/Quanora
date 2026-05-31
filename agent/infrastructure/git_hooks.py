@@ -28,6 +28,76 @@ logger = logging.getLogger(__name__)
 BRANCH = "genspark_ai_developer"
 BASE_BRANCH = "main"
 
+# ---------------------------------------------------------------------------
+# Test-file cleanup patterns
+# ---------------------------------------------------------------------------
+# In self-dev mode the agent may generate temporary test files (e.g. HTML
+# outputs from generate_ppt_html / generate_doc_html) that should NOT be
+# pushed to GitHub.  These patterns are matched against files tracked by
+# git in the repo root directory.  Matching files are removed before push.
+#
+# Each entry is a dict with:
+#   pattern  – fnmatch-style glob (matched against the filename only)
+#   reason   – human-readable explanation for the log
+TEST_CLEANUP_PATTERNS: list[dict[str, str]] = [
+    {"pattern": "*.html", "reason": "generated HTML test/demo file"},
+]
+
+
+def _cleanup_test_files(repo_root: Path) -> list[str]:
+    """Remove git-tracked files matching TEST_CLEANUP_PATTERNS from repo root.
+
+    Only files in the **root** directory are considered, so ``docs/*.html``
+    or ``agent/templates/*.html`` are left alone.
+
+    Returns a list of removed file paths (relative to repo_root).
+    """
+    removed: list[str] = []
+
+    # Bail out early if the directory doesn't look like a valid git repo
+    if not repo_root.is_dir():
+        return removed
+    git_dir = repo_root / ".git"
+    if not git_dir.exists():
+        return removed
+
+    # Get the list of git-tracked files in the repo root only
+    r = _run_git("ls-files", "--", cwd=repo_root, check=False)
+    if r.returncode != 0:
+        logger.warning("git ls-files failed, skipping test-file cleanup")
+        return removed
+
+    import fnmatch
+
+    root_files = [f for f in r.stdout.splitlines() if f and "/" not in f]
+    for tracked in root_files:
+        for entry in TEST_CLEANUP_PATTERNS:
+            if fnmatch.fnmatch(tracked, entry["pattern"]):
+                # Remove from git index and disk
+                _run_git("rm", "--cached", "-f", tracked, cwd=repo_root, check=False)
+                full_path = repo_root / tracked
+                if full_path.exists():
+                    try:
+                        full_path.unlink()
+                    except OSError:
+                        pass
+                removed.append(tracked)
+                logger.info(
+                    "Cleaned up test file: %s (%s)", tracked, entry["reason"]
+                )
+                break  # one match is enough
+
+    if removed:
+        # Commit the cleanup so it's included in the push
+        _run_git("add", "-A", cwd=repo_root, check=False)
+        _run_git(
+            "commit", "-m", "chore: auto-cleanup test files before push",
+            cwd=repo_root, check=False,
+        )
+        logger.info("Committed removal of %d test file(s): %s", len(removed), removed)
+
+    return removed
+
 
 # ---------------------------------------------------------------------------
 # Data
@@ -41,6 +111,7 @@ class PushResult:
     pr_number: Optional[int] = None
     error: Optional[str] = None
     commit_count: int = 0
+    cleaned_files: Optional[list[str]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +253,14 @@ def auto_push_and_pr(
         _run_git("add", "-A", cwd=repo_root, check=True)
         _run_git("commit", "-m", "chore: auto-commit before push", cwd=repo_root, check=True)
         logger.info("Auto-committed pending changes before push.")
+
+    # 2.5. Cleanup test/temporary files before push
+    #      In self-dev mode the agent may generate temporary test files
+    #      (e.g. HTML outputs) that must NOT be pushed to GitHub.
+    cleaned = _cleanup_test_files(repo_root)
+    if cleaned:
+        result.cleaned_files = cleaned
+        logger.info("Cleaned up %d test file(s) before push: %s", len(cleaned), cleaned)
 
     # 3. Count un-pushed commits
     try:

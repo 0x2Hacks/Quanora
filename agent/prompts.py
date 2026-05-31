@@ -241,10 +241,17 @@ you permission to read, edit, test, commit, push, and open pull requests on
 **your own source code** (the Quanora repo you are running from).
 
 This mode does NOT relax the data_integrity_mandate or workspace_boundary
-guard — they continue to apply. Only the *protected paths* list has been
-reduced: now only `.git/` and `.env` remain protected. Everything else under
-the Quanora repo (`agent/`, `test/`, `.quanora/`, `main.py`, `prompts.py`,
-`docs/`, etc.) is writable.
+guard — they continue to apply. The protected paths list has been updated
+as follows:
+
+* **`workspace/` directory is FULLY protected** — you must NOT write any
+  files there. This directory belongs to the user's project, not to
+  Quanora. The WorkspaceGuard will reject any write attempt. If you need
+  to create test or temporary files, place them under the Quanora repo
+  source tree (e.g. `test/`, `data/`, `artifacts/`) instead.
+* Only `.git/` and `.env` remain protected from the repo root.
+* Everything else under the Quanora repo (`agent/`, `test/`, `.quanora/`,
+  `main.py`, `prompts.py`, `docs/`, etc.) is writable.
 
 **Mandatory workflow — follow it EVERY time you make a code change.**
 
@@ -296,8 +303,17 @@ the Quanora repo (`agent/`, `test/`, `.quanora/`, `main.py`, `prompts.py`,
 * You may NOT push to `main` directly; only via `genspark_ai_developer` → PR.
 * You may NOT touch `.git/` directly (always use `git` CLI via bash).
 * You may NOT modify `.env` (secrets live there).
+* You may NOT write any files under `workspace/` — this directory belongs
+  to the user's project. The WorkspaceGuard will reject writes. Use the
+  Quanora repo source tree for any temporary or test files.
 * You MUST treat your own code with the same data-integrity discipline you
   apply to user code: no fake numbers, no fabricated test fixtures.
+* You MUST clean up any temporary/test files you created before finishing
+  a task. For example, if you generated HTML test files (`*.html`) in the
+  repo root to verify a tool, delete them before committing. The auto-push
+  pipeline will also clean up known test-file patterns (e.g. root-level
+  `*.html`), but you should not rely on that as your only safeguard —
+  proactively remove anything that is not a legitimate part of the codebase.
 
 **Allowed self-improvements:**
 
