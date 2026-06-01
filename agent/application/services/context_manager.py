@@ -70,9 +70,10 @@ class ContextManager:
         full_messages = persisted_messages + pending
         plan_messages, plan_stats, plan_decisions = self._build_plan_messages()
         skill_messages, skill_stats, skill_decisions = self._build_skill_messages(active_skill_matches)
-        extra_messages = plan_messages + skill_messages
-        if extra_messages:
-            full_messages = self._insert_after_first_system(full_messages, extra_messages)
+        if skill_messages:
+            full_messages = self._insert_after_first_system(full_messages, skill_messages)
+        if plan_messages:
+            full_messages = self._insert_before_latest_user(full_messages, plan_messages)
 
         initial_estimate = self._estimator.estimate_messages(full_messages)
         messages = list(full_messages)
@@ -420,6 +421,20 @@ class ContextManager:
         if not inserted:
             result = [dict(item) for item in extra_messages] + result
         return result
+
+    def _insert_before_latest_user(self, messages: list[dict], extra_messages: list[dict]) -> list[dict]:
+        if not extra_messages:
+            return list(messages)
+        result = [dict(message) for message in messages]
+        insert_at = None
+        for index in range(len(result) - 1, -1, -1):
+            if result[index].get("role") == "user":
+                insert_at = index
+                break
+        rendered_extra = [dict(item) for item in extra_messages]
+        if insert_at is None:
+            return result + rendered_extra
+        return result[:insert_at] + rendered_extra + result[insert_at:]
 
     async def _compact_cold_conversation_async(self, messages: list[dict], session) -> tuple[list[dict], list[dict], int, bool]:
         hot_indices = self._hot_message_indices(messages)
