@@ -450,6 +450,8 @@ class ChatCLI:
             cost = getattr(event, 'cost_report', None)
             if cost is not None:
                 self._render_cost_report(cost)
+            # Self-dev mode: even on failure, push any committed code
+            self._maybe_self_dev_push("TurnFailedEvent")
         elif isinstance(event, TurnCompletedEvent):
             self._streaming_renderer.flush()
             self._last_turn_event = event  # save for distillation
@@ -459,24 +461,50 @@ class ChatCLI:
                 self._last_cost_report = cost  # stored for async persist
 
             # Self-dev mode: auto push + PR after each turn with commits
-            if self._self_dev:
-                try:
-                    from agent.infrastructure.config.settings import get_repo_root
-                    from agent.infrastructure.git_hooks import on_turn_completed_self_dev
-                    on_turn_completed_self_dev(get_repo_root())
-                except Exception as exc:
-                    # Never let the hook crash the CLI
-                    print(f"\n[self-dev] ⚠ Push hook error: {exc}", file=sys.stderr)
+            self._maybe_self_dev_push("TurnCompletedEvent")
 
         elif isinstance(event, TurnCancelledEvent):
             self._streaming_renderer.flush()
             print(f"\n[Cancelled] Turn cancelled: {getattr(event, 'reason', 'unknown')}")
+            # Self-dev mode: even on cancellation, push any committed code
+            self._maybe_self_dev_push("TurnCancelledEvent")
 
     def _on_retry(self, attempt: int, exception: Exception) -> None:
         self._streaming_renderer.show_retry(attempt, exception)
 
     def _on_debug(self, message: str) -> None:
         print(f"\n[Debug] {message}")
+
+    # ── Self-dev push hook ────────────────────────────────────────────
+
+    def _maybe_self_dev_push(self, trigger: str) -> None:
+        """If running in self-dev mode, attempt the auto push+PR hook.
+
+        This is called on TurnCompletedEvent, TurnFailedEvent, and
+        TurnCancelledEvent so that any commits made during the turn are
+        always pushed, regardless of how the turn ended.
+        """
+        if not self._self_dev:
+            return
+
+        try:
+            from agent.infrastructure.config.settings import get_repo_root
+            from agent.infrastructure.git_hooks import on_turn_completed_self_dev
+
+            on_turn_completed_self_dev(get_repo_root(), trigger=trigger)
+        except Exception as exc:
+            # Never let the hook crash the CLI, but be loud about failures
+            # so the user can diagnose and manually push if needed.
+            import traceback
+            print(
+                f"\n[self-dev] ⚠ Push hook error (trigger={trigger}): {exc}",
+                file=sys.stderr,
+            )
+            print(traceback.format_exc(), file=sys.stderr)
+            print(
+                "[self-dev] You may need to manually: git push origin genspark_ai_developer",
+                file=sys.stderr,
+            )
 
     # ── Cost analysis helpers ───────────────────────────────────────────
 

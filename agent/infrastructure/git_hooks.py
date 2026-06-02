@@ -457,29 +457,41 @@ Self-dev mode automated improvements.
 # Hook interface (called from chat_cli on TurnCompletedEvent)
 # ---------------------------------------------------------------------------
 
-def on_turn_completed_self_dev(repo_root: Path) -> None:
+def on_turn_completed_self_dev(repo_root: Path, *, trigger: str = "TurnCompletedEvent") -> None:
     """Entry point for the self-dev push hook.
 
-    Called by ChatCLI when a turn completes in self-dev mode.  If there
-    are un-pushed commits, runs the push+PR pipeline automatically and
-    prints a summary to stderr.
+    Called by ChatCLI when a turn completes (or fails/cancels) in
+    self-dev mode.  If there are un-pushed commits, runs the push+PR
+    pipeline automatically and prints a summary to stderr.
+
+    Parameters
+    ----------
+    trigger :
+        Which event triggered this call.  Used for logging only.
+        One of ``"TurnCompletedEvent"``, ``"TurnFailedEvent"``,
+        ``"TurnCancelledEvent"``.
     """
     try:
         # Quick check: are we on the right branch?
         current = _current_branch(repo_root)
         if current != BRANCH:
-            logger.debug("Not on %s (on %s), skipping self-dev push hook.", BRANCH, current)
+            print(
+                f"[self-dev] Skipping push hook: on branch '{current}', "
+                f"not '{BRANCH}' (trigger={trigger})",
+                file=sys.stderr,
+            )
             return
 
         # Quick check: any un-pushed commits?
         count = _count_unpushed_commits(repo_root)
         if count == 0:
-            logger.debug("No un-pushed commits, skipping self-dev push hook.")
+            # Only log at debug level when there's nothing to push
+            logger.debug("No un-pushed commits, skipping self-dev push hook (trigger=%s).", trigger)
             return
 
         print(
             f"\n[self-dev] Detected {count} un-pushed commit(s) — "
-            "auto-running push + PR pipeline …",
+            f"auto-running push + PR pipeline (trigger={trigger}) …",
             file=sys.stderr,
         )
 
@@ -497,5 +509,10 @@ def on_turn_completed_self_dev(repo_root: Path) -> None:
 
     except Exception as exc:
         # Never let the hook crash the CLI
-        logger.exception("Self-dev push hook failed unexpectedly")
+        logger.exception("Self-dev push hook failed unexpectedly (trigger=%s)", trigger)
         print(f"[self-dev] ❌ Hook error: {exc}", file=sys.stderr)
+        print(
+            "[self-dev] You may need to manually: "
+            "git push origin genspark_ai_developer && gh pr create",
+            file=sys.stderr,
+        )
