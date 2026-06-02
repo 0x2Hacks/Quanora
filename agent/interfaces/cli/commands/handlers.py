@@ -82,6 +82,10 @@ async def handle_status(context: SlashCommandContext, args: list[str]) -> str:
                 f"- output: {_format_count(output_tokens)}",
             ]
         )
+    recent_tools = await _recent_tool_summaries(session)
+    if recent_tools:
+        lines.append("Recent tools:")
+        lines.extend(f"- {item}" for item in recent_tools)
     return "\n".join(lines)
 
 
@@ -344,6 +348,58 @@ async def _latest_sampling_usage(session) -> dict | None:
         return dict(usage) if isinstance(usage, dict) else None
     except Exception:
         return None
+
+
+async def _recent_tool_summaries(session, *, limit: int = 3) -> list[str]:
+    get_records = getattr(session, "get_tool_records", None)
+    if not callable(get_records):
+        return []
+    try:
+        records = await get_records(limit=limit)
+    except TypeError:
+        records = await get_records()
+    except Exception:
+        return []
+    if not isinstance(records, list):
+        return []
+    return [_tool_summary(record) for record in records[-limit:] if isinstance(record, dict)]
+
+
+def _tool_summary(record: dict) -> str:
+    name = _value(record.get("name"))
+    status = _tool_status(record)
+    ended = _short_timestamp(record.get("ts_end"))
+    detail = _tool_detail(record)
+    suffix = f" | {detail}" if detail else ""
+    return f"{name} {status} {ended}{suffix}".strip()
+
+
+def _tool_status(record: dict) -> str:
+    ok = record.get("ok")
+    if ok is True:
+        return "ok"
+    if ok is False:
+        error_type = _value(record.get("error_type"))
+        return f"failed ({error_type})" if error_type != "unknown" else "failed"
+    return "done"
+
+
+def _tool_detail(record: dict) -> str:
+    meta = record.get("meta")
+    if not isinstance(meta, dict):
+        return ""
+    if "exit_code" in meta:
+        return f"exit {meta.get('exit_code')}"
+    if "stdout_size" in meta:
+        return f"stdout {_format_count(meta.get('stdout_size'))} chars"
+    return ""
+
+
+def _short_timestamp(value: object) -> str:
+    text = str(value or "").strip()
+    if "T" in text:
+        return text.split("T", 1)[1].split(".", 1)[0]
+    return text or "unknown"
 
 
 def _format_count(value: object) -> str:

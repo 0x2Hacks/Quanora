@@ -241,6 +241,45 @@ async def test_status_shows_latest_sampling_usage() -> None:
 
 
 @pytest.mark.asyncio
+async def test_status_shows_recent_tool_summaries() -> None:
+    class ToolSession(FakeSession):
+        async def get_tool_records(self, limit=None, call_ids=None):
+            return [
+                {
+                    "name": "bash",
+                    "ok": True,
+                    "ts_end": "2026-06-02T01:02:03.000000+00:00",
+                    "meta": {"exit_code": 0},
+                },
+                {
+                    "name": "read_file",
+                    "ok": False,
+                    "error_type": "FileNotFoundError",
+                    "ts_end": "2026-06-02T01:03:04.000000+00:00",
+                    "meta": {"stdout_size": 1200},
+                },
+            ]
+
+    result = await SlashCommandRouter().execute("/status", _context(session=ToolSession()))
+
+    assert "Recent tools:" in result.text
+    assert "bash ok 01:02:03 | exit 0" in result.text
+    assert "read_file failed (FileNotFoundError) 01:03:04 | stdout 1.2k chars" in result.text
+
+
+@pytest.mark.asyncio
+async def test_status_ignores_unavailable_tool_records() -> None:
+    class FailingToolSession(FakeSession):
+        async def get_tool_records(self, limit=None, call_ids=None):
+            raise RuntimeError("store unavailable")
+
+    result = await SlashCommandRouter().execute("/status", _context(session=FailingToolSession()))
+
+    assert "Status:" in result.text
+    assert "Recent tools:" not in result.text
+
+
+@pytest.mark.asyncio
 async def test_config_does_not_leak_api_key(monkeypatch) -> None:
     monkeypatch.setattr(Config, "OPENAI_API_KEY", "secret-value")
     monkeypatch.setattr(Config, "OPENAI_API_BASE", "https://example.com/v1")
@@ -429,6 +468,8 @@ def main() -> int:
     asyncio.run(test_unknown_command_returns_friendly_error())
     asyncio.run(test_status_shows_session_model_debug_and_message_count())
     asyncio.run(test_status_shows_latest_sampling_usage())
+    asyncio.run(test_status_shows_recent_tool_summaries())
+    asyncio.run(test_status_ignores_unavailable_tool_records())
     asyncio.run(test_model_rejects_invalid_set_args())
     asyncio.run(test_compact_calls_session_compact_context())
     asyncio.run(test_clear_requests_screen_clear())
