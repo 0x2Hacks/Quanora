@@ -26,12 +26,13 @@ from rich.console import Console
 class ChatCLI:
     """Interactive CLI that delegates core behavior to application runtime."""
 
-    def __init__(self, runtime, session, debug: bool = False, self_dev: bool = False):
+    def __init__(self, runtime, session, debug: bool = False, self_dev: bool = False, self_quant: bool = False):
         self._runtime = runtime
         self._session = session
         self._session_store = session  # session implements AsyncSessionStore (persist_turn_cost etc.)
         self._debug = debug
         self._self_dev = self_dev
+        self._self_quant = self_quant
         self._distill_service = ExperienceDistillationService()
         self._last_cost_report = None
         self._active_skills: list[str] = []
@@ -104,6 +105,23 @@ class ChatCLI:
                 f"[yellow]    workspace = {ws}[/yellow]\n"
                 "[yellow]    Quanora can now edit its own code, run its own tests,[/yellow]\n"
                 "[yellow]    commit, push, and open pull requests. .git/ and .env stay protected.[/yellow]"
+            )
+        if self._self_quant:
+            try:
+                from agent.infrastructure.config.settings import get_workspace_guard
+                ws = str(get_workspace_guard().root)
+            except Exception:
+                ws = "(unknown)"
+            self._console.print(
+                "[bold white on blue]"
+                " 📊  QUANT-RESEARCH MODE ACTIVE "
+                "[/bold white on blue]"
+            )
+            self._console.print(
+                f"[cyan]    workspace = {ws}[/cyan]\n"
+                "[cyan]    Systematic quant research workflow enabled. Follow the[/cyan]\n"
+                "[cyan]    mandatory research lifecycle: Plan → Review → Hypothesize[/cyan]\n"
+                "[cyan]    → Experiment → Distill. Data integrity is paramount.[/cyan]"
             )
         print("-" * 50)
 

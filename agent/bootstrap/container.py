@@ -29,6 +29,7 @@ def build_basic_agent_dependencies(
     resume_latest: bool = False,
     self_dev: bool = False,
     self_doc: bool = False,
+    self_quant: bool = False,
 ) -> dict[str, object]:
     """Wire layered dependencies.
 
@@ -43,19 +44,26 @@ def build_basic_agent_dependencies(
         the actual filesystem boundary is enforced by the guard.
     self_doc :
         When True, the session is bootstrapped with the self-documentation
-        addendum appended to the system prompt. ``self_dev`` and
-        ``self_doc`` are mutually exclusive; if both are True,
-        ``self_dev`` takes precedence. The caller should have ALSO switched
-        the workspace guard via ``settings.enable_self_doc_mode()`` before
-        calling this function.
+        addendum appended to the system prompt. ``self_dev``, ``self_doc``,
+        and ``self_quant`` are mutually exclusive; if more than one is True,
+        ``self_dev`` takes precedence, then ``self_doc``. The caller should
+        have ALSO switched the workspace guard via
+        ``settings.enable_self_doc_mode()`` before calling this function.
+    self_quant :
+        When True, the session is bootstrapped with the quant-research
+        addendum appended to the system prompt. The workspace guard should
+        have been switched via ``settings.enable_self_quant_mode()`` before
+        calling this function. ``self_dev`` and ``self_doc`` take precedence
+        over ``self_quant``.
     """
     model = Config.DEFAULT_MODEL
     async_client = Config.get_async_client()
 
-    # self_dev takes precedence over self_doc if both are True.
+    # Mutual exclusion: self_dev > self_doc > self_quant
     system_prompt = build_system_prompt(
         self_dev=self_dev,
         self_doc=self_doc and not self_dev,
+        self_quant=self_quant and not self_dev and not self_doc,
     )
 
     session: AsyncSessionStore = AsyncJsonlSessionStore(
@@ -100,7 +108,7 @@ def build_basic_agent_dependencies(
     
     runtime = AsyncRuntimeFacade(turn_runner=turn_runner, session_store=session)
     
-    cli = ChatCLI(runtime=runtime, session=session, debug=debug, self_dev=self_dev)
+    cli = ChatCLI(runtime=runtime, session=session, debug=debug, self_dev=self_dev, self_quant=self_quant)
 
     return {
         "chat_client": async_chat_client,
