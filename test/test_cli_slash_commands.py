@@ -117,6 +117,15 @@ async def test_help_returns_command_list() -> None:
     assert result.should_exit is False
 
 
+def test_router_exposes_sorted_command_names() -> None:
+    names = SlashCommandRouter().command_names()
+
+    assert names == sorted(names)
+    assert "help" in names
+    assert "status" in names
+    assert "sessions" in names
+
+
 @pytest.mark.asyncio
 async def test_sessions_lists_recent_sessions_with_current_marker() -> None:
     class SessionWithRecent(FakeSession):
@@ -369,6 +378,7 @@ async def test_chat_cli_normal_turn_still_calls_runtime() -> None:
 
 
 def main() -> int:
+    test_router_exposes_sorted_command_names()
     asyncio.run(test_help_returns_command_list())
     asyncio.run(test_unknown_command_returns_friendly_error())
     asyncio.run(test_status_shows_session_model_debug_and_message_count())

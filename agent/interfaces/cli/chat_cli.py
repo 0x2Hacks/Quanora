@@ -6,6 +6,7 @@ import asyncio
 
 from agent.application.runtime.cancellation import CancellationTokenSource
 from agent.domain.events import RuntimeEvent
+from agent.interfaces.cli.commands.completer import SlashCommandCompleter
 from agent.interfaces.cli.commands import SlashCommandContext, SlashCommandRouter
 from agent.interfaces.cli.status import CliStatusRenderer
 from agent.interfaces.cli.ui import (
@@ -41,6 +42,7 @@ class ChatCLI:
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._current_cancel_source: CancellationTokenSource | None = None
         self._slash_router = SlashCommandRouter()
+        self._slash_completer = SlashCommandCompleter(self._slash_router.command_names())
 
     def start(self) -> None:
         self._render_banner()
@@ -137,6 +139,8 @@ class ChatCLI:
             self._prompt_session = PromptSession(
                 key_bindings=self._build_input_key_bindings(),
                 multiline=True,
+                completer=self._slash_completer,
+                complete_while_typing=True,
                 prompt_continuation=prompt_continuation,
                 bottom_toolbar=lambda: prompt_toolbar(self._session, debug=self._debug),
             )

@@ -64,6 +64,10 @@ def test_chat_cli_prompt_uses_status_toolbar(monkeypatch) -> None:
         raise AssertionError("Expected prompt result to be returned")
     if captured["message"] != "\nYou > ":
         raise AssertionError(f"Expected speaker prompt, got: {captured['message']!r}")
+    if captured.get("completer") is None:
+        raise AssertionError("Expected slash command completer")
+    if captured.get("complete_while_typing") is not True:
+        raise AssertionError("Expected completion while typing")
     if "session session_...7890" not in captured["toolbar"]:
         raise AssertionError(f"Expected session in toolbar, got: {captured['toolbar']!r}")
     if "model model_a" not in captured["toolbar"] or "debug on" not in captured["toolbar"]:

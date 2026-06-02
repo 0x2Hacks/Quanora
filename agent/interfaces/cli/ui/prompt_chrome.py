@@ -21,7 +21,7 @@ def prompt_toolbar(session, *, debug: bool = False, cwd: str | Path | None = Non
     ]
     if debug:
         items.append("debug on")
-    items.extend(["Enter send", "Ctrl+J newline", "/help commands", "Ctrl+C interrupt"])
+    items.extend(["Enter send", "Ctrl+J newline", "Tab complete /commands", "Ctrl+C interrupt"])
     return "  |  ".join(items)
 
 

@@ -32,6 +32,9 @@ class SlashCommandRouter:
 
         self._handlers = default_handlers()
 
+    def command_names(self) -> list[str]:
+        return sorted(self._handlers)
+
     async def execute(self, raw_input: str, context: SlashCommandContext) -> SlashCommandResult:
         try:
             name, args = self._parse(raw_input)
