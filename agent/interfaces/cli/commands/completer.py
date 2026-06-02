@@ -22,17 +22,33 @@ class SlashCommandCompleter(Completer):
 
     def get_completions(self, document: Document, complete_event):
         stripped = document.text_before_cursor.lstrip()
-        if not stripped.startswith("/") or _has_command_args(stripped):
+        if not stripped.startswith("/"):
+            return
+
+        if _is_help_argument(stripped):
+            yield from self._complete_help_argument(stripped)
+            return
+
+        if _has_command_args(stripped):
             return
 
         token = stripped[1:].lower()
         start_position = -len(stripped)
+        yield from self._matching_commands(token, start_position=start_position, slash=True)
+
+    def _complete_help_argument(self, stripped: str):
+        parts = stripped.split(maxsplit=1)
+        token = parts[1].lstrip("/").lower() if len(parts) > 1 else ""
+        start_position = -len(token)
+        yield from self._matching_commands(token, start_position=start_position, slash=False)
+
+    def _matching_commands(self, token: str, *, start_position: int, slash: bool):
         for command, description in self._commands:
             if command.startswith(token):
                 yield Completion(
-                    f"/{command}",
+                    f"/{command}" if slash else command,
                     start_position=start_position,
-                    display=f"/{command}",
+                    display=f"/{command}" if slash else command,
                     display_meta=description,
                 )
 
@@ -40,3 +56,8 @@ class SlashCommandCompleter(Completer):
 def _has_command_args(value: str) -> bool:
     parts = value.split(maxsplit=1)
     return len(parts) > 1
+
+
+def _is_help_argument(value: str) -> bool:
+    parts = value.split(maxsplit=1)
+    return bool(parts) and parts[0].lower() == "/help" and (value.endswith(" ") or len(parts) > 1)

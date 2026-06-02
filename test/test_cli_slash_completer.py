@@ -35,6 +35,20 @@ def test_slash_completer_ignores_command_arguments() -> None:
     assert _texts(completer, "/model set") == []
 
 
+def test_slash_completer_completes_help_arguments() -> None:
+    completer = SlashCommandCompleter(["help", "status", "sessions"])
+
+    assert _texts(completer, "/help s") == ["sessions", "status"]
+
+
+def test_slash_completer_replaces_only_help_argument_token() -> None:
+    completer = SlashCommandCompleter(["status"])
+    completion = list(completer.get_completions(Document("/help st"), None))[0]
+
+    assert completion.text == "status"
+    assert completion.start_position == -2
+
+
 def test_slash_completer_replaces_only_slash_token() -> None:
     completer = SlashCommandCompleter(["status"])
     completion = list(completer.get_completions(Document("  /st"), None))[0]
@@ -55,6 +69,8 @@ def main() -> int:
     test_slash_completer_matches_command_prefix()
     test_slash_completer_ignores_non_slash_input()
     test_slash_completer_ignores_command_arguments()
+    test_slash_completer_completes_help_arguments()
+    test_slash_completer_replaces_only_help_argument_token()
     test_slash_completer_replaces_only_slash_token()
     test_slash_completer_shows_command_description()
     print("CLI slash completer tests passed.")
