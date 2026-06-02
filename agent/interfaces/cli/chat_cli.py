@@ -42,7 +42,7 @@ class ChatCLI:
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._current_cancel_source: CancellationTokenSource | None = None
         self._slash_router = SlashCommandRouter()
-        self._slash_completer = SlashCommandCompleter(self._slash_router.command_names())
+        self._slash_completer = SlashCommandCompleter(self._slash_router.command_infos())
 
     def start(self) -> None:
         self._render_banner()

@@ -9,6 +9,7 @@ os.chdir(PROJECT_ROOT)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from agent.interfaces.cli.commands import SlashCommandInfo
 from agent.interfaces.cli.commands.completer import SlashCommandCompleter
 
 
@@ -42,11 +43,20 @@ def test_slash_completer_replaces_only_slash_token() -> None:
     assert completion.start_position == -3
 
 
+def test_slash_completer_shows_command_description() -> None:
+    completer = SlashCommandCompleter([SlashCommandInfo("status", "Show session status")])
+    completion = list(completer.get_completions(Document("/st"), None))[0]
+
+    assert completion.text == "/status"
+    assert completion.display_meta_text == "Show session status"
+
+
 def main() -> int:
     test_slash_completer_matches_command_prefix()
     test_slash_completer_ignores_non_slash_input()
     test_slash_completer_ignores_command_arguments()
     test_slash_completer_replaces_only_slash_token()
+    test_slash_completer_shows_command_description()
     print("CLI slash completer tests passed.")
     return 0
 

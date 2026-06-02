@@ -6,7 +6,26 @@ import inspect
 from pathlib import Path
 from typing import Callable
 
-from .router import SlashCommandContext, SlashCommandResult
+from .router import SlashCommandContext, SlashCommandInfo, SlashCommandResult
+
+
+COMMAND_INFOS = (
+    SlashCommandInfo("help", "Show commands"),
+    SlashCommandInfo("status", "Show session status"),
+    SlashCommandInfo("doctor", "Run local setup diagnostics"),
+    SlashCommandInfo("sessions", "List recent sessions"),
+    SlashCommandInfo("skill", "List skills"),
+    SlashCommandInfo("plan", "Show active plan summary"),
+    SlashCommandInfo("compact", "Compact current session context"),
+    SlashCommandInfo("model", "Show or change the active model"),
+    SlashCommandInfo("login", "Show login setup guidance"),
+    SlashCommandInfo("config", "Show config guidance"),
+    SlashCommandInfo("exit", "Exit CLI", aliases=("quit",)),
+)
+
+
+def default_command_infos() -> list[SlashCommandInfo]:
+    return list(COMMAND_INFOS)
 
 
 def default_handlers() -> dict[str, Callable]:
@@ -27,22 +46,7 @@ def default_handlers() -> dict[str, Callable]:
 
 
 async def handle_help(context: SlashCommandContext, args: list[str]) -> str:
-    return "\n".join(
-        [
-            "Available commands:",
-            "/help      Show commands",
-            "/status    Show session status",
-            "/doctor    Run local setup diagnostics",
-            "/sessions  List recent sessions",
-            "/skill     List skills",
-            "/plan      Show active plan summary",
-            "/compact   Compact current session context",
-            "/model     Show current model",
-            "/login     Show login setup guidance",
-            "/config    Show config guidance",
-            "/exit      Exit CLI",
-        ]
-    )
+    return _render_help(COMMAND_INFOS)
 
 
 async def handle_status(context: SlashCommandContext, args: list[str]) -> str:
@@ -241,6 +245,15 @@ async def handle_config(context: SlashCommandContext, args: list[str]) -> str:
 
 async def handle_exit(context: SlashCommandContext, args: list[str]) -> SlashCommandResult:
     return SlashCommandResult("再见！", should_exit=True)
+
+
+def _render_help(command_infos: tuple[SlashCommandInfo, ...]) -> str:
+    command_width = max(len(info.name) for info in command_infos) + 3
+    lines = ["Available commands:"]
+    for info in command_infos:
+        aliases = f" (alias: {', '.join('/' + alias for alias in info.aliases)})" if info.aliases else ""
+        lines.append(f"/{info.name:<{command_width}}{info.description}{aliases}")
+    return "\n".join(lines)
 
 
 def _value(value: object) -> str:

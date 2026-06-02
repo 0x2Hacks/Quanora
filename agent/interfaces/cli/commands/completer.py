@@ -11,8 +11,14 @@ from prompt_toolkit.document import Document
 class SlashCommandCompleter(Completer):
     """Complete slash commands at the beginning of the current input."""
 
-    def __init__(self, commands: Iterable[str]):
-        self._commands = sorted({str(command).strip().lower() for command in commands if str(command).strip()})
+    def __init__(self, commands: Iterable[object]):
+        entries: dict[str, str] = {}
+        for command in commands:
+            name = str(getattr(command, "name", command)).strip().lower()
+            if not name:
+                continue
+            entries[name] = str(getattr(command, "description", "") or "").strip()
+        self._commands = tuple(sorted(entries.items()))
 
     def get_completions(self, document: Document, complete_event):
         stripped = document.text_before_cursor.lstrip()
@@ -21,9 +27,14 @@ class SlashCommandCompleter(Completer):
 
         token = stripped[1:].lower()
         start_position = -len(stripped)
-        for command in self._commands:
+        for command, description in self._commands:
             if command.startswith(token):
-                yield Completion(f"/{command}", start_position=start_position, display=f"/{command}")
+                yield Completion(
+                    f"/{command}",
+                    start_position=start_position,
+                    display=f"/{command}",
+                    display_meta=description,
+                )
 
 
 def _has_command_args(value: str) -> bool:

@@ -112,8 +112,10 @@ async def test_help_returns_command_list() -> None:
     result = await SlashCommandRouter().execute("/help", _context())
 
     assert "/status" in result.text
+    assert "Show session status" in result.text
     assert "/doctor" in result.text
     assert "/skill" in result.text
+    assert "alias: /quit" in result.text
     assert result.should_exit is False
 
 
@@ -124,6 +126,15 @@ def test_router_exposes_sorted_command_names() -> None:
     assert "help" in names
     assert "status" in names
     assert "sessions" in names
+
+
+def test_router_exposes_command_descriptions() -> None:
+    infos = SlashCommandRouter().command_infos()
+    descriptions = {info.name: info.description for info in infos}
+
+    assert [info.name for info in infos] == sorted(descriptions)
+    assert descriptions["status"] == "Show session status"
+    assert descriptions["model"] == "Show or change the active model"
 
 
 @pytest.mark.asyncio
@@ -379,6 +390,7 @@ async def test_chat_cli_normal_turn_still_calls_runtime() -> None:
 
 def main() -> int:
     test_router_exposes_sorted_command_names()
+    test_router_exposes_command_descriptions()
     asyncio.run(test_help_returns_command_list())
     asyncio.run(test_unknown_command_returns_friendly_error())
     asyncio.run(test_status_shows_session_model_debug_and_message_count())

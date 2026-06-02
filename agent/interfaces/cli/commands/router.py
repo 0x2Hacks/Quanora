@@ -21,6 +21,13 @@ class SlashCommandResult:
     should_exit: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class SlashCommandInfo:
+    name: str
+    description: str
+    aliases: tuple[str, ...] = ()
+
+
 Handler = Callable[[SlashCommandContext, list[str]], str | SlashCommandResult | Awaitable[str | SlashCommandResult]]
 
 
@@ -28,12 +35,16 @@ class SlashCommandRouter:
     """Parse and dispatch CLI slash commands."""
 
     def __init__(self):
-        from .handlers import default_handlers
+        from .handlers import default_command_infos, default_handlers
 
         self._handlers = default_handlers()
+        self._command_infos = default_command_infos()
 
     def command_names(self) -> list[str]:
         return sorted(self._handlers)
+
+    def command_infos(self) -> list[SlashCommandInfo]:
+        return sorted(self._command_infos, key=lambda info: info.name)
 
     async def execute(self, raw_input: str, context: SlashCommandContext) -> SlashCommandResult:
         try:
