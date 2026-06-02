@@ -200,12 +200,33 @@ def test_chat_cli_seeds_input_history_from_user_messages() -> None:
         raise AssertionError(f"Expected distinct user inputs in history, got: {history!r}")
 
 
+def test_chat_cli_input_bindings_include_clear_shortcut() -> None:
+    cli = ChatCLI(runtime=None, session=None)
+    keys = {tuple(binding.keys) for binding in cli._build_input_key_bindings().bindings}
+
+    if ("c-l",) not in keys:
+        raise AssertionError(f"Expected Ctrl+L key binding, got: {keys!r}")
+
+
+def test_chat_cli_clear_prompt_screen_clears_console() -> None:
+    cli = ChatCLI(runtime=None, session=None)
+    called = []
+    cli._console.clear = lambda: called.append(True)
+
+    cli._clear_prompt_screen()
+
+    if called != [True]:
+        raise AssertionError(f"Expected console.clear to be called once, got: {called!r}")
+
+
 def main() -> int:
     test_chat_cli_turn_failed_event_prints_error_field()
     test_chat_cli_tool_result_failed_uses_failed_status()
     test_chat_cli_loads_latest_usage_from_session()
     test_chat_cli_token_event_updates_latest_usage()
     test_chat_cli_seeds_input_history_from_user_messages()
+    test_chat_cli_input_bindings_include_clear_shortcut()
+    test_chat_cli_clear_prompt_screen_clears_console()
     print("ChatCLI event tests passed.")
     return 0
 

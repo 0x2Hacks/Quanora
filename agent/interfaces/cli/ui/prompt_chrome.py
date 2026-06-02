@@ -30,7 +30,16 @@ def prompt_toolbar(
     items.append(f"cwd {_clip(_cwd_name(cwd), 28)}")
     if debug:
         items.append("debug on")
-    items.extend(["Enter send", "Ctrl+J newline", "Tab complete /commands", "Right accept hint", "Ctrl+C interrupt"])
+    items.extend(
+        [
+            "Enter send",
+            "Ctrl+J newline",
+            "Tab complete /commands",
+            "Right accept hint",
+            "Ctrl+L clear",
+            "Ctrl+C interrupt",
+        ]
+    )
     return "  |  ".join(items)
 
 

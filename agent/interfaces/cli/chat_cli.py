@@ -180,6 +180,10 @@ class ChatCLI:
         def _(event):
             event.app.current_buffer.insert_text("\n")
 
+        @bindings.add("c-l")
+        def _(event):
+            self._clear_prompt_screen()
+
         for sequence in (
             ("escape", "c-m"),
             ("escape", "c-j"),
@@ -191,6 +195,9 @@ class ChatCLI:
                 event.app.current_buffer.insert_text("\n")
 
         return bindings
+
+    def _clear_prompt_screen(self) -> None:
+        self._console.clear()
 
     async def _run_turn_async(self, user_input: str) -> None:
         cancel_source = CancellationTokenSource()
