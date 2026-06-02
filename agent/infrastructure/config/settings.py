@@ -130,6 +130,11 @@ _SELF_DEV_MODE: bool = False
 # to read and improve its own documentation without touching source code.
 _SELF_DOC_MODE: bool = False
 
+# Self-quant mode flag. When True the agent runs in quant-research mode,
+# with the system prompt enriched for systematic quantitative research.
+# The workspace remains the user's project directory (not the Quanora repo).
+_SELF_QUANT_MODE: bool = False
+
 
 def get_workspace_guard() -> WorkspaceGuard:
     """Return the process-wide workspace guard.
@@ -174,8 +179,10 @@ def enable_self_dev_mode() -> WorkspaceGuard:
     config file) so the same Python process boots either way. Tests
     can call this in setup and reset with :func:`disable_self_dev_mode`.
     """
-    global _SELF_DEV_MODE, _WORKSPACE_GUARD, _WORKSPACE_ROOT
+    global _SELF_DEV_MODE, _SELF_DOC_MODE, _SELF_QUANT_MODE, _WORKSPACE_GUARD, _WORKSPACE_ROOT
     _SELF_DEV_MODE = True
+    _SELF_DOC_MODE = False
+    _SELF_QUANT_MODE = False
     # Keep project sub-directories organised under workspace/ rather than
     # littering the repo root.  The guard still grants write access to the
     # whole repo (agent/, test/, docs/, …) so self-dev edits work.
@@ -357,8 +364,10 @@ def enable_self_doc_mode() -> WorkspaceGuard:
 
     Returns the new workspace guard so callers can verify the swap.
     """
-    global _SELF_DOC_MODE, _WORKSPACE_GUARD, _WORKSPACE_ROOT
+    global _SELF_DEV_MODE, _SELF_DOC_MODE, _SELF_QUANT_MODE, _WORKSPACE_GUARD, _WORKSPACE_ROOT
+    _SELF_DEV_MODE = False
     _SELF_DOC_MODE = True
+    _SELF_QUANT_MODE = False
     _WORKSPACE_ROOT = _QUANORA_REPO_ROOT
     Config.WORKSPACE_ROOT = _QUANORA_REPO_ROOT
 
@@ -423,6 +432,59 @@ def disable_self_doc_mode() -> WorkspaceGuard:
             allow_outside_reads=True,
         )
     )
+    return _WORKSPACE_GUARD
+
+
+# ---------------------------------------------------------------------------
+# Self-quant mode
+# ---------------------------------------------------------------------------
+
+def is_self_quant_mode() -> bool:
+    """Return whether the agent is running in *quant-research* mode."""
+    return _SELF_QUANT_MODE
+
+
+def enable_self_quant_mode() -> WorkspaceGuard:
+    """Switch the agent into *quant-research* mode.
+
+    Effects:
+
+    * Workspace root → the user's project directory (same as normal mode).
+    * Protected paths → ``.git/`` and ``.env`` only (same as normal mode).
+    * The system prompt is enriched with the quant-research addendum,
+      which adds the mandatory research lifecycle, data integrity rules,
+      WorldQuant Brain workflow, and onboarding guidance.
+    * ``is_self_quant_mode()`` returns True.
+
+    Returns the (rebuilt) ``WorkspaceGuard`` so callers can verify.
+    """
+    global _WORKSPACE_GUARD, _SELF_QUANT_MODE, _SELF_DEV_MODE, _SELF_DOC_MODE
+
+    # Mutual exclusion: only one special mode active at a time.
+    _SELF_DEV_MODE = False
+    _SELF_DOC_MODE = False
+    _SELF_QUANT_MODE = True
+
+    # Workspace stays at the user project root, with standard protected paths.
+    _WORKSPACE_GUARD = WorkspaceGuard(WorkspaceConfig(
+        root=_WORKSPACE_ROOT,
+        protected_paths=_resolve_protected_paths(_WORKSPACE_ROOT),
+        allow_outside_reads=True,
+    ))
+    return _WORKSPACE_GUARD
+
+
+def disable_self_quant_mode() -> WorkspaceGuard:
+    """Turn off quant-research mode and restore the normal workspace guard."""
+    global _WORKSPACE_GUARD, _SELF_QUANT_MODE
+
+    _SELF_QUANT_MODE = False
+
+    _WORKSPACE_GUARD = WorkspaceGuard(WorkspaceConfig(
+        root=_WORKSPACE_ROOT,
+        protected_paths=_resolve_protected_paths(_WORKSPACE_ROOT),
+        allow_outside_reads=True,
+    ))
     return _WORKSPACE_GUARD
 
 

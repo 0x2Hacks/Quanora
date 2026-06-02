@@ -37,6 +37,18 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
+        "--quant-research",
+        action="store_true",
+        help=(
+            "Enter quant-research mode. The agent runs with a systematic "
+            "quantitative research workflow: mandatory planning, hypothesis "
+            "generation, experimentation, evaluation, and knowledge distillation. "
+            "Data integrity rules are enforced with extra rigor. WorldQuant "
+            "Brain alpha mining tools are available. Sessions are stored under "
+            ".quanora/sessions/quant-research/."
+        ),
+    )
+    parser.add_argument(
         "--list-sessions",
         action="store_true",
         help="List past sessions with IDs, titles, and project directories, then exit.",
@@ -115,6 +127,23 @@ if __name__ == "__main__":
         if args.session_dir is None:
             args.session_dir = str(Config.QUANORA_HOME / ".quanora" / "sessions" / "self-doc")
 
+    # Quant-research mode: systematic quant research workflow with
+    # enforced data integrity, hypothesis lifecycle, and knowledge capture.
+    if args.quant_research and not args.self_dev and not args.self_doc:
+        new_guard = settings_mod.enable_self_quant_mode()
+        print(
+            f"[quant-research] workspace = {new_guard.root}",
+            file=sys.stderr,
+        )
+        print(
+            f"[quant-research] protected paths ({len(new_guard.protected_paths)}): "
+            + ", ".join(p.name for p in new_guard.protected_paths),
+            file=sys.stderr,
+        )
+        # Separate session directory for quant-research runs.
+        if args.session_dir is None:
+            args.session_dir = str(Config.QUANORA_HOME / ".quanora" / "sessions" / "quant-research")
+
     agent = BasicAgent(
         debug=args.debug,
         session_dir=args.session_dir,
@@ -122,5 +151,6 @@ if __name__ == "__main__":
         resume_latest=args.resume_latest,
         self_dev=args.self_dev,
         self_doc=args.self_doc,
+        self_quant=args.quant_research,
     )
     agent.chat()
