@@ -112,6 +112,8 @@ def _context(session=None):
 async def test_help_returns_command_list() -> None:
     result = await SlashCommandRouter().execute("/help", _context())
 
+    assert "Commands" in result.text
+    assert "Operate" in result.text
     assert "/status" in result.text
     assert "Show session status" in result.text
     assert "/doctor" in result.text
@@ -119,6 +121,7 @@ async def test_help_returns_command_list() -> None:
     assert "/clear" in result.text
     assert "/draft" in result.text
     assert "alias: /quit" in result.text
+    assert "Use `/help <command>` for usage." in result.text
     assert result.should_exit is False
 
 
@@ -126,17 +129,19 @@ async def test_help_returns_command_list() -> None:
 async def test_help_returns_command_specific_usage() -> None:
     result = await SlashCommandRouter().execute("/help model", _context())
 
-    assert result.text.startswith("/model")
+    assert result.text.startswith("# /model")
     assert "Show or change the active model" in result.text
-    assert "usage: /model | /model set <model>" in result.text
+    assert "Usage" in result.text
+    assert "  /model | /model set <model>" in result.text
 
 
 @pytest.mark.asyncio
 async def test_help_accepts_command_alias() -> None:
     result = await SlashCommandRouter().execute("/help quit", _context())
 
-    assert result.text.startswith("/exit")
-    assert "aliases: /quit" in result.text
+    assert result.text.startswith("# /exit")
+    assert "Aliases" in result.text
+    assert "/quit" in result.text
 
 
 @pytest.mark.asyncio
@@ -295,9 +300,13 @@ async def test_status_shows_latest_sampling_usage() -> None:
 
 
 @pytest.mark.asyncio
-async def test_status_shows_recent_tool_summaries() -> None:
+async def test_status_does_not_show_recent_tools() -> None:
     class ToolSession(FakeSession):
+        def __init__(self):
+            self.tool_records_called = False
+
         async def get_tool_records(self, limit=None, call_ids=None):
+            self.tool_records_called = True
             return [
                 {
                     "name": "bash",
@@ -314,23 +323,13 @@ async def test_status_shows_recent_tool_summaries() -> None:
                 },
             ]
 
-    result = await SlashCommandRouter().execute("/status", _context(session=ToolSession()))
+    session = ToolSession()
+    result = await SlashCommandRouter().execute("/status", _context(session=session))
 
-    assert "Recent tools:" in result.text
-    assert "bash ok 01:02:03 | exit 0" in result.text
-    assert "read_file failed (FileNotFoundError) 01:03:04 | stdout 1.2k chars" in result.text
-
-
-@pytest.mark.asyncio
-async def test_status_ignores_unavailable_tool_records() -> None:
-    class FailingToolSession(FakeSession):
-        async def get_tool_records(self, limit=None, call_ids=None):
-            raise RuntimeError("store unavailable")
-
-    result = await SlashCommandRouter().execute("/status", _context(session=FailingToolSession()))
-
+    assert session.tool_records_called is False
     assert "Status:" in result.text
     assert "Recent tools:" not in result.text
+    assert "bash ok" not in result.text
 
 
 @pytest.mark.asyncio
@@ -551,7 +550,7 @@ async def test_chat_cli_slash_command_does_not_call_runtime() -> None:
 
     assert should_exit is False
     assert runtime.called is False
-    assert "Available commands" in output.getvalue()
+    assert "Commands" in output.getvalue()
 
 
 @pytest.mark.asyncio
@@ -606,8 +605,7 @@ def main() -> int:
     asyncio.run(test_unknown_command_returns_friendly_error())
     asyncio.run(test_status_shows_session_model_debug_and_message_count())
     asyncio.run(test_status_shows_latest_sampling_usage())
-    asyncio.run(test_status_shows_recent_tool_summaries())
-    asyncio.run(test_status_ignores_unavailable_tool_records())
+    asyncio.run(test_status_does_not_show_recent_tools())
     asyncio.run(test_model_rejects_invalid_set_args())
     asyncio.run(test_compact_calls_session_compact_context())
     asyncio.run(test_clear_requests_screen_clear())

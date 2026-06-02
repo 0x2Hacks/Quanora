@@ -6,7 +6,9 @@ import inspect
 from pathlib import Path
 from typing import Callable
 
+from .help_view import render_command_help, render_help
 from .router import SlashCommandContext, SlashCommandInfo, SlashCommandResult
+from .status_view import render_status
 
 
 COMMAND_INFOS = (
@@ -24,7 +26,6 @@ COMMAND_INFOS = (
     SlashCommandInfo("config", "Show config guidance", "/config"),
     SlashCommandInfo("exit", "Exit CLI", "/exit", aliases=("quit",)),
 )
-
 
 def default_command_infos() -> list[SlashCommandInfo]:
     return list(COMMAND_INFOS)
@@ -53,49 +54,12 @@ async def handle_help(context: SlashCommandContext, args: list[str]) -> str:
     if len(args) > 1:
         return "Usage: /help [command]"
     if args:
-        return _render_command_help(COMMAND_INFOS, args[0])
-    return _render_help(COMMAND_INFOS)
+        return render_command_help(COMMAND_INFOS, args[0])
+    return render_help(COMMAND_INFOS)
 
 
 async def handle_status(context: SlashCommandContext, args: list[str]) -> str:
-    session = context.session
-    message_count = "unknown"
-    get_messages = getattr(session, "get_messages_slice", None)
-    if callable(get_messages):
-        try:
-            message_count = str(len(await get_messages()))
-        except Exception:
-            message_count = "unknown"
-    lines = [
-        "Status:",
-        f"- Session: {_value(getattr(session, 'session_id', None))}",
-        f"- Model: {_value(getattr(session, 'model', None))}",
-        f"- Debug: {str(bool(context.debug)).lower()}",
-        f"- Messages: {message_count}",
-    ]
-    git_status = _git_status_line()
-    if git_status:
-        lines.append(git_status)
-    latest_usage = await _latest_sampling_usage(session)
-    if latest_usage:
-        effective_window = int(latest_usage.get("effective_context_window_tokens") or 0)
-        input_tokens = int(latest_usage.get("input_tokens") or 0)
-        cached_tokens = int(latest_usage.get("cached_input_tokens") or 0)
-        output_tokens = int(latest_usage.get("output_tokens") or 0)
-        limit = f" / {_format_count(effective_window)}" if effective_window > 0 else ""
-        lines.extend(
-            [
-                "Last sampling:",
-                f"- input: {_format_count(input_tokens)}{limit} ({_format_percent(latest_usage.get('context_usage_percent'))})",
-                f"- cached: {_format_count(cached_tokens)} ({_format_percent(latest_usage.get('cache_hit_rate'))})",
-                f"- output: {_format_count(output_tokens)}",
-            ]
-        )
-    recent_tools = await _recent_tool_summaries(session)
-    if recent_tools:
-        lines.append("Recent tools:")
-        lines.extend(f"- {item}" for item in recent_tools)
-    return "\n".join(lines)
+    return await render_status(context)
 
 
 async def handle_doctor(context: SlashCommandContext, args: list[str]) -> str:
@@ -287,50 +251,6 @@ async def handle_exit(context: SlashCommandContext, args: list[str]) -> SlashCom
     return SlashCommandResult("再见！", should_exit=True)
 
 
-def _render_help(command_infos: tuple[SlashCommandInfo, ...]) -> str:
-    command_width = max(len(info.name) for info in command_infos) + 3
-    lines = ["Available commands:"]
-    for info in command_infos:
-        aliases = f" (alias: {', '.join('/' + alias for alias in info.aliases)})" if info.aliases else ""
-        lines.append(f"/{info.name:<{command_width}}{info.description}{aliases}")
-    return "\n".join(lines)
-
-
-def _render_command_help(command_infos: tuple[SlashCommandInfo, ...], command: str) -> str:
-    name = command.strip().lstrip("/").lower()
-    info = _find_command_info(command_infos, name)
-    if info is None:
-        return f"Unknown command: /{name}\nRun /help to see available commands."
-    lines = [
-        f"/{info.name}",
-        f"- {info.description}",
-        f"- usage: {info.usage or '/' + info.name}",
-    ]
-    if info.aliases:
-        lines.append(f"- aliases: {', '.join('/' + alias for alias in info.aliases)}")
-    return "\n".join(lines)
-
-
-def _find_command_info(command_infos: tuple[SlashCommandInfo, ...], name: str) -> SlashCommandInfo | None:
-    for info in command_infos:
-        if info.name == name or name in info.aliases:
-            return info
-    return None
-
-
-def _git_status_line() -> str:
-    try:
-        from agent.interfaces.cli.ui import GitPromptStatusProvider
-
-        status = GitPromptStatusProvider(ttl_seconds=0).current()
-    except Exception:
-        return ""
-    if status is None:
-        return ""
-    marker = "*" if status.dirty else ""
-    return f"- Git: {status.branch}{marker}"
-
-
 def _draft_path(session) -> Path | None:
     base = _session_base_path(session)
     return base / "input_draft.txt" if base else None
@@ -436,82 +356,3 @@ def _truncate(value: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     return f"{text[: max(0, limit - 3)]}..."
-
-
-async def _latest_sampling_usage(session) -> dict | None:
-    get_usage = getattr(session, "get_latest_sampling_usage", None)
-    if not callable(get_usage):
-        return None
-    try:
-        usage = await get_usage()
-        return dict(usage) if isinstance(usage, dict) else None
-    except Exception:
-        return None
-
-
-async def _recent_tool_summaries(session, *, limit: int = 3) -> list[str]:
-    get_records = getattr(session, "get_tool_records", None)
-    if not callable(get_records):
-        return []
-    try:
-        records = await get_records(limit=limit)
-    except TypeError:
-        records = await get_records()
-    except Exception:
-        return []
-    if not isinstance(records, list):
-        return []
-    return [_tool_summary(record) for record in records[-limit:] if isinstance(record, dict)]
-
-
-def _tool_summary(record: dict) -> str:
-    name = _value(record.get("name"))
-    status = _tool_status(record)
-    ended = _short_timestamp(record.get("ts_end"))
-    detail = _tool_detail(record)
-    suffix = f" | {detail}" if detail else ""
-    return f"{name} {status} {ended}{suffix}".strip()
-
-
-def _tool_status(record: dict) -> str:
-    ok = record.get("ok")
-    if ok is True:
-        return "ok"
-    if ok is False:
-        error_type = _value(record.get("error_type"))
-        return f"failed ({error_type})" if error_type != "unknown" else "failed"
-    return "done"
-
-
-def _tool_detail(record: dict) -> str:
-    meta = record.get("meta")
-    if not isinstance(meta, dict):
-        return ""
-    if "exit_code" in meta:
-        return f"exit {meta.get('exit_code')}"
-    if "stdout_size" in meta:
-        return f"stdout {_format_count(meta.get('stdout_size'))} chars"
-    return ""
-
-
-def _short_timestamp(value: object) -> str:
-    text = str(value or "").strip()
-    if "T" in text:
-        return text.split("T", 1)[1].split(".", 1)[0]
-    return text or "unknown"
-
-
-def _format_count(value: object) -> str:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return str(value)
-    if abs(number) >= 1000:
-        return f"{number / 1000:.1f}k"
-    return str(int(number))
-
-
-def _format_percent(value: object) -> str:
-    if not isinstance(value, int | float):
-        return "0.0%"
-    return f"{value * 100:.1f}%"
