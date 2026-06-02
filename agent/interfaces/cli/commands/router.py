@@ -20,6 +20,7 @@ class SlashCommandResult:
     text: str = ""
     should_exit: bool = False
     clear_screen: bool = False
+    input_prefill: str = ""
 
 
 @dataclass(frozen=True, slots=True)

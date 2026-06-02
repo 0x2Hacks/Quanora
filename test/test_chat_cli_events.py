@@ -68,8 +68,9 @@ def test_chat_cli_prompt_uses_status_toolbar(monkeypatch) -> None:
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-        def prompt(self, message):
+        def prompt(self, message, **kwargs):
             captured["message"] = message
+            captured["default"] = kwargs.get("default", "")
             captured["toolbar"] = captured["bottom_toolbar"]()
             captured["continuation"] = captured["prompt_continuation"](0, 2, False)
             return "hello"
@@ -83,6 +84,8 @@ def test_chat_cli_prompt_uses_status_toolbar(monkeypatch) -> None:
         raise AssertionError("Expected prompt result to be returned")
     if captured["message"] != "\nYou > ":
         raise AssertionError(f"Expected speaker prompt, got: {captured['message']!r}")
+    if captured["default"] != "":
+        raise AssertionError(f"Expected empty prompt prefill, got: {captured['default']!r}")
     if captured.get("completer") is None:
         raise AssertionError("Expected slash command completer")
     if captured.get("complete_while_typing") is not True:
@@ -112,7 +115,7 @@ def test_chat_cli_prompt_toolbar_uses_latest_usage(monkeypatch) -> None:
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-        def prompt(self, message):
+        def prompt(self, message, **kwargs):
             captured["toolbar"] = captured["bottom_toolbar"]()
             return "hello"
 
@@ -280,6 +283,30 @@ def test_chat_cli_renders_saved_draft_notice(tmp_path) -> None:
         raise AssertionError(f"Expected draft notice, got: {output.getvalue()!r}")
     if cli._last_input_draft_path is not None:
         raise AssertionError("Expected draft notice path to be cleared")
+
+
+def test_chat_cli_uses_pending_input_prefill_once(monkeypatch) -> None:
+    captured = {}
+
+    class FakePromptSession:
+        def __init__(self, **kwargs):
+            pass
+
+        def prompt(self, message, **kwargs):
+            captured.setdefault("defaults", []).append(kwargs.get("default", ""))
+            return kwargs.get("default", "")
+
+    monkeypatch.setattr("agent.interfaces.cli.chat_cli.PromptSession", FakePromptSession)
+
+    cli = ChatCLI(runtime=None, session=None)
+    cli._pending_input_prefill = "continue this prompt"
+
+    if cli._read_user_input() != "continue this prompt":
+        raise AssertionError("Expected pending prefill to be returned")
+    if cli._read_user_input() != "":
+        raise AssertionError("Expected pending prefill to be consumed")
+    if captured["defaults"] != ["continue this prompt", ""]:
+        raise AssertionError(f"Expected one-shot defaults, got: {captured['defaults']!r}")
 
 
 def main() -> int:

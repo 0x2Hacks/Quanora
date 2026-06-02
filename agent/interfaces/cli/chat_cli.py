@@ -48,6 +48,7 @@ class ChatCLI:
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._current_cancel_source: CancellationTokenSource | None = None
         self._last_input_draft_path: Path | None = None
+        self._pending_input_prefill = ""
         self._latest_usage: dict[str, object] | None = None
         self._slash_router = SlashCommandRouter()
         self._slash_completer = SlashCommandCompleter(self._slash_router.command_infos())
@@ -162,7 +163,9 @@ class ChatCLI:
                     git_status=self._git_status_provider.current(),
                 ),
             )
-        return self._prompt_session.prompt(prompt_message()).strip()
+        prefill = self._pending_input_prefill
+        self._pending_input_prefill = ""
+        return self._prompt_session.prompt(prompt_message(), default=prefill).strip()
 
     def _seed_input_history(self, messages: list[dict]) -> None:
         seen = set()
@@ -271,6 +274,8 @@ class ChatCLI:
         )
         if result.clear_screen:
             self._console.clear()
+        if result.input_prefill:
+            self._pending_input_prefill = result.input_prefill
         if result.text:
             render_markdown(result.text)
         return result.should_exit

@@ -172,9 +172,9 @@ def test_router_exposes_command_descriptions() -> None:
     assert descriptions["status"] == "Show session status"
     assert descriptions["model"] == "Show or change the active model"
     assert descriptions["clear"] == "Clear terminal output"
-    assert descriptions["draft"] == "Show or clear saved input draft"
+    assert descriptions["draft"] == "Show, reuse, or clear saved input draft"
     assert usages["sessions"] == "/sessions [limit]"
-    assert usages["draft"] == "/draft | /draft clear"
+    assert usages["draft"] == "/draft | /draft use | /draft clear"
 
 
 @pytest.mark.asyncio
@@ -493,10 +493,25 @@ async def test_draft_clear_removes_saved_input_draft(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_draft_use_loads_saved_input_draft(tmp_path) -> None:
+    class DraftSession(FakeSession):
+        _session_paths = {"base": str(tmp_path / "session_1")}
+
+    base = tmp_path / "session_1"
+    base.mkdir()
+    (base / "input_draft.txt").write_text("continue this prompt", encoding="utf-8")
+
+    result = await SlashCommandRouter().execute("/draft use", _context(session=DraftSession()))
+
+    assert result.text == "Draft loaded into the next prompt."
+    assert result.input_prefill == "continue this prompt"
+
+
+@pytest.mark.asyncio
 async def test_draft_rejects_invalid_args() -> None:
     result = await SlashCommandRouter().execute("/draft clear now", _context())
 
-    assert result.text == "Usage: /draft or /draft clear"
+    assert result.text == "Usage: /draft, /draft use, or /draft clear"
 
 
 @pytest.mark.asyncio
@@ -552,6 +567,22 @@ async def test_chat_cli_clear_command_clears_console_without_runtime() -> None:
     assert should_exit is False
     assert runtime.called is False
     assert called == [True]
+
+
+@pytest.mark.asyncio
+async def test_chat_cli_draft_use_sets_next_prompt_prefill(tmp_path) -> None:
+    class DraftSession(FakeSession):
+        _session_paths = {"base": str(tmp_path / "session_1")}
+
+    base = tmp_path / "session_1"
+    base.mkdir()
+    (base / "input_draft.txt").write_text("continue this prompt", encoding="utf-8")
+    cli = ChatCLI(runtime=FakeRuntime(), session=DraftSession())
+
+    should_exit = await cli._run_slash_command_async("/draft use")
+
+    assert should_exit is False
+    assert cli._pending_input_prefill == "continue this prompt"
 
 
 @pytest.mark.asyncio

@@ -19,7 +19,7 @@ COMMAND_INFOS = (
     SlashCommandInfo("compact", "Compact current session context", "/compact"),
     SlashCommandInfo("model", "Show or change the active model", "/model | /model set <model>"),
     SlashCommandInfo("clear", "Clear terminal output", "/clear"),
-    SlashCommandInfo("draft", "Show or clear saved input draft", "/draft | /draft clear"),
+    SlashCommandInfo("draft", "Show, reuse, or clear saved input draft", "/draft | /draft use | /draft clear"),
     SlashCommandInfo("login", "Show login setup guidance", "/login"),
     SlashCommandInfo("config", "Show config guidance", "/config"),
     SlashCommandInfo("exit", "Exit CLI", "/exit", aliases=("quit",)),
@@ -242,19 +242,21 @@ async def handle_clear(context: SlashCommandContext, args: list[str]) -> SlashCo
     return SlashCommandResult(clear_screen=True)
 
 
-async def handle_draft(context: SlashCommandContext, args: list[str]) -> str:
-    if len(args) > 1 or (args and args[0].lower() != "clear"):
-        return "Usage: /draft or /draft clear"
+async def handle_draft(context: SlashCommandContext, args: list[str]) -> str | SlashCommandResult:
+    if len(args) > 1 or (args and args[0].lower() not in {"use", "clear"}):
+        return "Usage: /draft, /draft use, or /draft clear"
     path = _draft_path(context.session)
-    if args:
+    if args and args[0].lower() == "clear":
         return _clear_draft(path)
+    if args and args[0].lower() == "use":
+        draft = _read_draft(path)
+        if draft is None:
+            return "No saved input draft."
+        return SlashCommandResult("Draft loaded into the next prompt.", input_prefill=draft)
     if path is None or not path.exists():
         return "No saved input draft."
-    try:
-        draft = path.read_text(encoding="utf-8").strip()
-    except Exception as exc:
-        return f"Command failed: {exc}"
-    if not draft:
+    draft = _read_draft(path)
+    if draft is None:
         return "No saved input draft."
     return f"Saved input draft: {path}\n\n{draft}"
 
@@ -342,6 +344,16 @@ def _clear_draft(path: Path | None) -> str:
     except Exception as exc:
         return f"Command failed: {exc}"
     return "Saved input draft cleared."
+
+
+def _read_draft(path: Path | None) -> str | None:
+    if path is None or not path.exists():
+        return None
+    try:
+        draft = path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return None
+    return draft or None
 
 
 def _session_base_path(session) -> Path | None:

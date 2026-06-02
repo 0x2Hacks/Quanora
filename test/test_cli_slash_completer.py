@@ -45,6 +45,7 @@ def test_slash_completer_completes_draft_clear_argument() -> None:
     completer = SlashCommandCompleter(["draft"])
 
     assert _texts(completer, "/draft c") == ["clear"]
+    assert _texts(completer, "/draft u") == ["use"]
 
 
 def test_slash_completer_replaces_only_help_argument_token() -> None:
