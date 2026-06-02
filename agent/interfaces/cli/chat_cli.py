@@ -450,6 +450,8 @@ class ChatCLI:
             cost = getattr(event, 'cost_report', None)
             if cost is not None:
                 self._render_cost_report(cost)
+            # Self-dev mode: even on failure, push any committed code
+            self._maybe_self_dev_push("TurnFailedEvent")
         elif isinstance(event, TurnCompletedEvent):
             self._streaming_renderer.flush()
             self._last_turn_event = event  # save for distillation
@@ -459,18 +461,13 @@ class ChatCLI:
                 self._last_cost_report = cost  # stored for async persist
 
             # Self-dev mode: auto push + PR after each turn with commits
-            if self._self_dev:
-                try:
-                    from agent.infrastructure.config.settings import get_repo_root
-                    from agent.infrastructure.git_hooks import on_turn_completed_self_dev
-                    on_turn_completed_self_dev(get_repo_root())
-                except Exception as exc:
-                    # Never let the hook crash the CLI
-                    print(f"\n[self-dev] ⚠ Push hook error: {exc}", file=sys.stderr)
+            self._maybe_self_dev_push("TurnCompletedEvent")
 
         elif isinstance(event, TurnCancelledEvent):
             self._streaming_renderer.flush()
             print(f"\n[Cancelled] Turn cancelled: {getattr(event, 'reason', 'unknown')}")
+            # Self-dev mode: even on cancellation, push any committed code
+            self._maybe_self_dev_push("TurnCancelledEvent")
 
     def _on_retry(self, attempt: int, exception: Exception) -> None:
         self._streaming_renderer.show_retry(attempt, exception)
@@ -478,32 +475,276 @@ class ChatCLI:
     def _on_debug(self, message: str) -> None:
         print(f"\n[Debug] {message}")
 
+    # ── Self-dev push hook ────────────────────────────────────────────
+
+    def _maybe_self_dev_push(self, trigger: str) -> None:
+        """If running in self-dev mode, attempt the auto push+PR hook.
+
+        This is called on TurnCompletedEvent, TurnFailedEvent, and
+        TurnCancelledEvent so that any commits made during the turn are
+        always pushed, regardless of how the turn ended.
+        """
+        if not self._self_dev:
+            return
+
+        try:
+            from agent.infrastructure.config.settings import get_repo_root
+            from agent.infrastructure.git_hooks import on_turn_completed_self_dev
+
+            on_turn_completed_self_dev(get_repo_root(), trigger=trigger)
+        except Exception as exc:
+            # Never let the hook crash the CLI, but be loud about failures
+            # so the user can diagnose and manually push if needed.
+            import traceback
+            print(
+                f"\n[self-dev] ⚠ Push hook error (trigger={trigger}): {exc}",
+                file=sys.stderr,
+            )
+            print(traceback.format_exc(), file=sys.stderr)
+            print(
+                "[self-dev] You may need to manually: git push origin genspark_ai_developer",
+                file=sys.stderr,
+            )
+
+    # ── Cost analysis helpers ───────────────────────────────────────────
+
+    @staticmethod
+    def _efficiency_grade(
+        *,
+        total_tokens: int,
+        turn_wall_s: float,
+        num_tool_calls: int,
+        num_llm_calls: int,
+    ) -> tuple[str, str]:
+        """Return (grade, comment) summarising this turn's efficiency.
+
+        Heuristics (tuned for typical LLM-agent workloads):
+        - Tokens / wall-second  → throughput efficiency
+        - Tools / LLM-call ratio → tool utilisation
+        - Absolute latency      → user-experience signal
+        """
+        # Throughput: tokens produced per wall-second
+        throughput = total_tokens / max(turn_wall_s, 0.01)
+        if throughput > 500:
+            t_grade, t_comment = "A", "高吞吐"
+        elif throughput > 200:
+            t_grade, t_comment = "B", "吞吐正常"
+        elif throughput > 80:
+            t_grade, t_comment = "C", "吞吐偏低"
+        else:
+            t_grade, t_comment = "D", "吞吐过低，大量等待"
+
+        # Latency: is the user waiting too long?
+        if turn_wall_s < 5:
+            l_grade, l_comment = "A", "响应迅速"
+        elif turn_wall_s < 15:
+            l_grade, l_comment = "B", "延迟可接受"
+        elif turn_wall_s < 30:
+            l_grade, l_comment = "C", "延迟较高"
+        else:
+            l_grade, l_comment = "D", "延迟过长，需优化"
+
+        # Tool utilisation: tools per LLM call
+        tool_ratio = num_tool_calls / max(num_llm_calls, 1)
+        if tool_ratio >= 1.5:
+            r_grade, r_comment = "A", "工具利用充分"
+        elif tool_ratio >= 0.8:
+            r_grade, r_comment = "B", "工具利用合理"
+        elif tool_ratio >= 0.3:
+            r_grade, r_comment = "C", "工具调用偏少"
+        else:
+            r_grade, r_comment = "D", "LLM 空转多，缺乏工具配合"
+
+        # Overall: worst sub-grade dominates
+        grades = {"A": 4, "B": 3, "C": 2, "D": 1}
+        overall = min(t_grade, l_grade, r_grade, key=lambda g: grades[g])
+        comment_parts = [t_comment, l_comment, r_comment]
+        return overall, " | ".join(comment_parts)
+
+    @staticmethod
+    def _identify_bottlenecks(summary: dict) -> list[str]:
+        """Return a list of bottleneck descriptions."""
+        bottlenecks: list[str] = []
+
+        llm_latency = summary["total_llm_latency_s"]
+        tool_wall = summary["total_tool_wall_s"]
+        turn_wall = summary["turn_wall_s"]
+
+        # Is LLM the bottleneck?
+        if llm_latency > 0 and turn_wall > 0:
+            llm_pct = llm_latency / max(turn_wall, 0.01)
+            if llm_pct > 0.7:
+                bottlenecks.append(
+                    f"LLM 推理占总时间 {llm_pct:.0%}，是主要瓶颈"
+                )
+
+        # Is tool execution the bottleneck?
+        if tool_wall > 0 and turn_wall > 0:
+            tool_pct = tool_wall / max(turn_wall, 0.01)
+            if tool_pct > 0.7:
+                bottlenecks.append(
+                    f"工具执行占总时间 {tool_pct:.0%}，是主要瓶颈"
+                )
+
+        # Too many LLM calls with few tools?
+        num_llm = summary["num_llm_calls"]
+        num_tools = summary["num_tool_calls"]
+        if num_llm > 5 and num_tools < 2:
+            bottlenecks.append(
+                f"LLM 调用 {num_llm} 次但仅 {num_tools} 次工具调用，可能存在冗余推理轮次"
+            )
+
+        # Token bloat: prompt tokens >> completion tokens
+        prompt_tok = summary["total_prompt_tokens"]
+        comp_tok = summary["total_completion_tokens"]
+        if prompt_tok > 5000 and comp_tok > 0 and prompt_tok / comp_tok > 10:
+            bottlenecks.append(
+                f"Prompt/Completion 比达 {prompt_tok / comp_tok:.0f}:1，上下文过长"
+            )
+
+        return bottlenecks
+
+    @staticmethod
+    def _optimization_suggestions(summary: dict, bottlenecks: list[str]) -> list[str]:
+        """Return actionable optimisation suggestions."""
+        suggestions: list[str] = []
+
+        prompt_tok = summary["total_prompt_tokens"]
+        comp_tok = summary["total_completion_tokens"]
+        num_llm = summary["num_llm_calls"]
+        num_tools = summary["num_tool_calls"]
+        llm_latency = summary["total_llm_latency_s"]
+        tool_wall = summary["total_tool_wall_s"]
+
+        # Context length reduction
+        if prompt_tok > 8000:
+            suggestions.append(
+                "💡 缩减上下文：精简 system prompt 或减少历史消息，当前 prompt 占 "
+                f"{prompt_tok} tokens"
+            )
+        elif prompt_tok > 4000:
+            suggestions.append(
+                "💡 考虑精简 prompt：当前 {p} tokens，适当压缩可降低延迟和成本".format(
+                    p=prompt_tok
+                )
+            )
+
+        # Batch tool calls
+        if num_tools >= 4:
+            suggestions.append(
+                "💡 合并工具调用：多个独立工具调用可并行执行以减少等待"
+            )
+
+        # Reduce LLM round-trips
+        if num_llm > 3 and num_tools / max(num_llm, 1) < 0.5:
+            suggestions.append(
+                "💡 减少推理轮次：当前 " + str(num_llm) +
+                " 次 LLM 调用，尝试在单轮中完成更多决策"
+            )
+
+        # Slow tool identification
+        if summary["tool_details"]:
+            slow_tools = [
+                d for d in summary["tool_details"] if d["wall_s"] > 5
+            ]
+            for st in slow_tools:
+                suggestions.append(
+                    f"💡 优化慢工具：{st['tool']} 耗时 {st['wall_s']}s，考虑缓存或异步执行"
+                )
+
+        # LLM model switch hint
+        if llm_latency > 0 and summary["llm_details"]:
+            for d in summary["llm_details"]:
+                if d["latency_s"] > 10 and d["completion"] < 500:
+                    suggestions.append(
+                        f"💡 低产出高延迟：{d['model']} 产出 {d['completion']} tokens "
+                        f"却耗时 {d['latency_s']}s，考虑换用更快的模型"
+                    )
+
+        return suggestions
+
+    # ── Cost report rendering ──────────────────────────────────────────
+
     def _render_cost_report(self, cost_report) -> None:
-        """Render a formatted cost report table at the end of a turn."""
+        """Render a summarised cost report with efficiency grade and
+        optimisation suggestions at the end of a turn."""
         summary = cost_report.summarize()
-        lines = []
+
+        # ── Core metrics (compact single-line) ──
+        turn_wall = summary["turn_wall_s"]
+        total_tokens = summary["total_tokens"]
+        prompt_tok = summary["total_prompt_tokens"]
+        comp_tok = summary["total_completion_tokens"]
+        num_llm = summary["num_llm_calls"]
+        num_tools = summary["num_tool_calls"]
+
+        # ── Efficiency analysis ──
+        grade, grade_comment = self._efficiency_grade(
+            total_tokens=total_tokens,
+            turn_wall_s=turn_wall,
+            num_tool_calls=num_tools,
+            num_llm_calls=num_llm,
+        )
+        grade_colors = {"A": "green", "B": "cyan", "C": "yellow", "D": "red"}
+        grade_icons = {"A": "🟢", "B": "🔵", "C": "🟡", "D": "🔴"}
+
+        bottlenecks = self._identify_bottlenecks(summary)
+        suggestions = self._optimization_suggestions(summary, bottlenecks)
+
+        # ── Render ──
+        lines: list[str] = []
         lines.append("")
-        lines.append("┌─────────────────── Cost Report ───────────────────┐")
-        lines.append(f"│ Turn wall time : {summary['turn_wall_s']}s")
-        lines.append(f"│ LLM calls      : {summary['num_llm_calls']}")
-        lines.append(f"│ Tool calls     : {summary['num_tool_calls']}")
-        lines.append(f"│ Prompt tokens  : {summary['total_prompt_tokens']}")
-        lines.append(f"│ Completion     : {summary['total_completion_tokens']}")
-        lines.append(f"│ Total tokens   : {summary['total_tokens']}")
-        lines.append(f"│ LLM latency    : {summary['total_llm_latency_s']}s")
-        lines.append(f"│ Tool wall time : {summary['total_tool_wall_s']}s")
+        lines.append("┌─────────────── Cost Summary ───────────────────┐")
 
-        if summary['llm_details']:
-            lines.append("├──────────────── LLM Call Details ─────────────────┤")
-            for i, d in enumerate(summary['llm_details'], 1):
-                lines.append(f"│  #{i} model={d['model']}  p={d['prompt']} c={d['completion']} "
-                             f"tot={d['total']}  lat={d['latency_s']}s")
+        # Core metrics
+        lines.append(
+            f"│ ⏱ {turn_wall}s  ·  📊 {total_tokens} tokens "
+            f"(in {prompt_tok} / out {comp_tok})  ·  "
+            f"🔄 {num_llm} LLM + {num_tools} tool calls"
+        )
 
-        if summary['tool_details']:
-            lines.append("├──────────────── Tool Call Details ────────────────┤")
-            for i, d in enumerate(summary['tool_details'], 1):
-                lines.append(f"│  #{i} {d['tool']}  wall={d['wall_s']}s  "
-                             f"in={d['input_chars']}c out={d['output_chars']}c")
+        # Efficiency grade
+        icon = grade_icons.get(grade, "⚪")
+        lines.append(f"│ {icon} 效率评级: {grade} — {grade_comment}")
+
+        # Time breakdown
+        llm_lat = summary["total_llm_latency_s"]
+        tool_wall = summary["total_tool_wall_s"]
+        overhead = max(turn_wall - llm_lat - tool_wall, 0)
+        lines.append(
+            f"│ ⏳ 时间分布: LLM {llm_lat}s  |  工具 {tool_wall}s  |  调度 {overhead:.1f}s"
+        )
+
+        # Bottlenecks
+        if bottlenecks:
+            lines.append("├─────────────── 瓶颈分析 ───────────────────────┤")
+            for b in bottlenecks:
+                lines.append(f"│ ⚠ {b}")
+
+        # Optimisation suggestions
+        if suggestions:
+            lines.append("├─────────────── 优化建议 ───────────────────────┤")
+            for s in suggestions:
+                lines.append(f"│ {s}")
+
+        # Detailed breakdown (collapsed, only if multiple LLM or tool calls)
+        if num_llm > 1 and summary["llm_details"]:
+            lines.append("├─────────────── LLM 明细 ───────────────────────┤")
+            for i, d in enumerate(summary["llm_details"], 1):
+                lines.append(
+                    f"│  #{i} {d['model']}  "
+                    f"in={d['prompt']} out={d['completion']}  "
+                    f"lat={d['latency_s']}s"
+                )
+
+        if num_tools > 1 and summary["tool_details"]:
+            lines.append("├─────────────── Tool 明细 ──────────────────────┤")
+            for i, d in enumerate(summary["tool_details"], 1):
+                lines.append(
+                    f"│  #{i} {d['tool']}  "
+                    f"wall={d['wall_s']}s  "
+                    f"io={d['input_chars']}→{d['output_chars']}c"
+                )
 
         lines.append("└───────────────────────────────────────────────────┘")
         lines.append("")
