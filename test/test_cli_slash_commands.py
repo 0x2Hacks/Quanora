@@ -120,6 +120,38 @@ async def test_help_returns_command_list() -> None:
     assert result.should_exit is False
 
 
+@pytest.mark.asyncio
+async def test_help_returns_command_specific_usage() -> None:
+    result = await SlashCommandRouter().execute("/help model", _context())
+
+    assert result.text.startswith("/model")
+    assert "Show or change the active model" in result.text
+    assert "usage: /model | /model set <model>" in result.text
+
+
+@pytest.mark.asyncio
+async def test_help_accepts_command_alias() -> None:
+    result = await SlashCommandRouter().execute("/help quit", _context())
+
+    assert result.text.startswith("/exit")
+    assert "aliases: /quit" in result.text
+
+
+@pytest.mark.asyncio
+async def test_help_reports_unknown_command() -> None:
+    result = await SlashCommandRouter().execute("/help missing", _context())
+
+    assert "Unknown command: /missing" in result.text
+    assert "/help" in result.text
+
+
+@pytest.mark.asyncio
+async def test_help_rejects_too_many_args() -> None:
+    result = await SlashCommandRouter().execute("/help model now", _context())
+
+    assert result.text == "Usage: /help [command]"
+
+
 def test_router_exposes_sorted_command_names() -> None:
     names = SlashCommandRouter().command_names()
 
@@ -132,11 +164,13 @@ def test_router_exposes_sorted_command_names() -> None:
 def test_router_exposes_command_descriptions() -> None:
     infos = SlashCommandRouter().command_infos()
     descriptions = {info.name: info.description for info in infos}
+    usages = {info.name: info.usage for info in infos}
 
     assert [info.name for info in infos] == sorted(descriptions)
     assert descriptions["status"] == "Show session status"
     assert descriptions["model"] == "Show or change the active model"
     assert descriptions["clear"] == "Clear terminal output"
+    assert usages["sessions"] == "/sessions [limit]"
 
 
 @pytest.mark.asyncio
@@ -465,6 +499,10 @@ def main() -> int:
     test_router_exposes_sorted_command_names()
     test_router_exposes_command_descriptions()
     asyncio.run(test_help_returns_command_list())
+    asyncio.run(test_help_returns_command_specific_usage())
+    asyncio.run(test_help_accepts_command_alias())
+    asyncio.run(test_help_reports_unknown_command())
+    asyncio.run(test_help_rejects_too_many_args())
     asyncio.run(test_unknown_command_returns_friendly_error())
     asyncio.run(test_status_shows_session_model_debug_and_message_count())
     asyncio.run(test_status_shows_latest_sampling_usage())

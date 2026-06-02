@@ -26,6 +26,7 @@ class SlashCommandResult:
 class SlashCommandInfo:
     name: str
     description: str
+    usage: str = ""
     aliases: tuple[str, ...] = ()
 
 

@@ -10,18 +10,18 @@ from .router import SlashCommandContext, SlashCommandInfo, SlashCommandResult
 
 
 COMMAND_INFOS = (
-    SlashCommandInfo("help", "Show commands"),
-    SlashCommandInfo("status", "Show session status"),
-    SlashCommandInfo("doctor", "Run local setup diagnostics"),
-    SlashCommandInfo("sessions", "List recent sessions"),
-    SlashCommandInfo("skill", "List skills"),
-    SlashCommandInfo("plan", "Show active plan summary"),
-    SlashCommandInfo("compact", "Compact current session context"),
-    SlashCommandInfo("model", "Show or change the active model"),
-    SlashCommandInfo("clear", "Clear terminal output"),
-    SlashCommandInfo("login", "Show login setup guidance"),
-    SlashCommandInfo("config", "Show config guidance"),
-    SlashCommandInfo("exit", "Exit CLI", aliases=("quit",)),
+    SlashCommandInfo("help", "Show commands", "/help [command]"),
+    SlashCommandInfo("status", "Show session status", "/status"),
+    SlashCommandInfo("doctor", "Run local setup diagnostics", "/doctor"),
+    SlashCommandInfo("sessions", "List recent sessions", "/sessions [limit]"),
+    SlashCommandInfo("skill", "List skills", "/skill [list]"),
+    SlashCommandInfo("plan", "Show active plan summary", "/plan"),
+    SlashCommandInfo("compact", "Compact current session context", "/compact"),
+    SlashCommandInfo("model", "Show or change the active model", "/model | /model set <model>"),
+    SlashCommandInfo("clear", "Clear terminal output", "/clear"),
+    SlashCommandInfo("login", "Show login setup guidance", "/login"),
+    SlashCommandInfo("config", "Show config guidance", "/config"),
+    SlashCommandInfo("exit", "Exit CLI", "/exit", aliases=("quit",)),
 )
 
 
@@ -48,6 +48,10 @@ def default_handlers() -> dict[str, Callable]:
 
 
 async def handle_help(context: SlashCommandContext, args: list[str]) -> str:
+    if len(args) > 1:
+        return "Usage: /help [command]"
+    if args:
+        return _render_command_help(COMMAND_INFOS, args[0])
     return _render_help(COMMAND_INFOS)
 
 
@@ -266,6 +270,28 @@ def _render_help(command_infos: tuple[SlashCommandInfo, ...]) -> str:
         aliases = f" (alias: {', '.join('/' + alias for alias in info.aliases)})" if info.aliases else ""
         lines.append(f"/{info.name:<{command_width}}{info.description}{aliases}")
     return "\n".join(lines)
+
+
+def _render_command_help(command_infos: tuple[SlashCommandInfo, ...], command: str) -> str:
+    name = command.strip().lstrip("/").lower()
+    info = _find_command_info(command_infos, name)
+    if info is None:
+        return f"Unknown command: /{name}\nRun /help to see available commands."
+    lines = [
+        f"/{info.name}",
+        f"- {info.description}",
+        f"- usage: {info.usage or '/' + info.name}",
+    ]
+    if info.aliases:
+        lines.append(f"- aliases: {', '.join('/' + alias for alias in info.aliases)}")
+    return "\n".join(lines)
+
+
+def _find_command_info(command_infos: tuple[SlashCommandInfo, ...], name: str) -> SlashCommandInfo | None:
+    for info in command_infos:
+        if info.name == name or name in info.aliases:
+            return info
+    return None
 
 
 def _value(value: object) -> str:
