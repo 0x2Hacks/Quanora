@@ -29,6 +29,10 @@ class SlashCommandCompleter(Completer):
             yield from self._complete_help_argument(stripped)
             return
 
+        if _is_draft_argument(stripped):
+            yield from self._complete_literal_argument(stripped, "clear")
+            return
+
         if _has_command_args(stripped):
             return
 
@@ -41,6 +45,12 @@ class SlashCommandCompleter(Completer):
         token = parts[1].lstrip("/").lower() if len(parts) > 1 else ""
         start_position = -len(token)
         yield from self._matching_commands(token, start_position=start_position, slash=False)
+
+    def _complete_literal_argument(self, stripped: str, value: str):
+        parts = stripped.split(maxsplit=1)
+        token = parts[1].lower() if len(parts) > 1 else ""
+        if value.startswith(token):
+            yield Completion(value, start_position=-len(token), display=value)
 
     def _matching_commands(self, token: str, *, start_position: int, slash: bool):
         for command, description in self._commands:
@@ -61,3 +71,8 @@ def _has_command_args(value: str) -> bool:
 def _is_help_argument(value: str) -> bool:
     parts = value.split(maxsplit=1)
     return bool(parts) and parts[0].lower() == "/help" and (value.endswith(" ") or len(parts) > 1)
+
+
+def _is_draft_argument(value: str) -> bool:
+    parts = value.split(maxsplit=1)
+    return bool(parts) and parts[0].lower() == "/draft" and (value.endswith(" ") or len(parts) > 1)

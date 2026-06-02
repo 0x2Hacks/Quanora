@@ -19,7 +19,7 @@ COMMAND_INFOS = (
     SlashCommandInfo("compact", "Compact current session context", "/compact"),
     SlashCommandInfo("model", "Show or change the active model", "/model | /model set <model>"),
     SlashCommandInfo("clear", "Clear terminal output", "/clear"),
-    SlashCommandInfo("draft", "Show saved input draft", "/draft"),
+    SlashCommandInfo("draft", "Show or clear saved input draft", "/draft | /draft clear"),
     SlashCommandInfo("login", "Show login setup guidance", "/login"),
     SlashCommandInfo("config", "Show config guidance", "/config"),
     SlashCommandInfo("exit", "Exit CLI", "/exit", aliases=("quit",)),
@@ -243,9 +243,11 @@ async def handle_clear(context: SlashCommandContext, args: list[str]) -> SlashCo
 
 
 async def handle_draft(context: SlashCommandContext, args: list[str]) -> str:
-    if args:
-        return "Usage: /draft"
+    if len(args) > 1 or (args and args[0].lower() != "clear"):
+        return "Usage: /draft or /draft clear"
     path = _draft_path(context.session)
+    if args:
+        return _clear_draft(path)
     if path is None or not path.exists():
         return "No saved input draft."
     try:
@@ -330,6 +332,16 @@ def _git_status_line() -> str:
 def _draft_path(session) -> Path | None:
     base = _session_base_path(session)
     return base / "input_draft.txt" if base else None
+
+
+def _clear_draft(path: Path | None) -> str:
+    if path is None or not path.exists():
+        return "No saved input draft."
+    try:
+        path.unlink()
+    except Exception as exc:
+        return f"Command failed: {exc}"
+    return "Saved input draft cleared."
 
 
 def _session_base_path(session) -> Path | None:

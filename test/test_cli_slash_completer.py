@@ -41,6 +41,12 @@ def test_slash_completer_completes_help_arguments() -> None:
     assert _texts(completer, "/help s") == ["sessions", "status"]
 
 
+def test_slash_completer_completes_draft_clear_argument() -> None:
+    completer = SlashCommandCompleter(["draft"])
+
+    assert _texts(completer, "/draft c") == ["clear"]
+
+
 def test_slash_completer_replaces_only_help_argument_token() -> None:
     completer = SlashCommandCompleter(["status"])
     completion = list(completer.get_completions(Document("/help st"), None))[0]
@@ -70,6 +76,7 @@ def main() -> int:
     test_slash_completer_ignores_non_slash_input()
     test_slash_completer_ignores_command_arguments()
     test_slash_completer_completes_help_arguments()
+    test_slash_completer_completes_draft_clear_argument()
     test_slash_completer_replaces_only_help_argument_token()
     test_slash_completer_replaces_only_slash_token()
     test_slash_completer_shows_command_description()
