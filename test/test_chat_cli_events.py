@@ -42,6 +42,18 @@ def test_chat_cli_tool_result_failed_uses_failed_status() -> None:
         raise AssertionError(f"Expected CLI to render failed tool status, got: {text!r}")
 
 
+def test_chat_cli_banner_mentions_core_shortcuts() -> None:
+    cli = ChatCLI(runtime=None, session=None)
+    output = io.StringIO()
+
+    with redirect_stdout(output):
+        cli._render_banner()
+
+    text = output.getvalue()
+    if "Type /help" not in text or "Ctrl+J newline" not in text or "Ctrl+L clear" not in text:
+        raise AssertionError(f"Expected banner shortcut hints, got: {text!r}")
+
+
 def test_chat_cli_prompt_uses_status_toolbar(monkeypatch) -> None:
     captured = {}
 
@@ -222,6 +234,7 @@ def test_chat_cli_clear_prompt_screen_clears_console() -> None:
 def main() -> int:
     test_chat_cli_turn_failed_event_prints_error_field()
     test_chat_cli_tool_result_failed_uses_failed_status()
+    test_chat_cli_banner_mentions_core_shortcuts()
     test_chat_cli_loads_latest_usage_from_session()
     test_chat_cli_token_event_updates_latest_usage()
     test_chat_cli_seeds_input_history_from_user_messages()

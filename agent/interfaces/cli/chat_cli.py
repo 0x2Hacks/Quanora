@@ -84,7 +84,7 @@ class ChatCLI:
             print("Chain Peer v0.1 (Debug Mode: True)")
         else:
             print("Chain Peer v0.1")
-        print("Type /help for commands. Enter sends, Ctrl+J adds a newline.")
+        print("Type /help. Enter sends, Ctrl+J newline, Ctrl+L clear.")
         print("-" * 50)
 
     def _render_loaded_messages(self) -> None:
