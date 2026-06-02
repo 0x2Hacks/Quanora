@@ -50,3 +50,14 @@ web/
 
 # Quanora runtime cache
 .quanora/cache/
+
+# Dev/debug scripts and test output (no longer tracked)
+scripts/
+output/
+html_format.txt
+
+# Runtime state directories (created at first use, not tracked)
+.dev/
+.doc/
+.tmp/
+wq_memory/
