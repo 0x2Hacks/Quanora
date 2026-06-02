@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+import os
 from typing import Any, AsyncIterator
 import openai
 from tenacity import (
@@ -25,6 +28,7 @@ class AsyncOpenAIChatClient(AsyncChatClient):
         self._model = model
         self._reasoning_effort = (reasoning_effort or "").strip() or None
         self._reasoning_effort_disabled = False
+        self._prompt_cache_key_disabled = False
         self.on_retry = None  # Callback function: def on_retry(attempt: int, exception: Exception)
 
     @property
@@ -37,6 +41,7 @@ class AsyncOpenAIChatClient(AsyncChatClient):
             raise ValueError("Model name is required.")
         self._model = clean
         self._reasoning_effort_disabled = False
+        self._prompt_cache_key_disabled = False
 
     def _before_sleep_log(self, retry_state: RetryCallState):
         if self.on_retry and retry_state.outcome and retry_state.outcome.failed:
@@ -77,6 +82,7 @@ class AsyncOpenAIChatClient(AsyncChatClient):
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "auto"
+            self._add_prompt_cache_key(kwargs)
                 
             # For non-streaming create, we await it.
             # To be fully responsive to cancellation mid-flight, we wrap it in a task.
@@ -122,6 +128,7 @@ class AsyncOpenAIChatClient(AsyncChatClient):
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "auto"
+            self._add_prompt_cache_key(kwargs)
                 
             task = asyncio.create_task(self._create_with_optional_reasoning_effort(kwargs))
             
@@ -165,13 +172,44 @@ class AsyncOpenAIChatClient(AsyncChatClient):
         try:
             return await self._client.chat.completions.create(**payload)
         except openai.APIStatusError as exc:
-            if "reasoning_effort" not in payload or not self._should_retry_without_reasoning_effort(exc):
-                raise
             fallback_payload = dict(payload)
-            fallback_payload.pop("reasoning_effort", None)
-            result = await self._client.chat.completions.create(**fallback_payload)
-            self._reasoning_effort_disabled = True
-            return result
+            should_retry = False
+            if "reasoning_effort" in fallback_payload and self._should_retry_without_reasoning_effort(exc):
+                fallback_payload.pop("reasoning_effort", None)
+                self._reasoning_effort_disabled = True
+                should_retry = True
+            if "prompt_cache_key" in fallback_payload and self._should_retry_without_prompt_cache_key(exc):
+                fallback_payload.pop("prompt_cache_key", None)
+                self._prompt_cache_key_disabled = True
+                should_retry = True
+            if not should_retry:
+                raise
+            return await self._client.chat.completions.create(**fallback_payload)
+
+    def _add_prompt_cache_key(self, kwargs: dict[str, Any]) -> None:
+        if self._prompt_cache_key_disabled:
+            return
+        kwargs["prompt_cache_key"] = self._build_prompt_cache_key(
+            messages=kwargs.get("messages") or [],
+            tools=kwargs.get("tools") or [],
+        )
+
+    def _build_prompt_cache_key(self, *, messages: list[dict], tools: list[dict]) -> str:
+        system_parts = [
+            str(message.get("content") or "")
+            for message in messages
+            if isinstance(message, dict) and message.get("role") == "system"
+        ]
+        payload = {
+            "model": self._model,
+            "cwd": os.path.normcase(os.path.realpath(os.getcwd())),
+            "system": system_parts,
+            "tools": tools,
+        }
+        digest = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:24]
+        return f"chainpeer:{digest}"
 
     def _should_retry_without_reasoning_effort(self, exc: Exception) -> bool:
         text = str(exc).lower()
@@ -181,6 +219,21 @@ class AsyncOpenAIChatClient(AsyncChatClient):
                 "reasoning_effort",
                 "request was blocked",
                 "blocked",
+                "unsupported",
+                "unknown",
+                "invalid",
+                "unrecognized",
+                "not support",
+                "not supported",
+                "extra_forbidden",
+            )
+        )
+
+    def _should_retry_without_prompt_cache_key(self, exc: Exception) -> bool:
+        text = str(exc).lower()
+        return "prompt_cache_key" in text and any(
+            marker in text
+            for marker in (
                 "unsupported",
                 "unknown",
                 "invalid",

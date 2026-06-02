@@ -91,6 +91,53 @@ async def test_openai_async_client_adds_reasoning_effort_when_configured():
 
 
 @pytest.mark.asyncio
+async def test_openai_async_client_adds_stable_prompt_cache_key():
+    mock_openai = MagicMock()
+    mock_openai.chat.completions.create = AsyncMock(return_value="Done")
+    client = AsyncOpenAIChatClient(mock_openai, "test-model")
+    messages = [
+        {"role": "system", "content": "stable system"},
+        {"role": "user", "content": "first"},
+    ]
+
+    await client.create(messages)
+    first_key = mock_openai.chat.completions.create.call_args.kwargs["prompt_cache_key"]
+    await client.create([{**messages[0]}, {"role": "user", "content": "second"}])
+    second_key = mock_openai.chat.completions.create.call_args.kwargs["prompt_cache_key"]
+
+    assert first_key.startswith("chainpeer:")
+    assert first_key == second_key
+
+
+@pytest.mark.asyncio
+async def test_openai_async_client_retries_without_unsupported_prompt_cache_key():
+    mock_openai = MagicMock()
+    calls = []
+
+    async def fake_create(**kwargs):
+        calls.append(dict(kwargs))
+        if len(calls) == 1:
+            raise openai.BadRequestError(
+                "Unsupported parameter: prompt_cache_key",
+                response=MagicMock(status_code=400),
+                body=None,
+            )
+        return "Done"
+
+    mock_openai.chat.completions.create = AsyncMock(side_effect=fake_create)
+    client = AsyncOpenAIChatClient(mock_openai, "test-model")
+
+    result = await client.create([{"role": "user", "content": "hi"}])
+    second = await client.create([{"role": "user", "content": "again"}])
+
+    assert result == "Done"
+    assert second == "Done"
+    assert "prompt_cache_key" in calls[0]
+    assert "prompt_cache_key" not in calls[1]
+    assert "prompt_cache_key" not in calls[2]
+
+
+@pytest.mark.asyncio
 async def test_openai_async_client_set_model_updates_next_request():
     mock_openai = MagicMock()
     mock_openai.chat.completions.create = AsyncMock(return_value="Done")
