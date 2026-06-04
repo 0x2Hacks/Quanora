@@ -739,6 +739,13 @@ Phase C — Research Direction & Plan
    The plan's `goal` field MUST include the three-element summary:
    `"[Dev|Res] <direction> | doc=<doc_path> | ws=<ws_dir>"`.
 
+7. **Initialize the task git repository.** After the user confirms
+   the three elements and before creating the research plan, call
+   `task_git_init` with the chosen task_name and task_dir. This
+   creates an independent git repo in the task directory, completely
+   isolated from the agent's own git. The init automatically creates
+   a `.gitignore` and an initial commit.
+
 ───────────────────────────────────────────────────────────────────────────
 Task-Environment Contract (persisted across the session)
 ───────────────────────────────────────────────────────────────────────────
@@ -752,6 +759,7 @@ entire session:
 | `TASK_DOC`      | `docs/xauusd_reversal.md`            | Single source of truth for notes |
 | `TASK_WS`       | `xauusd_reversal/`                   | Isolated working directory       |
 | `TASK_DIR`      | `<workspace>/xauusd_reversal/`       | Absolute path to task workspace  |
+| `TASK_GIT`      | `initialized` / `none`               | Whether task git repo is active  |
 
 Behavior by mode:
 - **development**: May create/modify files in `TASK_DIR/src/`,
@@ -803,6 +811,112 @@ Behavior by mode:
 8. **Commit artifacts.** After each completed phase, commit research
    artifacts (hypothesis cards, experiment logs, summaries) so no work
    is lost.
+
+9. **Git version control is MANDATORY for every task.** After
+   onboarding, the task workspace has an independent git repo
+   (initialized by `task_git_init`). You MUST:
+   - Call `task_git_commit` after every meaningful code or config
+     change — never leave a task with uncommitted changes at the
+     end of a turn.
+   - Use `task_git_status` to check for pending changes before
+     finishing a phase.
+   - Use `task_git_log` to review history before rollback.
+   - Use `task_git_rollback` only with user confirmation — this is
+     a destructive operation.
+   - NEVER mix task git with agent git. Task repos use
+     `task_git_*` tools only; the agent's own repo uses `git` via
+     `bash`. These two git worlds are strictly separate.
+
+═══════════════════════════════════════════════════════════════════════════
+§7  GIT VERSION CONTROL SOP — Task-Level Git Operations
+═══════════════════════════════════════════════════════════════════════════
+
+Every quant research task has an independent git repository. This
+section defines the standard operating procedure for version control.
+
+───────────────────────────────────────────────────────────────────────────
+7.1  Available Tools
+───────────────────────────────────────────────────────────────────────────
+
+| Tool              | Purpose                           | When to Use                |
+|-------------------|-----------------------------------|----------------------------|
+| `task_git_init`   | Initialize task repo              | Onboarding (automatic)     |
+| `task_git_commit` | Stage all + commit                | After every code change    |
+| `task_git_status` | Check for pending changes         | Before finishing a phase   |
+| `task_git_log`    | View commit history               | Before rollback; reviewing |
+| `task_git_diff`   | View unstaged changes             | Before committing; review  |
+| `task_git_rollback` | Hard reset to previous commit  | When experiment goes wrong |
+| `task_git_info`   | Get repo summary                  | Debugging; status checks   |
+
+───────────────────────────────────────────────────────────────────────────
+7.2  Commit Discipline
+───────────────────────────────────────────────────────────────────────────
+
+After every meaningful change, you MUST commit:
+
+```
+# Development mode: after editing source code
+task_git_commit(task_name="xauusd_reversal",
+                message="feat: add mean-reversion signal generator")
+
+# Research mode: after generating results
+task_git_commit(task_name="xauusd_reversal",
+                message="results: backtest sharpe=1.45 on 2024 data")
+```
+
+Commit message convention (follow conventional commits):
+- `feat:` — New feature or strategy
+- `fix:` — Bug fix
+- `refactor:` — Code restructuring
+- `results:` — Backtest / simulation results
+- `data:` — Data acquisition or processing
+- `docs:` — Documentation updates
+- `config:` — Configuration changes
+- `exp:` — Experiment setup or changes
+
+───────────────────────────────────────────────────────────────────────────
+7.3  Rollback SOP
+───────────────────────────────────────────────────────────────────────────
+
+When an experiment goes wrong and you need to undo:
+
+```
+1. task_git_log(task_name="xauusd_reversal", n=5)
+   → Identify the target commit hash
+
+2. Confirm with the user: "Roll back to commit abc1234?"
+   → MUST get user confirmation before rollback
+
+3. task_git_rollback(task_name="xauusd_reversal", ref="abc1234")
+   → Hard reset to the target commit
+
+4. task_git_status(task_name="xauusd_reversal")
+   → Verify the workspace is clean
+```
+
+Recovery: If you accidentally rollback too far, the lost commits
+are still in `git reflog` for ~30 days. Ask the user if they want
+to recover.
+
+───────────────────────────────────────────────────────────────────────────
+7.4  Isolation Guarantee
+───────────────────────────────────────────────────────────────────────────
+
+The task git system guarantees strict isolation from the agent git:
+
+| Aspect           | Agent Git                        | Task Git                         |
+|------------------|----------------------------------|----------------------------------|
+| Repository       | `/home/user/ChainPeer/.git/`     | `<workspace>/<task>/.git/`       |
+| Operations       | `bash: git commit -m "..."`      | `task_git_commit(task_name=...)` |
+| Author           | Agent's git config               | `QuantTaskBot <task@quant.local>` |
+| Scope            | Agent source code                | Task workspace only              |
+| Branch strategy  | `genspark_ai_developer`          | `main` (per task)                |
+
+⚠ NEVER use `bash: git ...` commands inside a task workspace.
+⚠ NEVER use `task_git_*` tools on the agent repository.
+⚠ If you detect a `.git/` directory inside a task workspace that
+  was NOT created by `task_git_init`, report it to the user — it
+  may indicate a nested repo violation.
 </self_quant_mode>
 """
 
