@@ -276,6 +276,14 @@ def switch_to_project_workspace(task_description: str) -> Path:
     # root with empty folders like "tokenized-stock-funding-backtest-md/".
     if _SELF_DOC_MODE:
         project_dir = _QUANORA_REPO_ROOT
+    elif _SELF_DEV_MODE:
+        # In self-dev mode, avoid creating a project sub-directory inside
+        # workspace/ — the agent works directly on the Quanora repo itself.
+        # The repo root is used as project_dir so that relative paths like
+        # "agent/prompts.py" resolve correctly.
+        # If the agent needs to write temporary/test files, it should use
+        # the ".dev/" directory under the repo root (which is git-ignored).
+        project_dir = _QUANORA_REPO_ROOT
     else:
         project_dir = find_or_create_project_dir(
             workspace_root=_WORKSPACE_ROOT,
@@ -297,19 +305,26 @@ def switch_to_project_workspace(task_description: str) -> Path:
     if _SELF_DEV_MODE:
         guard_root = _QUANORA_REPO_ROOT
         resolve_root = project_dir
+        # workspace/ directory is fully protected in self-dev mode —
+        # the agent must not write into workspace/; test files go to .dev/
+        workspace_dir = _WORKSPACE_ROOT.resolve()
+        fully_protected = (workspace_dir,)
     elif _SELF_DOC_MODE:
         # self-doc: keep repo root for both guard and resolve so docs/xxx.md
         # resolves correctly.  project_dir is only used for metadata tracking.
         guard_root = _QUANORA_REPO_ROOT
         resolve_root = _QUANORA_REPO_ROOT
+        fully_protected = ()
     else:
         guard_root = project_dir
         resolve_root = None
+        fully_protected = ()
     _WORKSPACE_GUARD = WorkspaceGuard(
         WorkspaceConfig(
             root=guard_root,
             resolve_root=resolve_root,
             protected_paths=protected,
+            fully_protected_paths=fully_protected,
             allow_outside_reads=True,
             protected_write_extensions=write_ext,
         )

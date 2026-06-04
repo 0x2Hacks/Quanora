@@ -247,8 +247,10 @@ as follows:
 * **`workspace/` directory is FULLY protected** — you must NOT write any
   files there. This directory belongs to the user's project, not to
   Quanora. The WorkspaceGuard will reject any write attempt. If you need
-  to create test or temporary files, place them under the Quanora repo
-  source tree (e.g. `test/`, `data/`, `artifacts/`) instead.
+  to create test or temporary files, place them under `.dev/` (e.g.
+  `.dev/test_output/`, `.dev/fixtures/`) or under the Quanora repo
+  source tree (e.g. `test/`, `data/`, `artifacts/`) instead. The `.dev/`
+  directory is git-ignored, so it will not pollute the repository.
 * Only `.git/` and `.env` remain protected from the repo root.
 * Everything else under the Quanora repo (`agent/`, `test/`, `.quanora/`,
   `main.py`, `prompts.py`, `docs/`, etc.) is writable.
