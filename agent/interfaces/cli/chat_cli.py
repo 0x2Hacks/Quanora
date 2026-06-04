@@ -165,6 +165,18 @@ class ChatCLI:
                             f"[dim yellow]⚠ 恢复项目目录失败: {e}[/dim yellow]\n"
                         )
 
+        # ── Quant-Research auto-onboarding ──────────────────────────
+        # Instead of silently waiting for user input, automatically
+        # inject a trigger message so the agent starts the Phase 0
+        # onboarding dialog right away.
+        if self._self_quant:
+            try:
+                self._event_loop.run_until_complete(
+                    self._run_turn_async("__QUANT_ONBOARDING__")
+                )
+            except Exception:
+                pass  # non-fatal; user can still type normally
+
         while True:
             try:
                 user_input = self._read_user_input()
@@ -178,23 +190,29 @@ class ChatCLI:
             if not user_input:
                 continue
 
-            # 首次输入时自动切换到项目子目录
+            # 首次输入时检查是否需要切换项目目录
             if not _project_workspace_set:
-                from agent.infrastructure.config.settings import switch_to_project_workspace
-                project_dir = switch_to_project_workspace(user_input)
-                _project_workspace_set = True
-                # Persist project_dir to session metadata for task resume
-                if hasattr(self._session_store, 'update_project_dir'):
-                    try:
-                        self._event_loop.run_until_complete(
-                            self._session_store.update_project_dir(str(project_dir))
-                        )
-                    except Exception:
-                        pass  # non-critical; best-effort persistence
-                # 显示项目目录信息
-                self._console.print(
-                    f"[dim]📁 项目目录: {project_dir}[/dim]\n"
-                )
+                from agent.infrastructure.config.settings import is_self_quant_mode
+                if is_self_quant_mode():
+                    # In quant-research mode, project binding is handled by
+                    # Phase 0 onboarding (prompt-driven).  Don't auto-switch.
+                    _project_workspace_set = True
+                else:
+                    from agent.infrastructure.config.settings import switch_to_project_workspace
+                    project_dir = switch_to_project_workspace(user_input)
+                    _project_workspace_set = True
+                    # Persist project_dir to session metadata for task resume
+                    if hasattr(self._session_store, 'update_project_dir'):
+                        try:
+                            self._event_loop.run_until_complete(
+                                self._session_store.update_project_dir(str(project_dir))
+                            )
+                        except Exception:
+                            pass  # non-critical; best-effort persistence
+                    # 显示项目目录信息
+                    self._console.print(
+                        f"[dim]📁 项目目录: {project_dir}[/dim]\n"
+                    )
 
             print("\nAgent:")
             self._assistant_buffer = []

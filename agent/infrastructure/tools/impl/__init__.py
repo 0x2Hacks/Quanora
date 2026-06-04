@@ -51,6 +51,15 @@ from .tools import (
     wq_mutate_alpha,
     wq_simulate_alpha,
     wq_submit_alpha,
+    # Task-level git
+    task_git_check_repo,
+    task_git_commit,
+    task_git_diff,
+    task_git_info,
+    task_git_init,
+    task_git_log,
+    task_git_rollback,
+    task_git_status,
 )
 
 TOOLS: dict[str, Callable] = {
@@ -102,6 +111,15 @@ TOOLS: dict[str, Callable] = {
     "wq_mutate_alpha": wq_mutate_alpha,
     "wq_crossover_alpha": wq_crossover_alpha,
     "wq_data_review": wq_data_review,
+    # Task-level git version control
+    "task_git_init": task_git_init,
+    "task_git_check_repo": task_git_check_repo,
+    "task_git_commit": task_git_commit,
+    "task_git_rollback": task_git_rollback,
+    "task_git_log": task_git_log,
+    "task_git_status": task_git_status,
+    "task_git_diff": task_git_diff,
+    "task_git_info": task_git_info,
 }
 
 _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
@@ -523,6 +541,81 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
             "包括各分类/结果/标的的经验数量分布。"
         ),
         "param_descriptions": {},
+    },
+    # ── Task-level git version control ────────────────────────────────
+    "task_git_init": {
+        "description": (
+            "为量化研究任务初始化独立的 git 版本库。每个任务拥有完全独立的 .git/ 目录，"
+            "与 agent 自身的 git 严格隔离。在 onboarding 创建任务时自动调用。"
+        ),
+        "param_descriptions": {
+            "task_name": "任务名称（如 'xauusd_reversal'）",
+            "task_dir": "任务工作目录路径（相对于 workspace 根目录）。为空则默认为 <workspace>/<task_name>/",
+            "skip_isolation_check": "跳过隔离验证（仅用于测试，默认 False）",
+        },
+    },
+    "task_git_check_repo": {
+        "description": (
+            "检查指定目录是否已有 git 版本库。返回是否已有 git 仓库，以及是任务管理的仓库"
+            "（QuantTaskBot）还是用户自己的仓库。Phase 0 初始化时使用。"
+        ),
+        "param_descriptions": {
+            "directory": "要检查的目录路径（绝对路径或相对于 workspace 根目录）",
+        },
+    },
+    "task_git_commit": {
+        "description": (
+            "暂存任务工作目录中的所有变更并创建 git commit。每次代码或配置发生有意义的变动后都应调用，"
+            "以维护版本历史。commit 作者是 'QuantTaskBot'，与 agent 的 git 身份完全独立。"
+        ),
+        "param_descriptions": {
+            "task_name": "任务名称",
+            "message": "commit 消息，描述本次变更内容",
+        },
+    },
+    "task_git_rollback": {
+        "description": (
+            "将任务工作目录回滚到之前的 commit（硬重置）。⚠ 这是破坏性操作，未提交的变更将丢失。"
+            "但回滚的 commit 在约 30 天内可通过 'git reflog' 恢复。回滚前务必先用 task_git_log 确认目标版本。"
+        ),
+        "param_descriptions": {
+            "task_name": "任务名称",
+            "ref": "要回滚到的 git 引用（默认 'HEAD~1' 回退一个版本）。示例：'HEAD~1', 'HEAD~3', 'abc1234'（commit hash）",
+        },
+    },
+    "task_git_log": {
+        "description": (
+            "查看任务 git 版本库的提交历史。在执行 task_git_rollback 前应先调用此工具确认目标版本。"
+        ),
+        "param_descriptions": {
+            "task_name": "任务名称",
+            "n": "显示最近 N 条 commit（默认 10）",
+        },
+    },
+    "task_git_status": {
+        "description": (
+            "检查任务 git 版本库的工作区状态。显示已暂存、未暂存和未跟踪的文件。无待提交变更时返回 'clean'。"
+        ),
+        "param_descriptions": {
+            "task_name": "任务名称",
+        },
+    },
+    "task_git_diff": {
+        "description": (
+            "显示任务工作目录与指定引用 commit 之间的差异。用于在 commit 前审查变更内容。"
+        ),
+        "param_descriptions": {
+            "task_name": "任务名称",
+            "ref": "要对比的 git 引用（默认 'HEAD'）",
+        },
+    },
+    "task_git_info": {
+        "description": (
+            "获取任务 git 版本库的状态摘要，包括任务名、目录、初始化状态、当前 commit、是否有未提交变更。"
+        ),
+        "param_descriptions": {
+            "task_name": "任务名称",
+        },
     },
 }
 
