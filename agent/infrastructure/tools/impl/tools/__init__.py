@@ -24,6 +24,7 @@ from .research_experience import (
 from .presentation import convert_html_to_pdf, generate_doc_html, generate_ppt_html
 from .skill import skill_create
 from .task_git import (
+    task_git_check_repo,
     task_git_commit,
     task_git_diff,
     task_git_info,

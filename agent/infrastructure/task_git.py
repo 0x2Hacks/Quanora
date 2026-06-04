@@ -249,6 +249,12 @@ class TaskGitManager:
 
         # git init
         self._run_git("init")
+
+        # Set git config for this repo so task-managed repos are
+        # identifiable via `git config user.name`
+        self._run_git("config", "user.name", self._author_name)
+        self._run_git("config", "user.email", self._author_email)
+
         logger.info("Initialized task git repo at %s", self.task_dir)
 
         # Write .gitignore

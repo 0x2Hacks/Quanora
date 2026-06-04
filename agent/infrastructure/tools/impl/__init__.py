@@ -52,6 +52,7 @@ from .tools import (
     wq_simulate_alpha,
     wq_submit_alpha,
     # Task-level git
+    task_git_check_repo,
     task_git_commit,
     task_git_diff,
     task_git_info,
@@ -112,6 +113,7 @@ TOOLS: dict[str, Callable] = {
     "wq_data_review": wq_data_review,
     # Task-level git version control
     "task_git_init": task_git_init,
+    "task_git_check_repo": task_git_check_repo,
     "task_git_commit": task_git_commit,
     "task_git_rollback": task_git_rollback,
     "task_git_log": task_git_log,
@@ -550,6 +552,15 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
             "task_name": "任务名称（如 'xauusd_reversal'）",
             "task_dir": "任务工作目录路径（相对于 workspace 根目录）。为空则默认为 <workspace>/<task_name>/",
             "skip_isolation_check": "跳过隔离验证（仅用于测试，默认 False）",
+        },
+    },
+    "task_git_check_repo": {
+        "description": (
+            "检查指定目录是否已有 git 版本库。返回是否已有 git 仓库，以及是任务管理的仓库"
+            "（QuantTaskBot）还是用户自己的仓库。Phase 0 初始化时使用。"
+        ),
+        "param_descriptions": {
+            "directory": "要检查的目录路径（绝对路径或相对于 workspace 根目录）",
         },
     },
     "task_git_commit": {

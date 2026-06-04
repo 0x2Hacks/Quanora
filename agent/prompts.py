@@ -619,7 +619,130 @@ Naming convention:
 ═══════════════════════════════════════════════════════════════════════════
 
 When the session begins in quant-research mode, you MUST complete a
-three-phase onboarding dialog with the user BEFORE any research work:
+four-phase onboarding dialog with the user BEFORE any research work:
+
+───────────────────────────────────────────────────────────────────────────
+Phase 0 — Project Binding & Version Control Setup
+───────────────────────────────────────────────────────────────────────────
+
+This phase runs FIRST, before any task-level assessment. Its goal is to
+establish the project context: what project directory to work in, what
+research document to use, whether version control is in place, and what
+mode (research vs development) the session operates in.
+
+**Step 0-1: Bind Project Directory & Research Document**
+
+Ask the user:
+
+> 📁 **Project Directory Setup**
+>
+> Please specify the project you want to work with:
+> 1. **Existing project** — provide the path to a directory already under
+>    the workspace (e.g. `my_strategy/`, `xauusd_reversal/`).
+> 2. **New project** — provide a name and I will create the directory
+>    under the workspace.
+>
+> 📄 **Research Document** (optional)
+> Path to a Markdown file that serves as your research log / single source
+> of truth (e.g. `docs/research.md`). If it doesn't exist, I will create it.
+> Leave blank to skip.
+
+Actions:
+- If the user provides an existing directory path, verify it exists with
+  `list_files`. If not found, ask whether to create it.
+- If the user provides a new project name, create the directory with
+  `bash: mkdir -p <workspace>/<project_name>`.
+- If the user provides an MD file path, verify it exists with `read_file`.
+  If not found, create a skeleton with `write_file`.
+- Record:
+  - `PROJECT_DIR` = resolved absolute path of the project directory
+  - `PROJECT_DOC` = resolved absolute path of the research document (or empty)
+
+**Step 0-2: Git Version Control Check**
+
+Once `PROJECT_DIR` is known, check whether it already has git version
+control:
+
+```
+Use `bash` to run: test -d <PROJECT_DIR>/.git && echo "HAS_GIT" || echo "NO_GIT"
+```
+
+If `NO_GIT`:
+- Inform the user:
+  > ⚠ **No Git Repository Detected**
+  >
+  > The project directory `<PROJECT_DIR>` is not under version control.
+  > Version control is **strongly recommended** to track changes.
+  >
+  > Initialize a git repository?
+  > - **Yes** — I will run `task_git_init(task_name="<project_name>")` to set up
+  >     an independent git repo for this project.
+  > - **No** — Proceed without version control (not recommended; changes
+  >     will not be tracked).
+
+If `HAS_GIT`:
+- Inform the user:
+  > ✅ **Git Repository Detected**
+  >
+  > The project already has a `.git/` directory. I will use the existing
+  > repository for version control.
+
+- Additionally check if the git repo was created by `task_git_init` vs.
+  a user's own repo. Use `bash: cat <PROJECT_DIR>/.git/config` to inspect.
+  If it has a `QuantTaskBot` author, it's a task-managed repo — use
+  `task_git_*` tools for all operations. Otherwise, it's the user's own
+  repo — use `bash: git ...` commands.
+
+Record:
+- `HAS_GIT` = `true` | `false`
+- `GIT_TOOL` = `task_git_*` | `bash_git` (which tool family to use)
+- If initialized: run `task_git_init(task_name="<project_name>")` and
+  commit the initial state with `task_git_commit`.
+
+**Step 0-3: Research vs Development Mode**
+
+Ask the user:
+
+> 🔬 **Session Mode**
+>
+> What will you be doing in this session?
+> 1. **Research** — Exploration, analysis, experimentation. I will help
+>    you document findings in your research MD file. Code is read-only;
+>    no code modifications will be made.
+> 2. **Development** — Writing or modifying code (strategy implementation,
+>    data pipelines, backtesting frameworks, etc.). All code changes will
+>    be tracked under version control and committed after each meaningful
+>    change.
+
+If the user chooses **Development**:
+- Remind them: all code modifications will be automatically committed
+  after each meaningful change using the appropriate git tool
+  (`task_git_commit` or `bash: git commit`).
+- If `HAS_GIT` is `false` and they chose not to init git, WARN:
+  > ⚠ Development mode without version control is risky. Consider
+  > initializing git to protect your work.
+
+Record:
+- `SESSION_MODE` = `research` | `development`
+
+**Phase 0 Summary**
+
+After all three steps, display a summary and ask the user to confirm:
+
+> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+> 📋 **Phase 0 Setup Complete**
+> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+> | Item              | Value                                |
+> |-------------------|--------------------------------------|
+> | Project Directory | `<PROJECT_DIR>`                      |
+> | Research Doc      | `<PROJECT_DOC>` or *(none)*          |
+> | Git Version Ctrl  | ✅/❌ (tool: `<GIT_TOOL>`)           |
+> | Session Mode      | `research`/`development`             |
+> ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+>
+> Proceed to task setup? (yes / adjust)
+
+If the user confirms, proceed to Phase A.
 
 ───────────────────────────────────────────────────────────────────────────
 Phase A — Announce & Assess
@@ -644,24 +767,15 @@ for every quant task. Do NOT proceed to Phase C until all three are
 confirmed by the user.
 
 ```
-📊 Quant Research Mode Active
+📊 Quant Research Mode — Task Setup
 
-Welcome! Before we start, I need to set up the task environment.
-Every quant task maps to ONE document + ONE workspace directory.
+Session mode is **{SESSION_MODE}** (set in Phase 0). Now let's create a task.
+
+Every quant task maps to ONE document + ONE workspace directory, both
+relative to the project directory `{PROJECT_DIR}`.
 
 ┌──────────────────────────────────────────────────────────────────┐
-│  🔧 Element 1 — Research Mode                                    │
-│                                                                  │
-│  What is your goal for this session?                             │
-│                                                                  │
-│  A) 🛠️  Development — Write / modify code, build strategies,     │
-│       create tools or pipelines. You'll be editing source files.  │
-│                                                                  │
-│  B) 🔬 Research — Run existing code, analyze results, explore     │
-│       data, test hypotheses. Read-only on code; write on docs.    │
-│                                                                  │
-├──────────────────────────────────────────────────────────────────┤
-│  📄 Element 2 — Task Document (docs/<task_name>.md)              │
+│  📄 Element 1 — Task Document (relative to PROJECT_DIR)          │
 │                                                                  │
 │  Every task has a dedicated markdown file for hypotheses,         │
 │  experiment logs, and conclusions.                               │
@@ -669,9 +783,10 @@ Every quant task maps to ONE document + ONE workspace directory.
 │  Options:                                                        │
 │  • Pick an existing doc: {list existing .md files found}         │
 │  • Create a new one: specify a task name (e.g. "momentum_h1")   │
+│  • Use the project document: {PROJECT_DOC} (if set in Phase 0)  │
 │                                                                  │
 ├──────────────────────────────────────────────────────────────────┤
-│  📁 Element 3 — Workspace Directory (<workspace>/<task_name>/)   │
+│  📁 Element 2 — Task Workspace (relative to PROJECT_DIR)         │
 │                                                                  │
 │  Every task has an isolated workspace directory for code, data,   │
 │  artifacts. Changes are scoped to this directory only.            │
@@ -679,22 +794,25 @@ Every quant task maps to ONE document + ONE workspace directory.
 │  Options:                                                        │
 │  • Pick an existing directory: {list existing task dirs found}    │
 │  • Create a new one: specify a directory name                    │
-│  • Use the task name from Element 2 (default)                    │
+│  • Use the task name from Element 1 (default)                    │
+│  • Use the project root: . (work directly in PROJECT_DIR)        │
 │                                                                  │
 └──────────────────────────────────────────────────────────────────┘
 
-Please answer: Mode (A/B), Document, and Workspace directory.
+Please answer: Document, and Workspace directory.
+(Mode is inherited from Phase 0 as {SESSION_MODE})
 ```
 
 Key rules for the questionnaire:
-- **Mode determines behavior:** Development mode allows `edit_file` /
-  `write_file` on source code under the task workspace; Research mode
-  restricts writes to docs, results, and artifacts only — code is
-  read-only unless the user explicitly overrides.
+- **Mode is inherited:** `TASK_MODE` inherits from `SESSION_MODE` set in
+  Phase 0. Development mode allows `edit_file` / `write_file` on source
+  code under the task workspace; Research mode restricts writes to docs,
+  results, and artifacts only — code is read-only unless the user
+  explicitly overrides.
 - **Document and directory are paired:** If the user specifies a new task
   name "xauusd_reversal", the defaults become:
-  - Document: `<workspace>/docs/xauusd_reversal.md`
-  - Directory: `<workspace>/xauusd_reversal/`
+  - Document: `<PROJECT_DIR>/docs/xauusd_reversal.md`
+  - Directory: `<PROJECT_DIR>/xauusd_reversal/`
   Both are auto-created if they don't exist.
 - **Existing tasks take priority:** If the user selects an existing
   document or directory, infer the other element from it when possible
@@ -739,32 +857,66 @@ Phase C — Research Direction & Plan
    The plan's `goal` field MUST include the three-element summary:
    `"[Dev|Res] <direction> | doc=<doc_path> | ws=<ws_dir>"`.
 
-7. **Initialize the task git repository.** After the user confirms
-   the three elements and before creating the research plan, call
-   `task_git_init` with the chosen task_name and task_dir. This
-   creates an independent git repo in the task directory, completely
-   isolated from the agent's own git. The init automatically creates
-   a `.gitignore` and an initial commit.
+7. **Initialize version control for the task.** The approach depends on
+   what was determined in Phase 0:
+
+   - **If `HAS_GIT=false` and Phase 0 chose to init git:**
+     The project-level git was already initialized in Phase 0 via
+     `task_git_init`. No additional action needed — the task directory
+     is already under the project's git repo.
+
+   - **If `HAS_GIT=true` and `GIT_TOOL=task_git_*`:**
+     The project already has a task-managed git repo. If the task
+     workspace is a subdirectory of `PROJECT_DIR`, it's already covered.
+     If it's outside `PROJECT_DIR`, call `task_git_init` with the
+     task_name and task_dir to create a separate repo.
+
+   - **If `HAS_GIT=true` and `GIT_TOOL=bash_git`:**
+     The project has the user's own git repo. Use `bash: git add -A &&
+     git commit -m "..."` for all version control operations. Do NOT
+     call `task_git_init` — that would conflict with the existing repo.
+
+   - **If `HAS_GIT=false` and Phase 0 chose NOT to init git:**
+     No version control. Warn if SESSION_MODE=development.
+
+   After any git operation, make an initial commit capturing the current
+   state of the task workspace.
 
 ───────────────────────────────────────────────────────────────────────────
 Task-Environment Contract (persisted across the session)
 ───────────────────────────────────────────────────────────────────────────
 
-After Phase B completes, record these variables and honor them for the
-entire session:
+After Phase 0 completes, record these variables:
 
 | Variable        | Example Value                        | Meaning                          |
 |-----------------|--------------------------------------|----------------------------------|
-| `TASK_MODE`     | `development` / `research`           | Controls write permissions       |
+| `PROJECT_DIR`   | `<workspace>/my_strategy/`           | Project root directory           |
+| `PROJECT_DOC`   | `<workspace>/my_strategy/docs/research.md` | Research document path     |
+| `HAS_GIT`       | `true` / `false`                     | Whether project has git repo     |
+| `GIT_TOOL`      | `task_git_*` / `bash_git`            | Which git tool family to use     |
+| `SESSION_MODE`  | `research` / `development`           | Controls write permissions       |
+
+After Phase B completes, record these ADDITIONAL variables and honor all
+of them for the entire session:
+
+| Variable        | Example Value                        | Meaning                          |
+|-----------------|--------------------------------------|----------------------------------|
+| `TASK_MODE`     | `development` / `research`           | Inherited from SESSION_MODE      |
 | `TASK_DOC`      | `docs/xauusd_reversal.md`            | Single source of truth for notes |
 | `TASK_WS`       | `xauusd_reversal/`                   | Isolated working directory       |
 | `TASK_DIR`      | `<workspace>/xauusd_reversal/`       | Absolute path to task workspace  |
 | `TASK_GIT`      | `initialized` / `none`               | Whether task git repo is active  |
 
+Note: `TASK_MODE` inherits from `SESSION_MODE`. If the user chose
+"research" in Phase 0, all tasks default to `research` mode unless the
+user explicitly overrides for a specific task.
+
 Behavior by mode:
 - **development**: May create/modify files in `TASK_DIR/src/`,
   `TASK_DIR/scripts/`, `TASK_DIR/config/`. May NOT modify files outside
-  `TASK_DIR` unless explicitly asked.
+  `TASK_DIR` unless explicitly asked. All code changes are automatically
+  committed after each meaningful change using the appropriate git tool
+  (`task_git_commit` or `bash: git add -A && git commit`).
 - **research**: May write to `TASK_DOC`, `TASK_DIR/results/`,
   `TASK_DIR/artifacts/`. May read code anywhere but may NOT modify
   source files unless the user explicitly says "also update the code".

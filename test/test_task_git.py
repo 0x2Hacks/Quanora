@@ -328,3 +328,55 @@ class TestIsInitialized:
     def test_initialized_after_init(self, mgr):
         mgr.init_task_repo(skip_isolation_check=True)
         assert mgr.is_initialized()
+
+
+class TestTaskGitCheckRepo:
+    """Test task_git_check_repo tool function."""
+
+    def test_no_git_repo(self, tmp_path):
+        """Directory without .git should return has_git=False."""
+        from agent.infrastructure.tools.impl.tools.task_git import task_git_check_repo
+        result = task_git_check_repo(directory=str(tmp_path))
+        assert '"has_git": false' in result or "'has_git': False" in result
+
+    def test_has_task_managed_git(self, tmp_path):
+        """Task-managed repo (QuantTaskBot) should be detected."""
+        from agent.infrastructure.tools.impl.tools.task_git import task_git_check_repo
+        task_dir = tmp_path / "my_project"
+        task_dir.mkdir()
+        mgr = TaskGitManager(task_dir=task_dir, task_name="my_project")
+        mgr.init_task_repo(skip_isolation_check=True)
+
+        result = task_git_check_repo(directory=str(task_dir))
+        assert '"has_git": true' in result or "'has_git': True" in result
+        assert "task_git" in result
+
+    def test_has_user_git(self, tmp_path):
+        """User's own git repo should be detected as bash_git."""
+        from agent.infrastructure.tools.impl.tools.task_git import task_git_check_repo
+        import subprocess
+
+        user_dir = tmp_path / "user_project"
+        user_dir.mkdir()
+        subprocess.run(
+            ["git", "init"],
+            capture_output=True, cwd=str(user_dir), timeout=10,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "user@example.com"],
+            capture_output=True, cwd=str(user_dir), timeout=10,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "User"],
+            capture_output=True, cwd=str(user_dir), timeout=10,
+        )
+
+        result = task_git_check_repo(directory=str(user_dir))
+        assert '"has_git": true' in result or "'has_git': True" in result
+        assert "bash_git" in result
+
+    def test_nonexistent_directory(self, tmp_path):
+        """Non-existent directory should return error."""
+        from agent.infrastructure.tools.impl.tools.task_git import task_git_check_repo
+        result = task_git_check_repo(directory=str(tmp_path / "nonexistent"))
+        assert "does not exist" in result

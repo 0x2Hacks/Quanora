@@ -237,3 +237,69 @@ def task_git_info(
         return tool_error(_TOOL_NAME, err)
 
     return tool_ok(_TOOL_NAME, "Task git info", mgr.get_summary())
+
+
+def task_git_check_repo(
+    directory: str,
+) -> str:
+    """Check whether a directory is already under git version control.
+
+    Returns information about the git repository if found, including
+    whether it is a task-managed repo (QuantTaskBot) or a user's own repo.
+
+    Args:
+        directory: Path to the directory to check (absolute or relative
+            to the workspace root).
+    """
+    from agent.infrastructure.task_git import TaskGitManager
+
+    dir_path = Path(directory).resolve()
+
+    if not dir_path.exists():
+        return tool_error(_TOOL_NAME, f"Directory does not exist: {dir_path}")
+
+    git_dir = dir_path / ".git"
+    has_git = git_dir.exists()
+
+    if not has_git:
+        return tool_ok(_TOOL_NAME, "No git repository found", {
+            "directory": str(dir_path),
+            "has_git": False,
+            "git_tool": None,
+        })
+
+    # Determine if this is a task-managed repo or a user repo
+    is_task_managed = False
+    try:
+        config_path = git_dir / "config"
+        if config_path.exists():
+            config_text = config_path.read_text(errors="replace")
+            # Task-managed repos are created by TaskGitManager which sets
+            # the author to QuantTaskBot
+            if "QuantTaskBot" in config_text:
+                is_task_managed = True
+    except Exception:
+        pass
+
+    # Also check git config for user.name == QuantTaskBot
+    if not is_task_managed:
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["git", "config", "user.name"],
+                capture_output=True, text=True, cwd=str(dir_path),
+                timeout=5,
+            )
+            if result.returncode == 0 and "QuantTaskBot" in result.stdout:
+                is_task_managed = True
+        except Exception:
+            pass
+
+    git_tool = "task_git_*" if is_task_managed else "bash_git"
+
+    return tool_ok(_TOOL_NAME, "Git repository found", {
+        "directory": str(dir_path),
+        "has_git": True,
+        "is_task_managed": is_task_managed,
+        "git_tool": git_tool,
+    })
