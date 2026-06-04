@@ -322,3 +322,59 @@ class TestPhase0Integration:
         # Should NOT call task_git_init — it would conflict
         # Record variables
         assert session_mode == "research"
+
+
+# ── Auto-Kickoff Onboarding ────────────────────────────────────────────
+
+
+class TestAutoKickoffOnboarding:
+    """Test that quant-research mode auto-fires the onboarding prompt."""
+
+    def test_prompt_contains_auto_kickoff_directive(self):
+        """The SELF_QUANT_MODE_PROMPT must contain the AUTO-KICKOFF directive."""
+        from agent.prompts import SELF_QUANT_MODE_PROMPT
+        assert "AUTO-KICKOFF" in SELF_QUANT_MODE_PROMPT
+
+    def test_prompt_contains_onboarding_trigger(self):
+        """The prompt must reference the __QUANT_ONBOARDING__ trigger."""
+        from agent.prompts import SELF_QUANT_MODE_PROMPT
+        assert "__QUANT_ONBOARDING__" in SELF_QUANT_MODE_PROMPT
+
+    def test_prompt_contains_onboarding_greeting_template(self):
+        """The prompt must contain the welcome greeting with Phase 0 questions."""
+        from agent.prompts import SELF_QUANT_MODE_PROMPT
+        # Must tell the user what to provide
+        assert "Project Directory" in SELF_QUANT_MODE_PROMPT
+        assert "Research Document" in SELF_QUANT_MODE_PROMPT
+        assert "Session Mode" in SELF_QUANT_MODE_PROMPT
+        assert "Version Control" in SELF_QUANT_MODE_PROMPT
+
+    def test_cli_loop_sends_onboarding_trigger(self):
+        """ChatCLI._loop() should send __QUANT_ONBOARDING__ when _self_quant is True."""
+        import inspect
+        from agent.interfaces.cli.chat_cli import ChatCLI
+        source = inspect.getsource(ChatCLI._loop)
+        assert "__QUANT_ONBOARDING__" in source
+
+    def test_cli_loop_no_trigger_without_self_quant(self):
+        """The onboarding trigger should be guarded by self._self_quant check."""
+        import inspect
+        from agent.interfaces.cli.chat_cli import ChatCLI
+        source = inspect.getsource(ChatCLI._loop)
+        # The trigger should be inside an `if self._self_quant:` block
+        assert "self._self_quant" in source
+        # And should not be unconditionally sent
+        lines = source.split("\n")
+        trigger_line_idx = None
+        for i, line in enumerate(lines):
+            if "__QUANT_ONBOARDING__" in line:
+                trigger_line_idx = i
+                break
+        assert trigger_line_idx is not None, "Trigger not found in _loop source"
+        # Look backwards for the if self._self_quant guard
+        found_guard = False
+        for i in range(trigger_line_idx - 1, max(trigger_line_idx - 20, 0), -1):
+            if "self._self_quant" in lines[i] and "if" in lines[i]:
+                found_guard = True
+                break
+        assert found_guard, "Trigger not guarded by self._self_quant check"

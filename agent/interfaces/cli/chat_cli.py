@@ -165,6 +165,18 @@ class ChatCLI:
                             f"[dim yellow]⚠ 恢复项目目录失败: {e}[/dim yellow]\n"
                         )
 
+        # ── Quant-Research auto-onboarding ──────────────────────────
+        # Instead of silently waiting for user input, automatically
+        # inject a trigger message so the agent starts the Phase 0
+        # onboarding dialog right away.
+        if self._self_quant:
+            try:
+                self._event_loop.run_until_complete(
+                    self._run_turn_async("__QUANT_ONBOARDING__")
+                )
+            except Exception:
+                pass  # non-fatal; user can still type normally
+
         while True:
             try:
                 user_input = self._read_user_input()
