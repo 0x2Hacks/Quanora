@@ -234,3 +234,82 @@ def test_self_dev_skill_mentions_workflow_steps():
     # Spot-check that the 10-step workflow is documented.
     for keyword in ("plan_create", "git rebase", "gh pr create", "genspark_ai_developer"):
         assert keyword in body, f"self_dev skill missing keyword: {keyword}"
+
+
+# ---------------------------------------------------------------------------
+# switch_to_project_workspace: self-dev mode should NOT create workspace/ sub-dir
+# ---------------------------------------------------------------------------
+
+
+def test_switch_to_project_workspace_self_dev_uses_repo_root():
+    """In self-dev mode, switch_to_project_workspace should set project_dir
+    to the repo root (not a workspace/ sub-directory)."""
+    from agent.infrastructure.config import settings as settings_mod
+
+    settings_mod.disable_self_dev_mode()
+    settings_mod.enable_self_dev_mode()
+
+    try:
+        # Record existing workspace/ sub-dirs before the call
+        workspace_dir = settings_mod._QUANORA_REPO_ROOT / "workspace"
+        before = set()
+        if workspace_dir.exists():
+            before = {d.name for d in workspace_dir.iterdir() if d.is_dir()}
+
+        result = settings_mod.switch_to_project_workspace(
+            task_description="test task for self dev"
+        )
+        # The returned project_dir should be the repo root itself
+        assert result == settings_mod._QUANORA_REPO_ROOT
+
+        # No NEW workspace/ sub-directory should have been created
+        after = set()
+        if workspace_dir.exists():
+            after = {d.name for d in workspace_dir.iterdir() if d.is_dir()}
+        new_dirs = after - before
+        assert len(new_dirs) == 0, (
+            f"switch_to_project_workspace should not create new workspace/ "
+            f"sub-dirs in self-dev mode, found new: {new_dirs}"
+        )
+    finally:
+        settings_mod.disable_self_dev_mode()
+
+
+def test_switch_to_project_workspace_self_dev_guard_root_is_repo():
+    """In self-dev mode, guard_root must be the repo root so that
+    agent/ source files are writable."""
+    from agent.infrastructure.config import settings as settings_mod
+
+    settings_mod.disable_self_dev_mode()
+    settings_mod.enable_self_dev_mode()
+
+    try:
+        settings_mod.switch_to_project_workspace(
+            task_description="test task for self dev"
+        )
+        guard = settings_mod._WORKSPACE_GUARD
+        assert guard._cfg.root == settings_mod._QUANORA_REPO_ROOT
+        assert guard._cfg.resolve_root == settings_mod._QUANORA_REPO_ROOT
+    finally:
+        settings_mod.disable_self_dev_mode()
+
+
+def test_switch_to_project_workspace_self_dev_workspace_still_protected():
+    """In self-dev mode, workspace/ must remain in fully_protected so that
+    write_file to workspace/ paths is still rejected."""
+    from agent.infrastructure.config import settings as settings_mod
+
+    settings_mod.disable_self_dev_mode()
+    settings_mod.enable_self_dev_mode()
+
+    try:
+        settings_mod.switch_to_project_workspace(
+            task_description="test task for self dev"
+        )
+        guard = settings_mod._WORKSPACE_GUARD
+        workspace_path = (settings_mod._QUANORA_REPO_ROOT / "workspace").resolve()
+        assert workspace_path in guard._cfg.fully_protected_paths, (
+            "workspace/ must be fully_protected even in self-dev mode"
+        )
+    finally:
+        settings_mod.disable_self_dev_mode()

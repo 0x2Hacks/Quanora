@@ -429,3 +429,78 @@ def test_self_doc_md_path_resolves_to_repo_docs():
     finally:
         # Clean up
         settings_mod.disable_self_doc_mode()
+
+
+# ── Tests for two-scenario routing and user-interaction protocol ──
+
+
+def test_self_doc_prompt_contains_scenario_routing():
+    """The SELF_DOC_MODE_PROMPT must contain the mandatory user-interaction
+    protocol section that routes between the two scenarios."""
+    from agent.prompts import SELF_DOC_MODE_PROMPT
+
+    # The protocol heading must exist
+    assert "Mandatory user-interaction protocol" in SELF_DOC_MODE_PROMPT
+
+    # Scenario A (initial generation) must be referenced
+    assert "初次生成" in SELF_DOC_MODE_PROMPT
+
+    # Scenario B (optimize existing docs) must be referenced
+    assert "优化已有文档" in SELF_DOC_MODE_PROMPT
+
+
+def test_self_doc_prompt_contains_ask_scenario_step():
+    """The prompt must instruct the agent to ask the user which scenario
+    before proceeding (Step 1 of the interaction protocol)."""
+    from agent.prompts import SELF_DOC_MODE_PROMPT
+
+    assert "Step 1: Ask which scenario" in SELF_DOC_MODE_PROMPT
+    assert "请选择文档操作场景" in SELF_DOC_MODE_PROMPT
+    # Must contain the blocking instruction
+    assert "MUST NOT proceed to any file operation until the user answers" in SELF_DOC_MODE_PROMPT
+
+
+def test_self_doc_prompt_contains_ask_filename_step():
+    """The prompt must instruct the agent to ask for the target MD filename
+    before proceeding (Step 2 of the interaction protocol)."""
+    from agent.prompts import SELF_DOC_MODE_PROMPT
+
+    assert "Step 2: Ask for the target filename" in SELF_DOC_MODE_PROMPT
+    assert "请提供目标 Markdown 文件名称" in SELF_DOC_MODE_PROMPT
+    # Must contain the blocking instruction
+    assert "MUST NOT write to or create any file until the user provides" in SELF_DOC_MODE_PROMPT
+
+
+def test_self_doc_prompt_scenario_a_behavior():
+    """Scenario A must instruct the agent to present a draft outline before
+    writing the full content."""
+    from agent.prompts import SELF_DOC_MODE_PROMPT
+
+    assert "Scenario A" in SELF_DOC_MODE_PROMPT
+    assert "Initial generation" in SELF_DOC_MODE_PROMPT
+    # Must mention presenting the draft outline
+    assert "Present the draft outline" in SELF_DOC_MODE_PROMPT
+
+
+def test_self_doc_prompt_scenario_b_behavior():
+    """Scenario B must instruct the agent to present a summary of proposed
+    changes before making edits."""
+    from agent.prompts import SELF_DOC_MODE_PROMPT
+
+    assert "Scenario B" in SELF_DOC_MODE_PROMPT
+    assert "Optimize existing docs" in SELF_DOC_MODE_PROMPT
+    # Must mention presenting proposed changes
+    assert "Present a summary of proposed changes" in SELF_DOC_MODE_PROMPT
+
+
+def test_build_system_prompt_self_doc_includes_scenario_routing():
+    """When build_system_prompt(self_doc=True) is called, the resulting
+    system prompt must include the scenario-routing protocol."""
+    from agent.prompts import build_system_prompt
+
+    p = build_system_prompt(self_doc=True)
+    assert "Mandatory user-interaction protocol" in p
+    assert "初次生成" in p
+    assert "优化已有文档" in p
+    assert "请选择文档操作场景" in p
+    assert "请提供目标 Markdown 文件名称" in p
