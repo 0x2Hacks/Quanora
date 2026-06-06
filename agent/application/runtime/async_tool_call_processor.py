@@ -16,10 +16,7 @@ from agent.application.services.tool_result_normalizer import ToolResultNormaliz
 
 
 class AsyncToolCallProcessor:
-    """
-    Executes parsed tool calls asynchronously, enforcing concurrency rules
-    and yielding an event stream. Replaces the legacy ToolCallProcessor.
-    """
+    """Executes parsed tool calls and yields runtime events."""
 
     def __init__(self, tool_executor: ToolExecutor, tool_result_normalizer: ToolResultNormalizer | None = None):
         self._tool_executor = tool_executor

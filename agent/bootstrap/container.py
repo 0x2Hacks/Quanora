@@ -55,7 +55,6 @@ def build_basic_agent_dependencies(
     skill_repository = SkillRepository()
     skill_selector = SkillSelector(max_active_skills=2)
     
-    # Alignment B replaces ToolCallProcessor with AsyncToolCallProcessor
     from agent.application.runtime.async_tool_call_processor import AsyncToolCallProcessor
     async_tool_processor = AsyncToolCallProcessor(tool_executor=tool_executor)
     

@@ -35,8 +35,6 @@ class BasicAgent:
         self._cli = dependencies["cli"]
 
     def run(self, query: str) -> str:
-        # Since AgentAPIService was deleted in Alignment D, if run() is still used,
-        # we can just use the runtime facade's sync compatibility wrapper
         return self._runtime.run_query_sync(query)
 
     def chat(self) -> None:

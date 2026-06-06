@@ -14,10 +14,7 @@ from agent.domain.events import RuntimeEvent, TurnStartedEvent, event_meta
 
 
 class AsyncRuntimeFacade:
-    """
-    Facade exposing the primary asynchronous entry points for running agent turns.
-    Replaces the legacy synchronous AgentRuntime as the default main path.
-    """
+    """Facade exposing asynchronous entry points for session-bound turns."""
 
     def __init__(self, turn_runner: AsyncTurnRunner, session_store: AsyncSessionStore):
         self._turn_runner = turn_runner
