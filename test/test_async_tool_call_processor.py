@@ -75,6 +75,16 @@ class FakeSession:
         self.persisted_messages.append((args, kwargs))
 
 
+class FailingToolCallPersistSession(FakeSession):
+    async def persist_tool_call(self, *args, **kwargs):
+        raise OSError("disk full")
+
+
+class FailingToolMessagePersistSession(FakeSession):
+    async def persist_message(self, *args, **kwargs):
+        raise OSError("message write failed")
+
+
 @pytest.mark.asyncio
 async def test_bash_cancellation_token_is_not_persisted_in_tool_args() -> None:
     executor = FakeToolExecutor()
@@ -165,6 +175,62 @@ async def test_successful_tool_does_not_require_job_service() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_result_event_reports_persist_failure() -> None:
+    processor = AsyncToolCallProcessor(tool_executor=FakeToolExecutor())
+    session = FailingToolCallPersistSession()
+    call = ParsedToolCall(
+        call_id="call_1",
+        name="demo_tool",
+        raw_args='{"value":"x"}',
+    )
+
+    events = []
+    with pytest.raises(RuntimeError, match="Failed to persist tool result"):
+        async for event in processor.execute(session=session, tool_calls=[call], turn_id="turn_1"):
+            events.append(event)
+
+    result_events = [event for event in events if isinstance(event, ToolResultEvent)]
+    if len(result_events) != 1:
+        raise AssertionError(f"Expected one result event, got: {events}")
+    result = result_events[0]
+    payload = json.loads(result.result)
+    if result.status != "failed" or result.error_type != "OSError":
+        raise AssertionError(f"Expected failed persist result, got: {result}")
+    if payload.get("ok") is not False or "Failed to persist tool result" not in payload.get("error", ""):
+        raise AssertionError(f"Expected structured persist failure payload, got: {payload}")
+    if session.persisted_messages:
+        raise AssertionError(f"Did not expect tool message after persist failure, got: {session.persisted_messages}")
+
+
+@pytest.mark.asyncio
+async def test_tool_result_event_reports_tool_message_persist_failure() -> None:
+    processor = AsyncToolCallProcessor(tool_executor=FakeToolExecutor())
+    session = FailingToolMessagePersistSession()
+    call = ParsedToolCall(
+        call_id="call_1",
+        name="demo_tool",
+        raw_args='{"value":"x"}',
+    )
+
+    events = []
+    with pytest.raises(RuntimeError, match="Failed to persist tool result"):
+        async for event in processor.execute(session=session, tool_calls=[call], turn_id="turn_1"):
+            events.append(event)
+
+    result_events = [event for event in events if isinstance(event, ToolResultEvent)]
+    if len(result_events) != 1:
+        raise AssertionError(f"Expected one result event, got: {events}")
+    result = result_events[0]
+    payload = json.loads(result.result)
+    if result.status != "failed" or result.error_type != "OSError":
+        raise AssertionError(f"Expected failed message persist result, got: {result}")
+    if payload.get("ok") is not False or "Failed to persist tool result" not in payload.get("error", ""):
+        raise AssertionError(f"Expected structured persist failure payload, got: {payload}")
+    if len(session.persisted_tool_calls) != 1:
+        raise AssertionError(f"Expected tool call record attempt to persist first, got: {session.persisted_tool_calls}")
+
+
+@pytest.mark.asyncio
 async def test_async_tool_processor_limits_repeated_empty_bash_output() -> None:
     executor = FakeEmptyBashOutputExecutor()
     processor = AsyncToolCallProcessor(tool_executor=executor)
@@ -228,6 +294,8 @@ def main() -> int:
     asyncio.run(test_bash_cancellation_token_is_not_persisted_in_tool_args())
     asyncio.run(test_invalid_tool_args_emit_failed_result_without_started_event())
     asyncio.run(test_successful_tool_does_not_require_job_service())
+    asyncio.run(test_tool_result_event_reports_persist_failure())
+    asyncio.run(test_tool_result_event_reports_tool_message_persist_failure())
     asyncio.run(test_async_tool_processor_limits_repeated_empty_bash_output())
     asyncio.run(test_async_tool_processor_resets_empty_bash_output_count_on_real_output())
     print("AsyncToolCallProcessor tests passed.")

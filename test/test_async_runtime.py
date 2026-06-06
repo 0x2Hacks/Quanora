@@ -364,6 +364,82 @@ async def test_async_turn_runner_emits_tool_requested_before_tool_execution():
 
 
 @pytest.mark.asyncio
+async def test_async_turn_runner_fails_after_tool_persist_failure():
+    mock_client = AsyncMock()
+
+    class EmptyStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    def mock_stream(*args, **kwargs):
+        return EmptyStream()
+
+    mock_client.stream = MagicMock(side_effect=mock_stream)
+
+    call = ParsedToolCall(call_id="call_1", name="bash", raw_args='{"command":"date"}')
+
+    async def mock_consume(*args, **kwargs):
+        on_content_async = args[1]
+        await on_content_async("Need tool")
+        return "Need tool", [call]
+
+    mock_parser = MagicMock()
+    mock_parser.consume_async_stream = mock_consume
+
+    mock_context = MagicMock()
+    mock_context.build_messages_async = AsyncMock(return_value=MagicMock(messages=[], stats={}, decisions={}))
+    mock_context.select_active_skills_for_turn = None
+
+    class FakeSession:
+        session_id = "session_1"
+
+        def __init__(self):
+            self.persisted = []
+
+        def now_iso(self):
+            return "2026-05-08T00:00:00Z"
+
+        async def persist_message(self, *args, **kwargs):
+            self.persisted.append((args, kwargs))
+
+    async def execute(*args, **kwargs):
+        yield ToolResultEvent(
+            tool_call_id="call_1",
+            tool_name="bash",
+            status="failed",
+            error_type="OSError",
+            result='{"ok":false}',
+            turn_id=kwargs.get("turn_id", ""),
+        )
+        raise RuntimeError("Failed to persist tool result for call_1: disk full")
+
+    mock_processor = MagicMock()
+    mock_processor.execute = execute
+
+    runner = AsyncTurnRunner(
+        chat_client=mock_client,
+        tool_processor=mock_processor,
+        stream_parser=mock_parser,
+        tool_schemas=[],
+        context_manager=mock_context,
+    )
+
+    events = [event async for event in runner.run_turn(FakeSession(), turn_id="turn_1")]
+
+    tool_results = [event for event in events if isinstance(event, ToolResultEvent)]
+    assert len(tool_results) == 1
+    assert tool_results[0].status == "failed"
+    assert tool_results[0].error_type == "OSError"
+    assert isinstance(events[-1], TurnFailedEvent)
+    assert events[-1].error_type == "RuntimeError"
+    assert "Failed to persist tool result" in events[-1].error
+    assert mock_client.stream.call_count == 1
+
+
+@pytest.mark.asyncio
 async def test_async_turn_runner_emits_and_persists_sampling_usage():
     mock_client = AsyncMock()
     mock_client.stream = MagicMock()
@@ -580,6 +656,7 @@ def main() -> int:
     asyncio.run(test_async_runtime_facade_manual_compact_uses_runner())
     asyncio.run(test_async_runtime_facade_set_model_updates_runner_and_session())
     asyncio.run(test_async_turn_runner_emits_tool_requested_before_tool_execution())
+    asyncio.run(test_async_turn_runner_fails_after_tool_persist_failure())
     asyncio.run(test_async_turn_runner_emits_and_persists_sampling_usage())
     asyncio.run(test_async_turn_runner_usage_persistence_failure_does_not_fail_turn())
     asyncio.run(test_async_turn_runner_auto_compacts_before_sampling())

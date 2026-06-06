@@ -101,6 +101,31 @@ class AsyncToolCallProcessor:
                         error_type = type(exc).__name__
                         tool_result_str = tool_error(call.name, str(exc), error_type)
 
+            ts_end = session.now_iso()
+            normalized_result = self._tool_result_normalizer.normalize(tool_result_str)
+
+            persist_error: Exception | None = None
+            try:
+                await session.persist_tool_call(
+                    call.call_id,
+                    call.name,
+                    persisted_args,
+                    call.raw_args,
+                    ts_start,
+                    ts_end,
+                    tool_result_str,
+                    model_content=normalized_result.model_content,
+                    model_content_format=normalized_result.model_content_format,
+                    model_content_policy=normalized_result.model_content_policy,
+                    artifact_ref=normalized_result.artifact_ref,
+                )
+                await session.persist_message("tool", "", tool_call_id=call.call_id, tool_name=call.name)
+            except Exception as exc:
+                persist_error = exc
+                event_status = "failed"
+                error_type = type(exc).__name__
+                tool_result_str = tool_error(call.name, f"Failed to persist tool result: {exc}", error_type)
+
             duration_ms = int((time.perf_counter() - started_at) * 1000)
             yield ToolResultEvent(
                 **event_meta(session, turn_id),
@@ -111,24 +136,8 @@ class AsyncToolCallProcessor:
                 error_type=error_type,
                 duration_ms=duration_ms,
             )
-
-            ts_end = session.now_iso()
-            normalized_result = self._tool_result_normalizer.normalize(tool_result_str)
-
-            await session.persist_tool_call(
-                call.call_id,
-                call.name,
-                persisted_args,
-                call.raw_args,
-                ts_start,
-                ts_end,
-                tool_result_str,
-                model_content=normalized_result.model_content,
-                model_content_format=normalized_result.model_content_format,
-                model_content_policy=normalized_result.model_content_policy,
-                artifact_ref=normalized_result.artifact_ref,
-            )
-            await session.persist_message("tool", "", tool_call_id=call.call_id, tool_name=call.name)
+            if persist_error is not None:
+                raise RuntimeError(f"Failed to persist tool result for {call.call_id}: {persist_error}") from persist_error
 
     def _counts_for_turn(self, turn_id: str) -> dict[str, int]:
         if not turn_id:

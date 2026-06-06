@@ -107,6 +107,43 @@ async def test_persist_tool_call_writes_model_content(temp_session_dir):
 
 
 @pytest.mark.asyncio
+async def test_get_messages_slice_recovers_missing_tool_message_from_record(temp_session_dir):
+    store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
+    await store.initialize()
+    await store.persist_message("assistant", "", meta={"tool_calls": [{"id": "call_1", "name": "bash"}]})
+    await store.persist_tool_call(
+        call_id="call_1",
+        name="bash",
+        parsed_args={"command": "date"},
+        raw_args='{"command":"date"}',
+        ts_start=store.now_iso(),
+        ts_end=store.now_iso(),
+        result_payload=json.dumps({"ok": True, "tool": "bash", "data": "raw result"}),
+        model_content="recovered model content",
+        model_content_format="tool_result_v1",
+        model_content_policy={"version": "tool_result_v1"},
+        artifact_ref=None,
+    )
+
+    messages = await store.get_messages_slice()
+
+    assert messages == [
+        {"role": "system", "content": "sys"},
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "bash", "arguments": '{"command":"date"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "recovered model content"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_get_messages_slice_rejects_tool_record_without_model_content(temp_session_dir):
     store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
     await store.initialize()
@@ -323,6 +360,8 @@ def main() -> int:
             await test_async_session_store_facade(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_persist_tool_call_writes_model_content(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            await test_get_messages_slice_recovers_missing_tool_message_from_record(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_get_messages_slice_rejects_tool_record_without_model_content(tmp)
         with tempfile.TemporaryDirectory() as tmp:

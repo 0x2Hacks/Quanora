@@ -468,6 +468,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                     tool_map[item["id"]] = item
                     
             built_messages = []
+            emitted_tool_call_ids = set()
             for msg in messages:
                 if not isinstance(msg, dict):
                     continue
@@ -478,6 +479,8 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                     tool_call_id = msg.get("tool_call_id")
                     content = self._build_tool_content(tool_map.get(tool_call_id))
                     built_messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": content})
+                    if tool_call_id:
+                        emitted_tool_call_ids.add(str(tool_call_id))
                     continue
                 if role == "assistant" and isinstance(msg.get("meta"), dict) and msg["meta"].get("tool_calls"):
                     tool_calls_meta = msg["meta"]["tool_calls"]
@@ -497,6 +500,8 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                             {"id": tc_id, "type": "function", "function": {"name": tc_name, "arguments": raw_args}}
                         )
                     built_messages.append({"role": "assistant", "tool_calls": tool_msgs})
+                    for tool_msg in self._missing_tool_messages(tool_msgs, tool_map, emitted_tool_call_ids):
+                        built_messages.append(tool_msg)
                     if msg.get("content"):
                         built_messages.append({"role": "assistant", "content": msg.get("content")})
                     continue
@@ -511,6 +516,22 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
             return [dict(message) for message in built_messages[slice(start, end)]]
             
         return await asyncio.to_thread(_get)
+
+    def _missing_tool_messages(
+        self,
+        tool_calls: list[dict[str, Any]],
+        tool_map: dict[str, dict[str, Any]],
+        emitted_tool_call_ids: set[str],
+    ) -> list[dict[str, str]]:
+        missing: list[dict[str, str]] = []
+        for tool_call in tool_calls:
+            tool_call_id = str(tool_call.get("id") or "")
+            if not tool_call_id or tool_call_id in emitted_tool_call_ids:
+                continue
+            content = self._build_tool_content(tool_map.get(tool_call_id))
+            missing.append({"role": "tool", "tool_call_id": tool_call_id, "content": content})
+            emitted_tool_call_ids.add(tool_call_id)
+        return missing
 
     async def list_recent_sessions(self, limit: int = 10) -> list[dict[str, Any]]:
         def _list():
