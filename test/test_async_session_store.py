@@ -430,6 +430,60 @@ async def test_update_model_persists_session_meta(temp_session_dir):
     assert meta["model"] == "new-model"
 
 
+@pytest.mark.asyncio
+async def test_resume_repairs_stale_meta_counts(temp_session_dir):
+    store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
+    await store.initialize()
+    await store.persist_message("user", "hello")
+    await store.persist_message("assistant", "", meta={"tool_calls": [{"id": "call_1", "name": "bash"}]})
+    await store.persist_tool_call(
+        call_id="call_1",
+        name="bash",
+        parsed_args={"command": "date"},
+        raw_args='{"command":"date"}',
+        ts_start=store.now_iso(),
+        ts_end=store.now_iso(),
+        result_payload=json.dumps({"ok": True, "tool": "bash", "data": "raw result"}),
+        model_content="fixed model content",
+    )
+
+    session_base = Path(temp_session_dir) / store.session_id
+    meta_path = session_base / "meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["message_count"] = 0
+    meta["tool_call_count"] = 0
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    resumed = AsyncJsonlSessionStore(session_dir=temp_session_dir, session_id=store.session_id)
+    await resumed.initialize()
+
+    repaired = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert repaired["message_count"] == 3
+    assert repaired["tool_call_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_resume_normalizes_auto_compact_window_meta(temp_session_dir):
+    store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
+    await store.initialize()
+
+    session_base = Path(temp_session_dir) / store.session_id
+    meta_path = session_base / "meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["auto_compact_window"] = {"ordinal": "bad", "prefill_input_tokens": "also bad"}
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    resumed = AsyncJsonlSessionStore(session_dir=temp_session_dir, session_id=store.session_id)
+    await resumed.initialize()
+
+    repaired = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert repaired["auto_compact_window"] == {
+        "ordinal": 1,
+        "prefill_input_tokens": None,
+        "prefill_source": None,
+    }
+
+
 def main() -> int:
     async def _run_all():
         with tempfile.TemporaryDirectory() as tmp:
@@ -458,6 +512,10 @@ def main() -> int:
             await test_sampling_usage_and_auto_compact_window_meta(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_update_model_persists_session_meta(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            await test_resume_repairs_stale_meta_counts(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            await test_resume_normalizes_auto_compact_window_meta(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             test_session_files_read_jsonl_waits_for_active_writer(Path(tmp))
         with tempfile.TemporaryDirectory() as tmp:

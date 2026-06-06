@@ -1,0 +1,64 @@
+"""Session metadata helpers."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+def default_auto_compact_window() -> dict[str, Any]:
+    return {
+        "ordinal": 1,
+        "prefill_input_tokens": None,
+        "prefill_source": None,
+    }
+
+
+def normalize_auto_compact_window(window: Any) -> dict[str, Any]:
+    normalized = default_auto_compact_window()
+    if isinstance(window, dict):
+        normalized.update(window)
+    try:
+        normalized["ordinal"] = max(1, int(normalized.get("ordinal") or 1))
+    except (TypeError, ValueError):
+        normalized["ordinal"] = 1
+    prefill = normalized.get("prefill_input_tokens")
+    if prefill is not None:
+        try:
+            normalized["prefill_input_tokens"] = max(0, int(prefill))
+        except (TypeError, ValueError):
+            normalized["prefill_input_tokens"] = None
+    return normalized
+
+
+def new_session_meta(
+    *,
+    session_id: str,
+    now: str,
+    model: str | None,
+    cwd: str,
+    workspace_root: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "2.0",
+        "session_id": session_id,
+        "title": "Untitled",
+        "created_at": now,
+        "updated_at": now,
+        "model": model,
+        "cwd": cwd,
+        "workspace_root": workspace_root,
+        "message_count": 0,
+        "tool_call_count": 0,
+        "auto_compact_window": default_auto_compact_window(),
+    }
+
+
+def sync_session_counts(meta: dict[str, Any], *, message_count: int, tool_call_count: int) -> bool:
+    changed = False
+    if int(meta.get("message_count") or 0) != message_count:
+        meta["message_count"] = message_count
+        changed = True
+    if int(meta.get("tool_call_count") or 0) != tool_call_count:
+        meta["tool_call_count"] = tool_call_count
+        changed = True
+    return changed

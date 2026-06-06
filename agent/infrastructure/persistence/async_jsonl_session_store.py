@@ -16,6 +16,12 @@ from agent.infrastructure.persistence.tool_call_repository import ToolCallReposi
 from agent.infrastructure.persistence.compaction_repository import CompactionRepository
 from agent.infrastructure.persistence.session_index_repository import SessionIndexRepository
 from agent.infrastructure.persistence.message_projector import latest_compaction, project_messages
+from agent.infrastructure.persistence.session_meta import (
+    default_auto_compact_window,
+    new_session_meta,
+    normalize_auto_compact_window,
+    sync_session_counts,
+)
 from agent.application.services.compaction_service import CompactionService
 from agent.domain import looks_like_tool_payload
 
@@ -139,19 +145,13 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
         self._message_count = 0
         self._tool_call_count = 0
         
-        self._session_meta = {
-            "schema_version": "2.0",
-            "session_id": session_id,
-            "title": "Untitled",
-            "created_at": now,
-            "updated_at": now,
-            "model": self.model,
-            "cwd": os.getcwd(),
-            "workspace_root": self._resolve_workspace_root(),
-            "message_count": self._message_count,
-            "tool_call_count": self._tool_call_count,
-            "auto_compact_window": self._default_auto_compact_window(),
-        }
+        self._session_meta = new_session_meta(
+            session_id=session_id,
+            now=now,
+            model=self.model,
+            cwd=os.getcwd(),
+            workspace_root=self._resolve_workspace_root(),
+        )
         self._files.write_json(self._session_paths["meta"], self._session_meta)
         self._update_index()
 
@@ -167,9 +167,22 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
         self._setup_repos()
         
         self._session_meta = meta
-        self._session_meta.setdefault("auto_compact_window", self._default_auto_compact_window())
-        self._message_count = int(meta.get("message_count") or 0)
-        self._tool_call_count = int(meta.get("tool_call_count") or 0)
+        original_window = self._session_meta.get("auto_compact_window")
+        normalized_window = normalize_auto_compact_window(original_window)
+        self._session_meta["auto_compact_window"] = normalized_window
+        self._message_count = (
+            len(self._msg_repo.load_messages()) if self._msg_repo else int(meta.get("message_count") or 0)
+        )
+        self._tool_call_count = (
+            len(self._tool_repo.load_tool_calls()) if self._tool_repo else int(meta.get("tool_call_count") or 0)
+        )
+        counts_changed = sync_session_counts(
+            self._session_meta,
+            message_count=self._message_count,
+            tool_call_count=self._tool_call_count,
+        )
+        if counts_changed or original_window != normalized_window:
+            self._persist_meta_sync(meta.get("updated_at"))
 
     def _find_latest_session_id(self) -> str | None:
         index_data = self._index_repo.load_index()
@@ -222,32 +235,10 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
         self._files.write_json(self._session_paths["meta"], self._session_meta)
         self._update_index()
 
-    def _default_auto_compact_window(self) -> dict[str, Any]:
-        return {
-            "ordinal": 1,
-            "prefill_input_tokens": None,
-            "prefill_source": None,
-        }
-
     def _auto_compact_window_sync(self) -> dict[str, Any]:
         if not isinstance(self._session_meta, dict):
-            return self._default_auto_compact_window()
-        window = self._session_meta.get("auto_compact_window")
-        if not isinstance(window, dict):
-            window = self._default_auto_compact_window()
-            self._session_meta["auto_compact_window"] = window
-        normalized = self._default_auto_compact_window()
-        normalized.update(window)
-        try:
-            normalized["ordinal"] = max(1, int(normalized.get("ordinal") or 1))
-        except (TypeError, ValueError):
-            normalized["ordinal"] = 1
-        prefill = normalized.get("prefill_input_tokens")
-        if prefill is not None:
-            try:
-                normalized["prefill_input_tokens"] = max(0, int(prefill))
-            except (TypeError, ValueError):
-                normalized["prefill_input_tokens"] = None
+            return default_auto_compact_window()
+        normalized = normalize_auto_compact_window(self._session_meta.get("auto_compact_window"))
         self._session_meta["auto_compact_window"] = normalized
         return dict(normalized)
 
