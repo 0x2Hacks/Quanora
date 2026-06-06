@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from dataclasses import dataclass
 from typing import AsyncIterator
 
 from agent.application.ports.async_session_store import AsyncSessionStore
@@ -13,6 +14,13 @@ from agent.domain.events import RuntimeEvent, ToolCallStartedEvent, ToolResultEv
 from agent.application.tool_executor import ToolExecutor
 from agent.application.runtime.cancellation import CancellationToken
 from agent.application.services.tool_result_normalizer import ToolResultNormalizer
+
+
+@dataclass(slots=True)
+class _ToolCallOutcome:
+    status: str
+    result: str
+    error_type: str = ""
 
 
 class AsyncToolCallProcessor:
@@ -41,100 +49,138 @@ class AsyncToolCallProcessor:
 
             started_at = time.perf_counter()
             parsed_args, parse_error = parse_tool_args(call.raw_args)
-            persisted_args = dict(parsed_args)
             ts_start = session.now_iso()
-            event_status = "completed"
-            error_type = ""
 
             if parse_error:
-                event_status = "failed"
-                error_type = "ToolArgsJSONError"
-                tool_result_str = tool_error(
-                    call.name,
-                    f"Invalid tool arguments JSON: {parse_error}",
-                    error_type,
-                    meta={"raw_args": call.raw_args[:2000]},
+                outcome = _ToolCallOutcome(
+                    status="failed",
+                    error_type="ToolArgsJSONError",
+                    result=tool_error(
+                        call.name,
+                        f"Invalid tool arguments JSON: {parse_error}",
+                        "ToolArgsJSONError",
+                        meta={"raw_args": call.raw_args[:2000]},
+                    ),
                 )
             else:
                 blocked_poll = self._empty_bash_output_pre_guard(call.name, parsed_args, empty_bash_output_counts)
                 if blocked_poll:
-                    event_status = "failed"
-                    error_type = "RepeatedEmptyPoll"
-                    tool_result_str = blocked_poll
+                    outcome = _ToolCallOutcome(status="failed", error_type="RepeatedEmptyPoll", result=blocked_poll)
                 else:
                     yield ToolCallStartedEvent(
                         **event_meta(session, turn_id),
                         tool_call_id=call.call_id,
                         tool_name=call.name,
                     )
-                    try:
-                        if self._tool_executor.is_async_tool(call.name):
-                            # Inject _cancellation_token for tools that accept it (e.g. bash)
-                            execution_args = parsed_args
-                            if call.name == "bash":
-                                execution_args = {**parsed_args, "_cancellation_token": cancellation_token}
-                            result = await self._tool_executor.execute_async(call.name, execution_args, call.raw_args)
-                        else:
-                            def _sync_run():
-                                return self._tool_executor.execute_sync(call.name, parsed_args, call.raw_args)
-                            result = await asyncio.to_thread(_sync_run)
-
-                        if result.status == "ok":
-                            tool_result_str = result.result_str
-                            if not looks_like_tool_payload(tool_result_str):
-                                tool_result_str = tool_ok(call.name, tool_result_str)
-                            self._record_bash_output_observation(
-                                call.name,
-                                tool_result_str,
-                                empty_bash_output_counts,
-                            )
-                        else:
-                            event_status = "failed"
-                            error_type = result.error_type or "ToolExecutionError"
-                            tool_result_str = tool_error(call.name, result.error_msg, error_type)
-
-                    except Exception as exc:
-                        event_status = "failed"
-                        error_type = type(exc).__name__
-                        tool_result_str = tool_error(call.name, str(exc), error_type)
+                    outcome = await self._run_tool_call(
+                        call=call,
+                        parsed_args=parsed_args,
+                        cancellation_token=cancellation_token,
+                        empty_bash_output_counts=empty_bash_output_counts,
+                    )
 
             ts_end = session.now_iso()
-            normalized_result = self._tool_result_normalizer.normalize(tool_result_str)
-
-            persist_error: Exception | None = None
             try:
-                await session.persist_tool_call(
-                    call.call_id,
-                    call.name,
-                    persisted_args,
-                    call.raw_args,
-                    ts_start,
-                    ts_end,
-                    tool_result_str,
-                    model_content=normalized_result.model_content,
-                    model_content_format=normalized_result.model_content_format,
-                    model_content_policy=normalized_result.model_content_policy,
-                    artifact_ref=normalized_result.artifact_ref,
+                await self._persist_tool_result(
+                    session=session,
+                    call=call,
+                    parsed_args=parsed_args,
+                    ts_start=ts_start,
+                    ts_end=ts_end,
+                    tool_result_str=outcome.result,
                 )
-                await session.persist_message("tool", "", tool_call_id=call.call_id, tool_name=call.name)
+                persist_error = None
             except Exception as exc:
                 persist_error = exc
-                event_status = "failed"
-                error_type = type(exc).__name__
-                tool_result_str = tool_error(call.name, f"Failed to persist tool result: {exc}", error_type)
+                outcome = _ToolCallOutcome(
+                    status="failed",
+                    error_type=type(exc).__name__,
+                    result=tool_error(call.name, f"Failed to persist tool result: {exc}", type(exc).__name__),
+                )
 
             duration_ms = int((time.perf_counter() - started_at) * 1000)
             yield ToolResultEvent(
                 **event_meta(session, turn_id),
                 tool_call_id=call.call_id,
                 tool_name=call.name,
-                status=event_status,
-                result=tool_result_str,
-                error_type=error_type,
+                status=outcome.status,
+                result=outcome.result,
+                error_type=outcome.error_type,
                 duration_ms=duration_ms,
             )
             if persist_error is not None:
                 raise RuntimeError(f"Failed to persist tool result for {call.call_id}: {persist_error}") from persist_error
+
+    async def _run_tool_call(
+        self,
+        *,
+        call: ParsedToolCall,
+        parsed_args: dict,
+        cancellation_token: CancellationToken | None,
+        empty_bash_output_counts: dict[str, int],
+    ) -> _ToolCallOutcome:
+        try:
+            if self._tool_executor.is_async_tool(call.name):
+                execution_args = parsed_args
+                if call.name == "bash":
+                    execution_args = {**parsed_args, "_cancellation_token": cancellation_token}
+                result = await self._tool_executor.execute_async(call.name, execution_args, call.raw_args)
+            else:
+                def _sync_run():
+                    return self._tool_executor.execute_sync(call.name, parsed_args, call.raw_args)
+
+                result = await asyncio.to_thread(_sync_run)
+
+            if result.status == "ok":
+                tool_result_str = result.result_str
+                if not looks_like_tool_payload(tool_result_str):
+                    tool_result_str = tool_ok(call.name, tool_result_str)
+                self._record_bash_output_observation(
+                    call.name,
+                    tool_result_str,
+                    empty_bash_output_counts,
+                )
+                return _ToolCallOutcome(status="completed", result=tool_result_str)
+
+            error_type = result.error_type or "ToolExecutionError"
+            return _ToolCallOutcome(
+                status="failed",
+                error_type=error_type,
+                result=tool_error(call.name, result.error_msg, error_type),
+            )
+        except Exception as exc:
+            error_type = type(exc).__name__
+            return _ToolCallOutcome(
+                status="failed",
+                error_type=error_type,
+                result=tool_error(call.name, str(exc), error_type),
+            )
+
+    async def _persist_tool_result(
+        self,
+        *,
+        session: AsyncSessionStore,
+        call: ParsedToolCall,
+        parsed_args: dict,
+        ts_start: str,
+        ts_end: str,
+        tool_result_str: str,
+    ) -> None:
+        normalized_result = self._tool_result_normalizer.normalize(tool_result_str)
+        await session.persist_tool_call(
+            call.call_id,
+            call.name,
+            dict(parsed_args),
+            call.raw_args,
+            ts_start,
+            ts_end,
+            tool_result_str,
+            model_content=normalized_result.model_content,
+            model_content_format=normalized_result.model_content_format,
+            model_content_policy=normalized_result.model_content_policy,
+            artifact_ref=normalized_result.artifact_ref,
+        )
+        await session.persist_message("tool", "", tool_call_id=call.call_id, tool_name=call.name)
 
     def _counts_for_turn(self, turn_id: str) -> dict[str, int]:
         if not turn_id:
