@@ -66,7 +66,7 @@ def latest_compact_pair(
     by_id = {
         str(record.get("id")): record
         for record in compactions
-        if isinstance(record, dict) and record.get("id")
+        if isinstance(record, dict) and record.get("id") and _has_valid_handoff(record)
     }
     if not by_id:
         return None
@@ -95,12 +95,8 @@ def apply_latest_compact_boundary(
         for message in messages[:boundary_index]
         if message.get("role") == "system"
     ]
-    handoff = (compaction or {}).get("handoff_message")
-    if isinstance(handoff, dict):
-        role = handoff.get("role")
-        content = handoff.get("content")
-        if role in {"user", "assistant", "system"} and isinstance(content, str):
-            projected.append({"role": role, "content": content})
+    handoff = compaction["handoff_message"]
+    projected.append({"role": handoff["role"], "content": handoff["content"]})
     projected.extend(
         dict(message)
         for message in messages[boundary_index + 1 :]
@@ -112,6 +108,15 @@ def apply_latest_compact_boundary(
 def is_compact_boundary_message(message: dict[str, Any]) -> bool:
     meta = message.get("meta")
     return isinstance(meta, dict) and meta.get("kind") == "compact_boundary"
+
+
+def _has_valid_handoff(record: dict[str, Any]) -> bool:
+    handoff = record.get("handoff_message")
+    if not isinstance(handoff, dict):
+        return False
+    role = handoff.get("role")
+    content = handoff.get("content")
+    return role in {"user", "assistant", "system"} and isinstance(content, str)
 
 
 def _has_tool_calls_meta(message: dict[str, Any]) -> bool:

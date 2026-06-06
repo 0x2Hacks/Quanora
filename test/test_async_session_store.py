@@ -378,6 +378,37 @@ async def test_unmatched_compact_boundary_does_not_truncate_context(temp_session
 
 
 @pytest.mark.asyncio
+async def test_invalid_compaction_record_does_not_truncate_context(temp_session_dir):
+    store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
+    await store.initialize()
+    await store.persist_message("user", "before invalid compact")
+    session_base = Path(temp_session_dir) / store.session_id
+    invalid = {
+        "id": "invalid_compact",
+        "created_at": store.now_iso(),
+        "handoff_message": {"role": "assistant", "content": None},
+    }
+    with (session_base / "compactions.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(invalid, ensure_ascii=False) + "\n")
+    await store.persist_message(
+        "assistant",
+        "",
+        meta={"kind": "compact_boundary", "compact_id": "invalid_compact"},
+    )
+    await store.persist_message("user", "after invalid compact")
+
+    messages = await store.get_messages_slice()
+    latest = await store.get_latest_compaction()
+
+    assert latest is None
+    assert messages == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "before invalid compact"},
+        {"role": "user", "content": "after invalid compact"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_latest_valid_compact_boundary_survives_newer_broken_boundary(temp_session_dir):
     store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
     await store.initialize()
@@ -559,6 +590,8 @@ def main() -> int:
             await test_orphan_compaction_record_does_not_compact_context(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_unmatched_compact_boundary_does_not_truncate_context(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            await test_invalid_compaction_record_does_not_truncate_context(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_latest_valid_compact_boundary_survives_newer_broken_boundary(tmp)
         with tempfile.TemporaryDirectory() as tmp:
