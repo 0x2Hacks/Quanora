@@ -26,13 +26,14 @@ from rich.console import Console
 class ChatCLI:
     """Interactive CLI that delegates core behavior to application runtime."""
 
-    def __init__(self, runtime, session, debug: bool = False, self_dev: bool = False, self_quant: bool = False):
+    def __init__(self, runtime, session, debug: bool = False, self_dev: bool = False, self_quant: bool = False, self_doc: bool = False):
         self._runtime = runtime
         self._session = session
         self._session_store = session  # session implements AsyncSessionStore (persist_turn_cost etc.)
         self._debug = debug
         self._self_dev = self_dev
         self._self_quant = self_quant
+        self._self_doc = self_doc
         self._distill_service = ExperienceDistillationService()
         self._last_cost_report = None
         self._active_skills: list[str] = []
@@ -173,6 +174,18 @@ class ChatCLI:
             try:
                 self._event_loop.run_until_complete(
                     self._run_turn_async("__QUANT_ONBOARDING__")
+                )
+            except Exception:
+                pass  # non-fatal; user can still type normally
+
+        # ── Self-Doc auto-onboarding ────────────────────────────────
+        # Automatically inject a trigger message so the agent asks the
+        # user about their documentation scenario (create vs. optimize)
+        # and the target filename right away.
+        if self._self_doc:
+            try:
+                self._event_loop.run_until_complete(
+                    self._run_turn_async("__SELF_DOC_ONBOARDING__")
                 )
             except Exception:
                 pass  # non-fatal; user can still type normally

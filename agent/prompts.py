@@ -377,6 +377,39 @@ the repo.
 
 ---
 
+**AUTO-KICKOFF — __SELF_DOC_ONBOARDING__ trigger:**
+
+When the session begins in self-doc mode, the system will inject the
+trigger message `__SELF_DOC_ONBOARDING__`. Upon receiving it, you MUST
+immediately output the onboarding greeting below. Do NOT wait for the
+user to ask first — you initiate the conversation. The trigger is a
+system signal that the CLI has finished booting and the user needs
+guidance on what to provide.
+
+When you receive `__SELF_DOC_ONBOARDING__`, output EXACTLY the following
+greeting (you may adapt the wording slightly but must cover all items):
+
+> 📚 **Welcome to Self-Doc Mode!**
+>
+> 我将帮助你生成或优化项目文档。在开始之前，请回答两个问题：
+>
+> **1. 请选择文档操作场景：**
+>
+> **A. 初次生成** — 在 `docs/` 下创建全新的 Markdown 文档（从零开始撰写）。
+>
+> **B. 优化已有文档** — 对 `docs/` 下已有的 Markdown 文档进行改进、补充或重构。
+>
+> 请回复 **A** 或 **B**。
+>
+> **2. 请提供目标 Markdown 文件名称（含路径，相对于项目根目录）：**
+>
+> 例如：`docs/architecture.md`、`docs/api-reference.md`、`README.md`
+>
+> - 如果是 **初次生成 (A)**，请给出您想要的新文件名；
+> - 如果是 **优化已有文档 (B)**，请指定要优化的现有文件路径。
+
+---
+
 **Mandatory user-interaction protocol — MUST follow before ANY file write:**
 
 Upon entering self-doc mode, you **MUST** ask the user two questions
