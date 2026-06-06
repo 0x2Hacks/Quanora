@@ -213,6 +213,14 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
         }
         self._index_repo.update_index(entry)
 
+    def _persist_meta_sync(self, updated_at: str | None = None) -> None:
+        if not self._session_meta or not self._session_paths:
+            self._update_index()
+            return
+        self._session_meta["updated_at"] = updated_at or self.now_iso()
+        self._files.write_json(self._session_paths["meta"], self._session_meta)
+        self._update_index()
+
     def _default_auto_compact_window(self) -> dict[str, Any]:
         return {
             "ordinal": 1,
@@ -271,9 +279,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
             self._message_count += 1
             if self._session_meta:
                 self._session_meta["message_count"] = self._message_count
-                self._session_meta["updated_at"] = self.now_iso()
-                self._files.write_json(self._session_paths["meta"], self._session_meta)
-            self._update_index()
+            self._persist_meta_sync()
 
     async def initialize(self) -> None:
         async with self._write_lock:
@@ -296,9 +302,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                 if not self._session_meta or not self._session_paths:
                     return
                 self._session_meta["model"] = clean
-                self._session_meta["updated_at"] = self.now_iso()
-                self._files.write_json(self._session_paths["meta"], self._session_meta)
-                self._update_index()
+                self._persist_meta_sync()
 
             await asyncio.to_thread(_persist)
 
@@ -322,9 +326,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                     self._session_meta["title"] = (content or "")[:40]
                 if self._session_meta:
                     self._session_meta["message_count"] = self._message_count
-                    self._session_meta["updated_at"] = self.now_iso()
-                    self._files.write_json(self._session_paths["meta"], self._session_meta)
-                self._update_index()
+                self._persist_meta_sync()
 
             await asyncio.to_thread(_persist)
 
@@ -362,9 +364,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                 self._tool_call_count += 1
                 if self._session_meta:
                     self._session_meta["tool_call_count"] = self._tool_call_count
-                    self._session_meta["updated_at"] = self.now_iso()
-                    self._files.write_json(self._session_paths["meta"], self._session_meta)
-                self._update_index()
+                self._persist_meta_sync()
 
             await asyncio.to_thread(_persist)
 
@@ -571,9 +571,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                 latest = dict(usage or {})
                 latest["updated_at"] = self.now_iso()
                 self._session_meta["latest_sampling_usage"] = latest
-                self._session_meta["updated_at"] = latest["updated_at"]
-                self._files.write_json(self._session_paths["meta"], self._session_meta)
-                self._update_index()
+                self._persist_meta_sync(latest["updated_at"])
 
             await asyncio.to_thread(_persist)
 
@@ -603,9 +601,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                 window["prefill_input_tokens"] = input_tokens
                 window["prefill_source"] = "server"
                 self._session_meta["auto_compact_window"] = window
-                self._session_meta["updated_at"] = self.now_iso()
-                self._files.write_json(self._session_paths["meta"], self._session_meta)
-                self._update_index()
+                self._persist_meta_sync()
 
             await asyncio.to_thread(_persist)
 
@@ -620,9 +616,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                     "prefill_input_tokens": None,
                     "prefill_source": None,
                 }
-                self._session_meta["updated_at"] = self.now_iso()
-                self._files.write_json(self._session_paths["meta"], self._session_meta)
-                self._update_index()
+                self._persist_meta_sync()
 
             await asyncio.to_thread(_persist)
 
@@ -646,7 +640,6 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                 self._message_count += 1
                 if self._session_meta:
                     self._session_meta["message_count"] = self._message_count
-                    self._session_meta["updated_at"] = self.now_iso()
                     self._session_meta["latest_compaction"] = {
                         "id": compact_id,
                         "created_at": record.get("created_at"),
@@ -658,8 +651,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                         "prefill_input_tokens": None,
                         "prefill_source": None,
                     }
-                    self._files.write_json(self._session_paths["meta"], self._session_meta)
-                self._update_index()
+                self._persist_meta_sync()
                 return record
 
             return await asyncio.to_thread(_persist)
