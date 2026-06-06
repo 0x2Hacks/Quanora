@@ -36,7 +36,6 @@ class _BgProc:
     stderr_cursor: int = 0
     sequence: int = 0
     updated_event: asyncio.Event = field(default_factory=asyncio.Event)
-    started_at: float = field(default_factory=time.monotonic)
     last_observed_at: float | None = None
     empty_observation_count: int = 0
     exit_code: int | None = None
@@ -98,8 +97,6 @@ class BashRunner:
         shell_cmd = [state.shell_executable]
         if state.shell_backend == "powershell":
             shell_cmd.extend(["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command])
-        elif "bash" in state.shell_executable.lower():
-            shell_cmd.extend(["-c", command])
         else:
             shell_cmd.extend(["-c", command])
         return shell_cmd
@@ -175,9 +172,6 @@ class BashRunner:
             return 30000
         return 60000
 
-    def _snapshot_stream(self, head: list[str], tail: deque, total_len: int) -> str:
-        return self._build_output(head, tail, total_len)
-
     def _delta_since(self, text: str, cursor: int, max_chars: int) -> tuple[str, int, bool]:
         next_cursor = len(text)
         if cursor < 0 or cursor > len(text):
@@ -189,8 +183,8 @@ class BashRunner:
         return delta, next_cursor, truncated
 
     def _full_output(self, bg: _BgProc) -> tuple[str, str]:
-        stdout = self._snapshot_stream(bg.stdout_head, bg.stdout_tail, bg.stdout_len[0])
-        stderr = self._snapshot_stream(bg.stderr_head, bg.stderr_tail, bg.stderr_len[0])
+        stdout = self._build_output(bg.stdout_head, bg.stdout_tail, bg.stdout_len[0])
+        stderr = self._build_output(bg.stderr_head, bg.stderr_tail, bg.stderr_len[0])
         return stdout, stderr
 
     def _delta_output(self, bg: _BgProc, max_output_chars: int) -> tuple[str, str, bool]:
