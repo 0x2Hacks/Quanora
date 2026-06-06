@@ -437,6 +437,19 @@ async def test_sampling_usage_and_auto_compact_window_meta(temp_session_dir):
 
 
 @pytest.mark.asyncio
+async def test_auto_compact_window_ignores_invalid_usage_tokens(temp_session_dir):
+    store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
+    await store.initialize()
+
+    await store.update_auto_compact_window_from_usage({"input_tokens": "bad"})
+
+    window = await store.get_auto_compact_window()
+    assert window["ordinal"] == 1
+    assert window["prefill_input_tokens"] is None
+    assert window["prefill_source"] is None
+
+
+@pytest.mark.asyncio
 async def test_update_model_persists_session_meta(temp_session_dir):
     store = AsyncJsonlSessionStore(session_dir=temp_session_dir, model="old-model", system_prompt="sys")
     await store.initialize()
@@ -529,6 +542,8 @@ def main() -> int:
             await test_latest_valid_compact_boundary_survives_newer_broken_boundary(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_sampling_usage_and_auto_compact_window_meta(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            await test_auto_compact_window_ignores_invalid_usage_tokens(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_update_model_persists_session_meta(tmp)
         with tempfile.TemporaryDirectory() as tmp:

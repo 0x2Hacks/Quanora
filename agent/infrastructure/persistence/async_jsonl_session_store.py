@@ -20,6 +20,7 @@ from agent.infrastructure.persistence.session_meta import (
     default_auto_compact_window,
     new_session_meta,
     normalize_auto_compact_window,
+    positive_int_or_none,
     sync_session_counts,
 )
 from agent.application.services.compaction_service import CompactionService
@@ -444,8 +445,8 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
             def _persist():
                 if not self._session_meta or not self._session_paths:
                     return
-                input_tokens = int((usage or {}).get("input_tokens") or 0)
-                if input_tokens <= 0:
+                input_tokens = positive_int_or_none((usage or {}).get("input_tokens"))
+                if input_tokens is None:
                     return
                 window = self._auto_compact_window_sync()
                 if window.get("prefill_source") == "server":

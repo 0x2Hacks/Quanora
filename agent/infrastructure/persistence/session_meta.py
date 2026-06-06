@@ -30,6 +30,14 @@ def normalize_auto_compact_window(window: Any) -> dict[str, Any]:
     return normalized
 
 
+def positive_int_or_none(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def new_session_meta(
     *,
     session_id: str,
