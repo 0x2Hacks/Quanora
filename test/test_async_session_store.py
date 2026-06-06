@@ -203,6 +203,74 @@ async def test_manual_compact_appends_boundary_without_rewriting_messages(temp_s
 
 
 @pytest.mark.asyncio
+async def test_orphan_compaction_record_does_not_compact_context(temp_session_dir):
+    store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
+    await store.initialize()
+    await store.persist_message("user", "keep this question")
+    session_base = Path(temp_session_dir) / store.session_id
+    orphan = {
+        "id": "orphan_compact",
+        "created_at": store.now_iso(),
+        "handoff_message": {"role": "assistant", "content": "orphan handoff"},
+    }
+    with (session_base / "compactions.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(orphan, ensure_ascii=False) + "\n")
+
+    messages = await store.get_messages_slice()
+    latest = await store.get_latest_compaction()
+
+    assert latest is None
+    assert messages == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "keep this question"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unmatched_compact_boundary_does_not_truncate_context(temp_session_dir):
+    store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
+    await store.initialize()
+    await store.persist_message("user", "before broken boundary")
+    await store.persist_message("assistant", "", meta={"kind": "compact_boundary", "compact_id": "missing"})
+    await store.persist_message("user", "after broken boundary")
+
+    messages = await store.get_messages_slice()
+    latest = await store.get_latest_compaction()
+
+    assert latest is None
+    assert messages == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "before broken boundary"},
+        {"role": "user", "content": "after broken boundary"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_latest_valid_compact_boundary_survives_newer_broken_boundary(temp_session_dir):
+    store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
+    await store.initialize()
+    await store.persist_message("user", "old compacted question")
+    record = await store.compact_context()
+    await store.persist_message("user", "after valid compact")
+    await store.persist_message("assistant", "", meta={"kind": "compact_boundary", "compact_id": "missing"})
+    await store.persist_message("user", "after broken boundary")
+
+    messages = await store.get_messages_slice()
+    latest = await store.get_latest_compaction()
+
+    assert latest is not None
+    assert latest["id"] == record["id"]
+    assert messages[0] == {"role": "system", "content": "sys"}
+    assert messages[1]["role"] == "assistant"
+    assert messages[1]["content"].startswith("Context compacted.")
+    assert {"role": "user", "content": "old compacted question"} not in messages
+    assert messages[-2:] == [
+        {"role": "user", "content": "after valid compact"},
+        {"role": "user", "content": "after broken boundary"},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_sampling_usage_and_auto_compact_window_meta(temp_session_dir):
     store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
     await store.initialize()
@@ -263,6 +331,12 @@ def main() -> int:
             await test_legacy_session_schema_is_rejected(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_manual_compact_appends_boundary_without_rewriting_messages(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            await test_orphan_compaction_record_does_not_compact_context(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            await test_unmatched_compact_boundary_does_not_truncate_context(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            await test_latest_valid_compact_boundary_survives_newer_broken_boundary(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_sampling_usage_and_auto_compact_window_meta(tmp)
         with tempfile.TemporaryDirectory() as tmp:

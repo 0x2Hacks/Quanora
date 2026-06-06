@@ -392,18 +392,45 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
         return -1
 
     def _latest_compaction_sync(self) -> dict[str, Any] | None:
-        if not self._compaction_repo:
+        if not self._compaction_repo or not self._msg_repo:
             return None
-        return self._compaction_repo.get_latest_compaction()
+        matched = self._latest_compact_pair(
+            self._msg_repo.load_messages(),
+            self._compaction_repo.load_compactions(),
+        )
+        return matched[1] if matched else None
+
+    def _latest_compact_pair(
+        self,
+        messages: list[dict[str, Any]],
+        compactions: list[dict[str, Any]],
+    ) -> tuple[int, dict[str, Any]] | None:
+        by_id = {
+            str(record.get("id")): record
+            for record in compactions
+            if isinstance(record, dict) and record.get("id")
+        }
+        if not by_id:
+            return None
+        for index in range(len(messages) - 1, -1, -1):
+            if not self._is_compact_boundary_message(messages[index]):
+                continue
+            meta = messages[index].get("meta")
+            compact_id = meta.get("compact_id") if isinstance(meta, dict) else None
+            record = by_id.get(str(compact_id)) if compact_id else None
+            if record is not None:
+                return index, dict(record)
+        return None
 
     def _apply_latest_compact_boundary(
         self,
         messages: list[dict[str, Any]],
-        compaction: dict[str, Any] | None,
+        compactions: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        boundary_index = self._latest_compact_boundary_index(messages)
-        if boundary_index < 0:
+        matched = self._latest_compact_pair(messages, compactions)
+        if matched is None:
             return [dict(message) for message in messages]
+        boundary_index, compaction = matched
 
         projected = [
             dict(message)
@@ -432,7 +459,8 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
         def _get():
             messages = self._msg_repo.load_messages() if self._msg_repo else []
             tool_records = self._tool_repo.load_tool_calls() if self._tool_repo else []
-            messages = self._apply_latest_compact_boundary(messages, self._latest_compaction_sync())
+            compactions = self._compaction_repo.load_compactions() if self._compaction_repo else []
+            messages = self._apply_latest_compact_boundary(messages, compactions)
 
             tool_map = {}
             for item in tool_records:
