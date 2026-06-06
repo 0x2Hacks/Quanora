@@ -144,6 +144,31 @@ async def test_get_messages_slice_recovers_missing_tool_message_from_record(temp
 
 
 @pytest.mark.asyncio
+async def test_get_messages_slice_matches_numeric_tool_ids_as_strings(temp_session_dir):
+    store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
+    await store.initialize()
+    await store.persist_message("assistant", "", meta={"tool_calls": [{"id": 123, "name": "bash"}]})
+    await store.persist_tool_call(
+        call_id="123",
+        name="bash",
+        parsed_args={"command": "date"},
+        raw_args='{"command":"date"}',
+        ts_start=store.now_iso(),
+        ts_end=store.now_iso(),
+        result_payload=json.dumps({"ok": True, "tool": "bash", "data": "raw result"}),
+        model_content="numeric id content",
+        model_content_format="tool_result_v1",
+        model_content_policy={"version": "tool_result_v1"},
+        artifact_ref=None,
+    )
+
+    messages = await store.get_messages_slice()
+
+    assert messages[1]["tool_calls"][0]["id"] == "123"
+    assert messages[2] == {"role": "tool", "tool_call_id": "123", "content": "numeric id content"}
+
+
+@pytest.mark.asyncio
 async def test_get_messages_slice_rejects_tool_record_without_model_content(temp_session_dir):
     store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
     await store.initialize()
@@ -362,6 +387,8 @@ def main() -> int:
             await test_persist_tool_call_writes_model_content(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_get_messages_slice_recovers_missing_tool_message_from_record(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            await test_get_messages_slice_matches_numeric_tool_ids_as_strings(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_get_messages_slice_rejects_tool_record_without_model_content(tmp)
         with tempfile.TemporaryDirectory() as tmp:

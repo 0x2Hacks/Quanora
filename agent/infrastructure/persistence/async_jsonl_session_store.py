@@ -465,7 +465,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
             tool_map = {}
             for item in tool_records:
                 if isinstance(item, dict) and item.get("id"):
-                    tool_map[item["id"]] = item
+                    tool_map[str(item["id"])] = item
                     
             built_messages = []
             emitted_tool_call_ids = set()
@@ -477,28 +477,13 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                 role = msg.get("role")
                 if role == "tool":
                     tool_call_id = msg.get("tool_call_id")
-                    content = self._build_tool_content(tool_map.get(tool_call_id))
+                    content = self._build_tool_content(tool_map.get(str(tool_call_id)))
                     built_messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": content})
                     if tool_call_id:
                         emitted_tool_call_ids.add(str(tool_call_id))
                     continue
                 if role == "assistant" and isinstance(msg.get("meta"), dict) and msg["meta"].get("tool_calls"):
-                    tool_calls_meta = msg["meta"]["tool_calls"]
-                    tool_msgs = []
-                    for tc_meta in tool_calls_meta:
-                        tc_id = tc_meta.get("id")
-                        tc_name = tc_meta.get("name") or ""
-                        if not tc_id:
-                            raise ValueError("Invalid tool call message: missing tool call id.")
-                        tc_record = tool_map.get(tc_id)
-                        if not isinstance(tc_record, dict):
-                            raise ValueError(f"Invalid tool call message: missing tool record for {tc_id}.")
-                        raw_args = tc_record.get("raw_args") or ""
-                        if not raw_args:
-                            raise ValueError(f"Invalid tool call record: missing raw_args for {tc_id}.")
-                        tool_msgs.append(
-                            {"id": tc_id, "type": "function", "function": {"name": tc_name, "arguments": raw_args}}
-                        )
+                    tool_msgs = self._build_assistant_tool_calls(msg["meta"]["tool_calls"], tool_map)
                     built_messages.append({"role": "assistant", "tool_calls": tool_msgs})
                     for tool_msg in self._missing_tool_messages(tool_msgs, tool_map, emitted_tool_call_ids):
                         built_messages.append(tool_msg)
@@ -516,6 +501,28 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
             return [dict(message) for message in built_messages[slice(start, end)]]
             
         return await asyncio.to_thread(_get)
+
+    def _build_assistant_tool_calls(
+        self,
+        tool_calls_meta: list[dict[str, Any]],
+        tool_map: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        tool_calls: list[dict[str, Any]] = []
+        for tc_meta in tool_calls_meta:
+            tc_id = str(tc_meta.get("id") or "")
+            tc_name = tc_meta.get("name") or ""
+            if not tc_id:
+                raise ValueError("Invalid tool call message: missing tool call id.")
+            tc_record = tool_map.get(tc_id)
+            if not isinstance(tc_record, dict):
+                raise ValueError(f"Invalid tool call message: missing tool record for {tc_id}.")
+            raw_args = tc_record.get("raw_args") or ""
+            if not raw_args:
+                raise ValueError(f"Invalid tool call record: missing raw_args for {tc_id}.")
+            tool_calls.append(
+                {"id": tc_id, "type": "function", "function": {"name": tc_name, "arguments": raw_args}}
+            )
+        return tool_calls
 
     def _missing_tool_messages(
         self,
