@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 from types import SimpleNamespace
+from tenacity import Future, RetryError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 os.chdir(PROJECT_ROOT)
@@ -15,6 +16,7 @@ from agent.application.runtime.async_runtime_facade import AsyncRuntimeFacade
 from agent.application.runtime.async_turn_runner import AsyncTurnRunner
 from agent.domain import ParsedToolCall
 from agent.domain.events import (
+    AssistantDeltaEvent,
     AssistantMessageCompletedEvent, 
     ContextBuiltEvent,
     ToolRequestedEvent,
@@ -587,6 +589,44 @@ async def test_async_turn_runner_usage_tolerates_bad_context_stats():
 
 
 @pytest.mark.asyncio
+async def test_async_turn_runner_retry_error_emits_visible_failure():
+    mock_client = AsyncMock()
+    mock_client.stream = MagicMock()
+
+    failed_attempt = Future(1)
+    failed_attempt.set_exception(RuntimeError("network down"))
+
+    mock_parser = MagicMock()
+    mock_parser.consume_async_stream = AsyncMock(side_effect=RetryError(failed_attempt))
+
+    mock_context = MagicMock()
+    mock_context.build_messages_async = AsyncMock(return_value=MagicMock(messages=[], stats={}, decisions={}))
+    mock_context.select_active_skills_for_turn = None
+
+    mock_session = MagicMock()
+    mock_session.now_iso.return_value = "2026-05-08T00:00:00Z"
+
+    runner = AsyncTurnRunner(
+        chat_client=mock_client,
+        tool_processor=MagicMock(),
+        stream_parser=mock_parser,
+        tool_schemas=[],
+        context_manager=mock_context,
+    )
+
+    events = [event async for event in runner.run_turn(mock_session)]
+
+    assert any(
+        isinstance(event, AssistantDeltaEvent) and "network down" in event.text
+        for event in events
+    )
+    assert isinstance(events[-1], TurnFailedEvent)
+    assert events[-1].error_type == "RetryError"
+    assert "APIUnavailableError" in events[-1].error
+    assert not any(event.error_type == "NameError" for event in events if isinstance(event, TurnFailedEvent))
+
+
+@pytest.mark.asyncio
 async def test_async_turn_runner_auto_compacts_before_sampling():
     class FakeChatClient:
         def __init__(self):
@@ -684,6 +724,7 @@ def main() -> int:
     asyncio.run(test_async_turn_runner_emits_and_persists_sampling_usage())
     asyncio.run(test_async_turn_runner_usage_persistence_failure_does_not_fail_turn())
     asyncio.run(test_async_turn_runner_usage_tolerates_bad_context_stats())
+    asyncio.run(test_async_turn_runner_retry_error_emits_visible_failure())
     asyncio.run(test_async_turn_runner_auto_compacts_before_sampling())
     print("Async runtime tests passed.")
     return 0

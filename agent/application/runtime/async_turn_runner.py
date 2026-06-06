@@ -15,6 +15,7 @@ from agent.application.runtime.cancellation import CancellationToken
 from agent.application.runtime.model_stream_pump import ModelStreamResult, pump_model_stream_events
 from agent.domain.events import (
     RuntimeEvent,
+    AssistantDeltaEvent,
     AssistantMessageCompletedEvent,
     ContextBuiltEvent,
     SkillActivatedEvent,
