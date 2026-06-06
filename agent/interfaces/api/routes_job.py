@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from agent.interfaces.api.dependencies import get_job_service
 
@@ -37,8 +37,7 @@ async def cancel_job(job_id: str, req: CancelRequest, job_service=Depends(get_jo
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
         
-    # In Phase 4, we don't have true preemptive bash kill linked up in job_service yet.
-    # We update the status to trigger cancellation logic wherever the job is being watched.
+    # Job cancellation is cooperative: workers observe the persisted status.
     job_service.update_status(job_id, "cancelled", error=req.reason)
     return {"status": "cancelled", "reason": req.reason}
 
