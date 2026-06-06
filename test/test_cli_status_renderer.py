@@ -171,6 +171,27 @@ def test_token_stats_updated_output() -> None:
         raise AssertionError(f"Expected cache hit line, got: {text!r}")
 
 
+def test_token_stats_tolerates_invalid_numeric_values() -> None:
+    renderer, output = make_renderer()
+
+    renderer.handle(
+        TokenStatsUpdatedEvent(
+            stats={
+                "input_tokens": "bad",
+                "effective_context_window_tokens": object(),
+                "cached_input_tokens": -1,
+                "output_tokens": None,
+                "context_usage_percent": "bad",
+                "cache_hit_rate": None,
+            }
+        )
+    )
+
+    text = output.getvalue()
+    if "Tokens: input 0 (0.0%), cached 0 (0.0%), output 0" not in text:
+        raise AssertionError(f"Expected safe fallback token line, got: {text!r}")
+
+
 def test_debug_tool_requested_shows_truncated_args() -> None:
     renderer, output = make_renderer(debug=True)
     args = '{"command":"' + ("x" * 600) + '"}'
@@ -227,6 +248,7 @@ def main() -> int:
     test_context_built_is_quiet_in_normal_mode()
     test_context_built_is_quiet_in_debug_mode()
     test_token_stats_updated_output()
+    test_token_stats_tolerates_invalid_numeric_values()
     test_debug_tool_requested_shows_truncated_args()
     test_tool_progress_deduplicates_messages()
     test_turn_completed_summarizes_tool_counts()

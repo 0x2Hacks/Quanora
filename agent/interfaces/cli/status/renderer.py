@@ -162,10 +162,10 @@ class CliStatusRenderer:
 
     def _handle_token_stats(self, event: TokenStatsUpdatedEvent) -> None:
         stats = event.stats if isinstance(event.stats, dict) else {}
-        input_tokens = int(stats.get("input_tokens") or 0)
-        effective_window = int(stats.get("effective_context_window_tokens") or 0)
-        cached = int(stats.get("cached_input_tokens") or 0)
-        output = int(stats.get("output_tokens") or 0)
+        input_tokens = _safe_int(stats.get("input_tokens"))
+        effective_window = _safe_int(stats.get("effective_context_window_tokens"))
+        cached = _safe_int(stats.get("cached_input_tokens"))
+        output = _safe_int(stats.get("output_tokens"))
         context_pct = _format_percent(stats.get("context_usage_percent"))
         cache_pct = _format_percent(stats.get("cache_hit_rate"))
         limit_text = f" / {_format_count(effective_window)}" if effective_window > 0 else ""
@@ -206,6 +206,13 @@ def _format_count(value: Any) -> str:
     if abs(value) >= 1000:
         return f"{value / 1000:.1f}k"
     return str(int(value))
+
+
+def _safe_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _format_duration(duration_ms: int | None) -> str:
