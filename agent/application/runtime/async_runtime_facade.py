@@ -23,10 +23,15 @@ class AsyncRuntimeFacade:
         self._turn_runner = turn_runner
         self._session_store = session_store
         self._initialized = False
+        self._initialize_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         """Initialize or load the session state. Safe to call multiple times."""
-        if not self._initialized:
+        if self._initialized:
+            return
+        async with self._initialize_lock:
+            if self._initialized:
+                return
             await self._session_store.initialize()
             self._initialized = True
 
@@ -70,7 +75,7 @@ class AsyncRuntimeFacade:
         this facade at construction time is always used. The caller is responsible
         for constructing one facade per session.
         """
-        await self._session_store.initialize()
+        await self.initialize()
         turn_id = uuid.uuid4().hex
 
         if query:

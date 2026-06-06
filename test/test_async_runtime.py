@@ -203,6 +203,43 @@ async def test_async_runtime_facade_emits_turn_started_first():
 
 
 @pytest.mark.asyncio
+async def test_async_runtime_facade_initializes_session_once_for_concurrent_turns():
+    class FakeSession:
+        session_id = "session_1"
+
+        def __init__(self):
+            self.initialize_calls = 0
+            self.persisted = []
+
+        async def initialize(self):
+            self.initialize_calls += 1
+            await asyncio.sleep(0)
+
+        async def persist_message(self, role, content, **kwargs):
+            self.persisted.append((role, content, kwargs))
+
+        def now_iso(self):
+            return "2026-05-08T00:00:00Z"
+
+    class FakeRunner:
+        async def run_turn(self, session, cancellation_token=None, turn_id=""):
+            yield TurnCompletedEvent(turn_id=turn_id)
+
+    session = FakeSession()
+    facade = AsyncRuntimeFacade(turn_runner=FakeRunner(), session_store=session)
+
+    async def run_query(query: str):
+        return [event async for event in facade.run_turn(query=query)]
+
+    first_events, second_events = await asyncio.gather(run_query("first"), run_query("second"))
+
+    assert session.initialize_calls == 1
+    assert isinstance(first_events[0], TurnStartedEvent)
+    assert isinstance(second_events[0], TurnStartedEvent)
+    assert len(session.persisted) == 2
+
+
+@pytest.mark.asyncio
 async def test_async_runtime_facade_manual_compact_uses_runner():
     class FakeSession:
         async def initialize(self):
@@ -484,6 +521,7 @@ def main() -> int:
     asyncio.run(test_async_turn_runner_cancellation())
     asyncio.run(test_async_turn_runner_stream_cancelled_error_is_cancelled_event())
     asyncio.run(test_async_runtime_facade_emits_turn_started_first())
+    asyncio.run(test_async_runtime_facade_initializes_session_once_for_concurrent_turns())
     asyncio.run(test_async_runtime_facade_manual_compact_uses_runner())
     asyncio.run(test_async_runtime_facade_set_model_updates_runner_and_session())
     asyncio.run(test_async_turn_runner_emits_tool_requested_before_tool_execution())
