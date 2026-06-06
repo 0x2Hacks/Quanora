@@ -21,8 +21,11 @@ class SessionFiles:
         if not os.path.exists(path):
             return None
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+            with self._get_lock_for_path(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Timeout as e:
+            raise RuntimeError(f"Session is currently in use by another process. Failed to acquire lock for: {path}") from e
         except Exception:
             return None
 
@@ -53,13 +56,14 @@ class SessionFiles:
         if not os.path.exists(path):
             return []
         items = []
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    items.append(json.loads(line))
-                except Exception:
-                    continue
+        with self._get_lock_for_path(path):
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        items.append(json.loads(line))
+                    except Exception:
+                        continue
         return items

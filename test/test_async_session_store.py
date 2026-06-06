@@ -5,6 +5,8 @@ import os
 import asyncio
 import sys
 import json
+import threading
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from agent.infrastructure.persistence.async_jsonl_session_store import AsyncJsonlSessionStore
+from agent.infrastructure.persistence.session_files import SessionFiles
 
 @pytest.fixture
 def temp_session_dir():
@@ -76,6 +79,54 @@ def test_resolve_session_root_uses_explicit_session_dir(tmp_path):
     root = AsyncJsonlSessionStore.resolve_session_root(str(session_dir))
 
     assert root == os.path.abspath(str(session_dir))
+
+
+def test_session_files_read_jsonl_waits_for_active_writer(tmp_path):
+    path = tmp_path / "messages.jsonl"
+    files = SessionFiles()
+
+    with files._get_lock_for_path(str(path)):
+        path.write_text('{"role": "user"', encoding="utf-8")
+        read_result = []
+
+        thread = threading.Thread(
+            target=lambda: read_result.extend(files.read_jsonl(str(path))),
+        )
+        thread.start()
+        time.sleep(0.1)
+
+        assert thread.is_alive()
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(', "content": "complete"}\n')
+
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert read_result == [{"role": "user", "content": "complete"}]
+
+
+def test_session_files_load_json_waits_for_active_writer(tmp_path):
+    path = tmp_path / "meta.json"
+    files = SessionFiles()
+
+    with files._get_lock_for_path(str(path)):
+        path.write_text('{"schema_version": ', encoding="utf-8")
+        read_result = []
+
+        thread = threading.Thread(
+            target=lambda: read_result.append(files.load_json(str(path))),
+        )
+        thread.start()
+        time.sleep(0.1)
+
+        assert thread.is_alive()
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write('"2.0"}')
+
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert read_result == [{"schema_version": "2.0"}]
 
 
 @pytest.mark.asyncio
@@ -407,6 +458,10 @@ def main() -> int:
             await test_sampling_usage_and_auto_compact_window_meta(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_update_model_persists_session_meta(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            test_session_files_read_jsonl_waits_for_active_writer(Path(tmp))
+        with tempfile.TemporaryDirectory() as tmp:
+            test_session_files_load_json_waits_for_active_writer(Path(tmp))
 
     asyncio.run(_run_all())
     print("AsyncJsonlSessionStore tests passed.")
