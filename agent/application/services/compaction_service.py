@@ -187,17 +187,22 @@ class CompactionService:
 
     def _sampling_usage(self, response: Any, context_stats: dict[str, Any] | None) -> dict[str, Any] | None:
         stats = context_stats or {}
-        context_window = int(stats.get("context_window_tokens") or DEFAULT_CONTEXT_WINDOW_TOKENS)
-        effective_window = int(
-            stats.get("effective_context_window_tokens")
-            or (context_window * DEFAULT_EFFECTIVE_CONTEXT_WINDOW_PERCENT // 100)
-        )
+        context_window = self._positive_int(stats.get("context_window_tokens"), DEFAULT_CONTEXT_WINDOW_TOKENS)
+        effective_default = context_window * DEFAULT_EFFECTIVE_CONTEXT_WINDOW_PERCENT // 100
+        effective_window = self._positive_int(stats.get("effective_context_window_tokens"), effective_default)
         return normalize_sampling_usage(
             response,
             sampling_kind="compact",
             context_window_tokens=context_window,
             effective_context_window_tokens=effective_window,
         )
+
+    def _positive_int(self, value: Any, default: int) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed > 0 else default
 
     async def _try_persist_sampling_usage(self, session, usage: dict[str, Any]) -> dict[str, str] | None:
         persist_usage = getattr(session, "persist_sampling_usage", None)

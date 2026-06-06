@@ -90,11 +90,38 @@ async def test_compaction_service_keeps_llm_handoff_when_usage_persist_fails() -
     assert "fallback_error" not in record
 
 
+@pytest.mark.asyncio
+async def test_compaction_service_keeps_llm_handoff_with_bad_context_stats() -> None:
+    class SuccessfulClient:
+        async def create(self, *args, **kwargs):
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="LLM compact handoff"))],
+                usage=SimpleNamespace(prompt_tokens=100, completion_tokens=20, total_tokens=120),
+            )
+
+    session = FakeSession()
+    record = await CompactionService().compact_async(
+        session=session,
+        context_messages=await session.load_messages(),
+        chat_client=SuccessfulClient(),
+        reason="auto",
+        phase="pre_sampling",
+        context_stats={"context_window_tokens": "bad", "effective_context_window_tokens": 0},
+    )
+
+    assert record["strategy"] == "llm_inline"
+    assert record["handoff_message"]["content"] == "LLM compact handoff"
+    assert record["usage"]["input_tokens"] == 100
+    assert record["usage"]["effective_context_window_tokens"] > 0
+    assert "fallback_error" not in record
+
+
 def main() -> int:
     import asyncio
 
     asyncio.run(test_compaction_service_falls_back_when_llm_compact_fails())
     asyncio.run(test_compaction_service_keeps_llm_handoff_when_usage_persist_fails())
+    asyncio.run(test_compaction_service_keeps_llm_handoff_with_bad_context_stats())
     print("CompactionService tests passed.")
     return 0
 
