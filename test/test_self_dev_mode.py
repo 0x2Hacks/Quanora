@@ -105,26 +105,29 @@ def test_build_system_prompt_default_omits_self_dev():
 
 
 def test_build_system_prompt_self_dev_appends_addendum():
+    """SELF_DEV_MODE_PROMPT is no longer injected into the system prompt.
+    It is printed to the console instead (see chat_cli._render_banner)."""
     from agent.prompts import build_system_prompt
     p = build_system_prompt(self_dev=True)
-    assert "<self_dev_mode" in p
-    # The mandatory workflow is mentioned by number.
-    assert "Mandatory workflow" in p or "mandatory workflow" in p.lower()
-    # The PR step is described.
-    assert "gh pr create" in p
-    assert "genspark_ai_developer" in p
+    # The full self-dev prompt is NOT in the LLM system prompt anymore.
+    assert "<self_dev_mode" not in p
+    # The base system prompt should still be present.
+    assert "data_integrity_mandate" in p
 
 
 def test_self_dev_prompt_includes_workspace_boundary_warning():
-    """Self-dev relaxes protected paths but the workspace_boundary
-    section still applies — the prompt must NOT promise unrestricted access."""
-    from agent.prompts import build_system_prompt
+    """Self-dev prompt is now printed to console, not fed to the LLM.
+    The base system prompt still contains workspace_boundary and
+    data_integrity_mandate.  The .git restriction lives in the
+    console-printed SELF_DEV_MODE_PROMPT."""
+    from agent.prompts import build_system_prompt, SELF_DEV_MODE_PROMPT
     p = build_system_prompt(self_dev=True)
-    # data_integrity_mandate and workspace_boundary survive
+    # data_integrity_mandate and workspace_boundary survive in base prompt
     assert "<data_integrity_mandate" in p
     assert "<workspace_boundary" in p
-    # but .git is still off-limits
-    assert ".git" in p
+    # .git restriction is in the console-printed prompt, NOT the LLM prompt
+    assert ".git" not in p
+    assert ".git" in SELF_DEV_MODE_PROMPT
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +195,8 @@ def test_bootstrap_threads_self_dev_into_system_prompt(tmp_path):
     session = deps["session"]
     # The session store exposes its system prompt via property.
     sp = session.system_prompt
-    assert "<self_dev_mode" in sp
+    # Self-dev prompt is now printed to console, NOT injected into LLM prompt
+    assert "<self_dev_mode" not in sp
 
 
 def test_bootstrap_default_omits_self_dev_addendum(tmp_path):

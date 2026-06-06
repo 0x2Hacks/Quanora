@@ -82,6 +82,23 @@ class ChatCLI:
                     loop.close()
                 self._event_loop = None
 
+    # ------------------------------------------------------------------
+    # Mode rules – printed to console but NOT fed to the LLM
+    # ------------------------------------------------------------------
+
+    def _print_mode_rules(self, title: str, rules_text: str) -> None:
+        """Print a collapsible-style rule block to the console.
+
+        The full prompt text is shown so the user can review it, but it is
+        deliberately excluded from the system prompt to save context tokens.
+        """
+        self._console.rule(f"[bold]{title}[/bold]")
+        # Strip XML-style tags so the console output is clean to read
+        import re
+        clean = re.sub(r"</?[a-zA-Z_][a-zA-Z0-9_]*>", "", rules_text)
+        self._console.print(clean, highlight=False)
+        self._console.rule()
+
     def _render_banner(self) -> None:
         print_rainbow_logo()
         if self._debug:
@@ -107,6 +124,9 @@ class ChatCLI:
                 "[yellow]    Quanora can now edit its own code, run its own tests,[/yellow]\n"
                 "[yellow]    commit, push, and open pull requests. .git/ and .env stay protected.[/yellow]"
             )
+            # Print the full SELF_DEV_MODE_PROMPT to console (not fed to LLM)
+            from agent.prompts import SELF_DEV_MODE_PROMPT
+            self._print_mode_rules("SELF-DEV RULES", SELF_DEV_MODE_PROMPT)
         if self._self_quant:
             try:
                 from agent.infrastructure.config.settings import get_workspace_guard
@@ -124,6 +144,9 @@ class ChatCLI:
                 "[cyan]    mandatory research lifecycle: Plan → Review → Hypothesize[/cyan]\n"
                 "[cyan]    → Experiment → Distill. Data integrity is paramount.[/cyan]"
             )
+            # Print the full SELF_QUANT_MODE_PROMPT to console (not fed to LLM)
+            from agent.prompts import SELF_QUANT_MODE_PROMPT
+            self._print_mode_rules("QUANT-RESEARCH RULES", SELF_QUANT_MODE_PROMPT)
         print("-" * 50)
 
     def _render_loaded_messages(self) -> None:

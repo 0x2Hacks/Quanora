@@ -166,8 +166,9 @@ def test_build_system_prompt_self_doc_appends_addendum():
 def test_self_dev_takes_precedence_over_self_doc_in_prompt():
     from agent.prompts import build_system_prompt
     p = build_system_prompt(self_dev=True, self_doc=True)
-    # self-dev addendum should be present, self-doc should NOT
-    assert "<self_dev_mode" in p
+    # self-dev takes precedence: self-dev prompt is printed to console (not in LLM prompt),
+    # so neither self_dev_mode nor self_doc_mode should appear in the LLM prompt
+    assert "<self_dev_mode" not in p
     assert "<self_doc_mode" not in p
 
 
