@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable
 
 from .impl import TOOLS, TOOL_SCHEMAS
 
@@ -28,8 +28,16 @@ class DefaultToolRegistry:
         return func is not None and inspect.iscoroutinefunction(func)
 
     def call(self, name: str, args: dict) -> Any:
-        return self._tool_map[name](**args)
+        func = self._tool_map[name]
+        return func(**self._filter_call_args(func, args))
 
     async def call_async(self, name: str, args: dict) -> Any:
         """Call an async tool and await the result."""
-        return await self._tool_map[name](**args)
+        func = self._tool_map[name]
+        return await func(**self._filter_call_args(func, args))
+
+    def _filter_call_args(self, func: Callable, args: dict) -> dict:
+        signature = inspect.signature(func)
+        if any(param.kind is inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()):
+            return args
+        return {key: value for key, value in args.items() if key in signature.parameters}

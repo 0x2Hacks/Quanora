@@ -10,8 +10,8 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 
-from agent.domain.jobs import ToolExecutionResult
-from agent.domain import tool_ok
+from agent.domain.tool_result import ToolExecutionResult
+from agent.domain import tool_error, tool_ok
 from agent.application.runtime.cancellation import CancellationToken
 from .bash_session_pool import ShellState
 
@@ -407,6 +407,7 @@ class BashRunner:
         state: ShellState,
         session_id: str = "default",
         wait_ms: int = 10000,
+        cancellation_token: CancellationToken | None = None,
     ) -> ToolExecutionResult:
         """Spawn a process, wait briefly, and return final output or a bg_id."""
         cd_result = self._handle_cd(command, state)
@@ -414,10 +415,26 @@ class BashRunner:
             return cd_result
         wait_ms = self._clamp_wait_ms(wait_ms, 10000)
         started = time.monotonic()
+        bg: _BgProc | None = None
         try:
             bg = await self._spawn_background(command, state, session_id)
-            await self._wait_for_exit_or_deadline(bg, wait_ms)
+            cancelled = await self._wait_for_exit_or_cancel_or_deadline(bg, wait_ms, cancellation_token)
             elapsed_ms = int((time.monotonic() - started) * 1000)
+            if cancelled:
+                await self.kill_background_wait(bg.bg_id)
+                return ToolExecutionResult(
+                    status="ok",
+                    result_str=tool_ok("bash", {
+                        "stdout": "",
+                        "stderr": f"[PROCESS TERMINATED: Command cancelled: {cancellation_token.reason}]",
+                        "exit_code": -1,
+                        "cwd": state.cwd,
+                        "shell_backend": state.shell_backend,
+                        "shell_executable": state.shell_executable,
+                        "status": "cancelled",
+                    }),
+                    exit_code=-1,
+                )
             if bg.exit_code is not None:
                 self._bg.pop(bg.bg_id, None)
                 return ToolExecutionResult(
@@ -444,6 +461,10 @@ class BashRunner:
                 }
             )
             return ToolExecutionResult(status="ok", result_str=tool_ok("bash", payload))
+        except asyncio.CancelledError:
+            if bg is not None:
+                await self.kill_background_wait(bg.bg_id)
+            raise
         except Exception as e:
             return ToolExecutionResult(
                 status="error",
@@ -461,6 +482,34 @@ class BashRunner:
         finally:
             bg.updated_event.clear()
 
+    async def _wait_for_update_or_exit_or_cancel(
+        self,
+        bg: _BgProc,
+        wait_ms: int,
+        cancellation_token: CancellationToken | None,
+    ) -> bool:
+        if not cancellation_token:
+            await self._wait_for_update_or_exit(bg, wait_ms)
+            return False
+        if cancellation_token.is_cancelled:
+            return True
+
+        update_task = asyncio.create_task(bg.updated_event.wait())
+        cancel_task = asyncio.create_task(cancellation_token.wait())
+        try:
+            done, _ = await asyncio.wait(
+                [update_task, cancel_task],
+                timeout=wait_ms / 1000,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            return cancel_task in done or cancellation_token.is_cancelled
+        finally:
+            bg.updated_event.clear()
+            for task in (update_task, cancel_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(update_task, cancel_task, return_exceptions=True)
+
     async def _wait_for_exit_or_deadline(self, bg: _BgProc, wait_ms: int) -> None:
         if bg.exit_code is not None:
             return
@@ -476,11 +525,55 @@ class BashRunner:
             finally:
                 bg.updated_event.clear()
 
+    async def _wait_for_exit_or_cancel_or_deadline(
+        self,
+        bg: _BgProc,
+        wait_ms: int,
+        cancellation_token: CancellationToken | None,
+    ) -> bool:
+        if not cancellation_token:
+            await self._wait_for_exit_or_deadline(bg, wait_ms)
+            return False
+        if cancellation_token.is_cancelled:
+            return True
+
+        deadline = time.monotonic() + (wait_ms / 1000)
+        cancel_task = asyncio.create_task(cancellation_token.wait())
+        try:
+            while bg.exit_code is None:
+                if cancellation_token.is_cancelled:
+                    return True
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                update_task = asyncio.create_task(bg.updated_event.wait())
+                try:
+                    done, _ = await asyncio.wait(
+                        [update_task, cancel_task],
+                        timeout=remaining,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if cancel_task in done:
+                        return True
+                    if not done:
+                        return False
+                finally:
+                    bg.updated_event.clear()
+                    if not update_task.done():
+                        update_task.cancel()
+                    await asyncio.gather(update_task, return_exceptions=True)
+        finally:
+            if not cancel_task.done():
+                cancel_task.cancel()
+            await asyncio.gather(cancel_task, return_exceptions=True)
+        return False
+
     async def read_background_wait(
         self,
         bg_id: str,
         wait_ms: int = 5000,
         max_output_chars: int = 20000,
+        cancellation_token: CancellationToken | None = None,
     ) -> ToolExecutionResult:
         """Wait for new output from a background process and return a delta."""
         bg = self._bg.get(bg_id)
@@ -492,7 +585,20 @@ class BashRunner:
         started = time.monotonic()
         stdout, stderr, truncated = self._delta_output(bg, max_output_chars)
         if not stdout and not stderr and bg.exit_code is None:
-            await self._wait_for_update_or_exit(bg, wait_ms)
+            cancelled = await self._wait_for_update_or_exit_or_cancel(bg, wait_ms, cancellation_token)
+            if cancelled:
+                reason = cancellation_token.reason if cancellation_token else "cancelled"
+                message_reason = reason or "cancelled"
+                return ToolExecutionResult(
+                    status="ok",
+                    result_str=tool_error(
+                        "bash_output",
+                        f"Tool cancelled: {message_reason}",
+                        "Cancelled",
+                        meta={"bg_id": bg_id, "reason": reason},
+                    ),
+                    exit_code=-1,
+                )
             stdout, stderr, truncated = self._delta_output(bg, max_output_chars)
 
         elapsed_ms = int((time.monotonic() - started) * 1000)

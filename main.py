@@ -41,13 +41,17 @@ def main() -> int:
 
     if args.allow_unsafe_bash:
         os.environ["AGENT_ALLOW_UNSAFE_BASH"] = "1"
-    dependencies = build_basic_agent_dependencies(
-        debug=args.debug,
-        session_dir=args.session_dir,
-        session_id=args.session,
-        resume_latest=args.resume_latest,
-    )
-    dependencies["cli"].start()
+    try:
+        dependencies = build_basic_agent_dependencies(
+            debug=args.debug,
+            session_dir=args.session_dir,
+            session_id=args.session,
+            resume_latest=args.resume_latest,
+        )
+        dependencies["cli"].start()
+    except KeyboardInterrupt:
+        print("\nInterrupted.", file=sys.stderr)
+        return 130
     return 0
 
 

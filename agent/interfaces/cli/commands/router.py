@@ -7,12 +7,15 @@ import shlex
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from agent.application.runtime.cancellation import CancellationToken
+
 
 @dataclass(slots=True)
 class SlashCommandContext:
     runtime: Any
     session: Any
     debug: bool = False
+    cancellation_token: CancellationToken | None = None
 
 
 @dataclass(slots=True)

@@ -44,6 +44,7 @@ async def bash(
             state,
             session_id=session_id,
             wait_ms=wait_ms,
+            cancellation_token=_cancellation_token,
         )
     else:
         result = await _RUNNER.run(command, state, cancellation_token=_cancellation_token)
@@ -59,6 +60,7 @@ async def bash_output(
     kill: bool = False,
     wait_ms: int = 5000,
     max_output_chars: int = 20000,
+    _cancellation_token: CancellationToken | None = None,
 ) -> str:
     """
     Read output from a background process, or terminate it.
@@ -74,6 +76,7 @@ async def bash_output(
             bg_id,
             wait_ms=wait_ms,
             max_output_chars=max_output_chars,
+            cancellation_token=_cancellation_token,
         )
 
     if result.status == "ok":

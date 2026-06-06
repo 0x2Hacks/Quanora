@@ -15,6 +15,7 @@ os.chdir(PROJECT_ROOT)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from agent.application.runtime.cancellation import CancellationTokenSource
 from agent.infrastructure.tools.impl.tools.bash import bash, bash_output, kill_shell
 
 
@@ -211,6 +212,75 @@ async def test_bash_output_kill_settles_background_tasks() -> None:
     cleanup_session(sid)
 
 
+@pytest.mark.asyncio
+async def test_bash_background_initial_wait_cancellation_kills_process() -> None:
+    sid = session_id("initial_wait_cancel")
+    source = CancellationTokenSource()
+
+    async def cancel_soon() -> None:
+        await asyncio.sleep(0.1)
+        source.cancel("test interrupt")
+
+    try:
+        asyncio.create_task(cancel_soon())
+        command = shell_quote_python("import time; time.sleep(10)", sid)
+        data = assert_ok(
+            await bash(
+                command,
+                session_id=sid,
+                run_in_background=True,
+                wait_ms=5000,
+                _cancellation_token=source.token,
+            )
+        )
+        pending = [
+            task for task in asyncio.all_tasks()
+            if task is not asyncio.current_task() and not task.done()
+        ]
+
+        assert data.get("status") == "cancelled"
+        assert "PROCESS TERMINATED: Command cancelled: test interrupt" in (data.get("stderr") or "")
+        assert not [
+            bg_id
+            for bg_id, bg in bash_module._RUNNER._bg.items()
+            if getattr(bg, "session_id", None) == sid
+        ]
+        assert pending == []
+    finally:
+        cleanup_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_bash_output_wait_cancellation_returns_cancelled_without_killing_process() -> None:
+    sid = session_id("output_wait_cancel")
+    bg_id = ""
+    source = CancellationTokenSource()
+
+    async def cancel_soon() -> None:
+        await asyncio.sleep(0.1)
+        source.cancel("test interrupt")
+
+    try:
+        bg = await start_background(sid, "import time; time.sleep(5)", wait_ms=1000)
+        bg_id = bg["bg_id"]
+        asyncio.create_task(cancel_soon())
+
+        started = time.monotonic()
+        payload = parse_payload(
+            await bash_output(bg_id, wait_ms=5000, _cancellation_token=source.token)
+        )
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 2.0
+        assert payload.get("ok") is False
+        assert payload.get("error_type") == "Cancelled"
+        assert bg_id in bash_module._RUNNER._bg
+    finally:
+        if bg_id:
+            await bash_output(bg_id, kill=True)
+        cleanup_session(sid)
+
+
 def main() -> int:
     async def _run_all():
         await test_bash_background_initial_wait_returns_completed_result()
@@ -221,6 +291,8 @@ def main() -> int:
         await test_bash_output_reports_done_and_exit_code()
         await test_bash_output_reports_not_found()
         await test_bash_output_kill_settles_background_tasks()
+        await test_bash_background_initial_wait_cancellation_kills_process()
+        await test_bash_output_wait_cancellation_returns_cancelled_without_killing_process()
 
     asyncio.run(_run_all())
     print("Bash background wait tests passed.")

@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from agent.application.runtime.cancellation import CancellationToken
+
 from .context_estimator import DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_EFFECTIVE_CONTEXT_WINDOW_PERCENT
 from .token_usage import normalize_sampling_usage
 
@@ -30,6 +32,7 @@ class CompactionService:
         reason: str = "manual",
         phase: str = "manual",
         context_stats: dict[str, Any] | None = None,
+        cancellation_token: CancellationToken | None = None,
     ) -> dict[str, Any]:
         created_at = self._now()
         raw_messages = await self._load_raw_messages(session, context_messages)
@@ -48,6 +51,7 @@ class CompactionService:
             response = await chat_client.create(
                 messages=self._build_compact_prompt(context_messages),
                 tools=None,
+                cancellation_token=cancellation_token,
             )
             content = self._assistant_content(response).strip()
             if not content:

@@ -129,6 +129,15 @@ def test_session_files_load_json_waits_for_active_writer(tmp_path):
     assert read_result == [{"schema_version": "2.0"}]
 
 
+def test_session_files_load_json_reports_corrupt_json(tmp_path):
+    path = tmp_path / "meta.json"
+    path.write_text("{", encoding="utf-8")
+    files = SessionFiles()
+
+    with pytest.raises(ValueError, match="Corrupted JSON file"):
+        files.load_json(str(path))
+
+
 def test_session_files_write_json_removes_tmp_on_replace_failure(monkeypatch, tmp_path):
     path = tmp_path / "meta.json"
     files = SessionFiles()
@@ -236,6 +245,47 @@ async def test_get_messages_slice_matches_numeric_tool_ids_as_strings(temp_sessi
 
     assert messages[1]["tool_calls"][0]["id"] == "123"
     assert messages[2] == {"role": "tool", "tool_call_id": "123", "content": "numeric id content"}
+
+
+@pytest.mark.asyncio
+async def test_get_messages_slice_uses_projection_cache_until_files_change(temp_session_dir):
+    store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
+    await store.initialize()
+    await store.persist_message("user", "first")
+
+    calls = {"messages": 0, "tools": 0, "compactions": 0}
+    original_messages = store._msg_repo.load_messages
+    original_tools = store._tool_repo.load_tool_calls
+    original_compactions = store._compaction_repo.load_compactions
+
+    def load_messages():
+        calls["messages"] += 1
+        return original_messages()
+
+    def load_tools():
+        calls["tools"] += 1
+        return original_tools()
+
+    def load_compactions():
+        calls["compactions"] += 1
+        return original_compactions()
+
+    store._msg_repo.load_messages = load_messages
+    store._tool_repo.load_tool_calls = load_tools
+    store._compaction_repo.load_compactions = load_compactions
+
+    first = await store.get_messages_slice()
+    first[0]["content"] = "mutated"
+    second = await store.get_messages_slice()
+
+    assert second[0] == {"role": "system", "content": "sys"}
+    assert calls == {"messages": 1, "tools": 1, "compactions": 1}
+
+    await store.persist_message("user", "second")
+    third = await store.get_messages_slice()
+
+    assert third[-1] == {"role": "user", "content": "second"}
+    assert calls == {"messages": 2, "tools": 2, "compactions": 2}
 
 
 @pytest.mark.asyncio
@@ -579,6 +629,8 @@ def main() -> int:
         with tempfile.TemporaryDirectory() as tmp:
             await test_get_messages_slice_matches_numeric_tool_ids_as_strings(tmp)
         with tempfile.TemporaryDirectory() as tmp:
+            await test_get_messages_slice_uses_projection_cache_until_files_change(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
             await test_get_messages_slice_rejects_tool_record_without_model_content(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_persist_tool_call_requires_model_content(tmp)
@@ -610,6 +662,8 @@ def main() -> int:
             test_session_files_read_jsonl_waits_for_active_writer(Path(tmp))
         with tempfile.TemporaryDirectory() as tmp:
             test_session_files_load_json_waits_for_active_writer(Path(tmp))
+        with tempfile.TemporaryDirectory() as tmp:
+            test_session_files_load_json_reports_corrupt_json(Path(tmp))
         with tempfile.TemporaryDirectory() as tmp:
             monkeypatch = pytest.MonkeyPatch()
             try:

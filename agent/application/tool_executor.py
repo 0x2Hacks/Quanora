@@ -5,7 +5,7 @@ from __future__ import annotations
 import traceback
 
 from agent.application.ports import ToolRegistry
-from agent.domain.jobs import ToolExecutionResult
+from agent.domain.tool_result import ToolExecutionResult
 
 
 class ToolExecutor:

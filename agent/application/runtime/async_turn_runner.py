@@ -70,6 +70,7 @@ class AsyncTurnRunner:
         """Run the main conversation loop for a user turn asynchronously, yielding events."""
         
         turn_started_at = time.perf_counter()
+        original_hard_limit = self._snapshot_context_hard_limit()
         try:
             emitted_skill_names: set[str] = set()
             turn_active_skill_matches: list | None = None
@@ -123,6 +124,7 @@ class AsyncTurnRunner:
                         reason="auto",
                         phase=phase,
                         active_skill_matches=turn_active_skill_matches,
+                        cancellation_token=cancellation_token,
                     )
                     context_stats = context.stats if isinstance(getattr(context, "stats", None), dict) else {}
                     context_decisions = context.decisions if isinstance(getattr(context, "decisions", None), dict) else {}
@@ -175,6 +177,7 @@ class AsyncTurnRunner:
                                 reason="context_length_error",
                                 phase="recovery",
                                 active_skill_matches=turn_active_skill_matches,
+                                cancellation_token=cancellation_token,
                             )
                         else:
                             self._context_manager.reduce_hard_limit(factor=0.8)
@@ -230,12 +233,15 @@ class AsyncTurnRunner:
                 error=str(e),
                 error_type=type(e).__name__,
             )
+        finally:
+            self._restore_context_hard_limit(original_hard_limit)
 
     async def compact_context(
         self,
         session: AsyncSessionStore,
         reason: str = "manual",
         phase: str = "manual",
+        cancellation_token: CancellationToken | None = None,
     ) -> dict:
         context = await self._build_context(session, active_skill_matches=None)
         stats = context.stats if isinstance(getattr(context, "stats", None), dict) else {}
@@ -247,6 +253,7 @@ class AsyncTurnRunner:
             reason=reason,
             phase=phase,
             context_stats=stats,
+            cancellation_token=cancellation_token,
         )
 
     async def _run_compact(
@@ -258,6 +265,7 @@ class AsyncTurnRunner:
         reason: str,
         phase: str,
         active_skill_matches: list | None = None,
+        cancellation_token: CancellationToken | None = None,
     ):
         await self._compaction_service.compact_async(
             session=session,
@@ -266,6 +274,7 @@ class AsyncTurnRunner:
             reason=reason,
             phase=phase,
             context_stats=context_stats,
+            cancellation_token=cancellation_token,
         )
         return await self._build_context(session, active_skill_matches=active_skill_matches)
 
@@ -302,6 +311,24 @@ class AsyncTurnRunner:
             await operation(*args)
         except Exception:
             pass
+
+    def _snapshot_context_hard_limit(self):
+        snapshot = getattr(self._context_manager, "snapshot_hard_limit", None)
+        if callable(snapshot):
+            return snapshot()
+        estimator = getattr(self._context_manager, "_estimator", None)
+        budget = getattr(estimator, "budget", None)
+        return getattr(budget, "hard_limit_tokens", None)
+
+    def _restore_context_hard_limit(self, hard_limit) -> None:
+        restore = getattr(self._context_manager, "restore_hard_limit", None)
+        if callable(restore):
+            restore(hard_limit)
+            return
+        estimator = getattr(self._context_manager, "_estimator", None)
+        budget = getattr(estimator, "budget", None)
+        if budget is not None and hasattr(budget, "hard_limit_tokens"):
+            budget.hard_limit_tokens = hard_limit
 
     def _cancelled_event(
         self,

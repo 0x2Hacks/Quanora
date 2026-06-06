@@ -1,7 +1,10 @@
 """文件操作工具定义"""
+from collections import deque
+import fnmatch
 from pathlib import Path
 import re
 
+from agent.application.runtime.cancellation import CancellationToken
 from agent.domain import tool_error, tool_ok
 
 _SKIP_DIRS = frozenset({
@@ -13,6 +16,27 @@ _GREP_MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 _READ_LARGE_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 _READ_MAX_LIMIT = 2000
 _MAX_LINE_CHARS = 2000
+
+
+def _cancelled(tool_name: str, token: CancellationToken | None) -> str | None:
+    if token and token.is_cancelled:
+        reason = token.reason or "cancelled"
+        return tool_error(
+            tool_name,
+            f"Tool cancelled: {reason}",
+            "Cancelled",
+            meta={"reason": token.reason},
+        )
+    return None
+
+
+class _ToolCancelled(Exception):
+    pass
+
+
+def _raise_if_cancelled(token: CancellationToken | None) -> None:
+    if token and token.is_cancelled:
+        raise _ToolCancelled
 
 
 def _is_skipped_path(path: Path) -> bool:
@@ -42,14 +66,23 @@ def _clip_text(text: str, limit: int = _MAX_LINE_CHARS) -> str:
     return text[:limit] + f"...(truncated:{len(text)})"
 
 
-def read_file(file_path: str, offset: int = 1, limit: int = 1000) -> str:
+def read_file(
+    file_path: str,
+    offset: int = 1,
+    limit: int = 1000,
+    include_total: bool = False,
+    _cancellation_token: CancellationToken | None = None,
+) -> str:
     """
     读取文件内容，支持分页和行号显示。
     :param file_path: 文件路径
     :param offset: 起始行号 (默认 1)
     :param limit: 读取最大行数 (默认 1000)
+    :param include_total: 是否继续扫描到 EOF 以返回精确总行数 (默认 False)
     """
     try:
+        if cancelled := _cancelled("read_file", _cancellation_token):
+            return cancelled
         path = Path(file_path).expanduser().resolve()
         if not path.exists():
             return tool_error("read_file", f"文件不存在: {file_path}", "NotFound")
@@ -70,11 +103,18 @@ def read_file(file_path: str, offset: int = 1, limit: int = 1000) -> str:
         selected: list[tuple[int, str]] = []
         end_line = offset + effective_limit - 1
         total_lines = 0
+        total_lines_exact = True
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             for line_no, line in enumerate(f, start=1):
+                if line_no % 1000 == 0:
+                    if cancelled := _cancelled("read_file", _cancellation_token):
+                        return cancelled
                 total_lines = line_no
                 if offset <= line_no <= end_line:
                     selected.append((line_no, _clip_text(line.rstrip("\n").rstrip("\r"))))
+                if not include_total and line_no > end_line:
+                    total_lines_exact = False
+                    break
 
         if offset > total_lines:
             return tool_error(
@@ -86,9 +126,10 @@ def read_file(file_path: str, offset: int = 1, limit: int = 1000) -> str:
 
         shown_start = selected[0][0] if selected else offset
         shown_end = selected[-1][0] if selected else offset - 1
-        truncated = shown_end < total_lines
+        truncated = shown_end < total_lines or not total_lines_exact
         next_offset = shown_end + 1 if truncated else None
-        output = [f"Showing lines {shown_start} to {shown_end} of {total_lines}:"]
+        total_label = str(total_lines) if total_lines_exact else f"at least {total_lines}"
+        output = [f"Showing lines {shown_start} to {shown_end} of {total_label}:"]
         for line_no, line in selected:
             output.append(f"{line_no:4d} | {line}")
 
@@ -99,6 +140,7 @@ def read_file(file_path: str, offset: int = 1, limit: int = 1000) -> str:
                 "file_path": str(path),
                 "size_bytes": file_size,
                 "large_file": large_file,
+                "include_total": bool(include_total),
                 "offset": offset,
                 "limit": effective_limit,
                 "requested_limit": requested_limit,
@@ -106,6 +148,7 @@ def read_file(file_path: str, offset: int = 1, limit: int = 1000) -> str:
                 "shown_start": shown_start,
                 "shown_end": shown_end,
                 "total_lines": total_lines,
+                "total_lines_exact": total_lines_exact,
                 "truncated": truncated,
                 "next_offset": next_offset,
             },
@@ -165,11 +208,19 @@ def edit_file(file_path: str, old_str: str, new_str: str) -> str:
     except Exception as e:
         return tool_error("edit_file", f"编辑错误: {e}", type(e).__name__)
 
-def glob(pattern: str, path: str = ".", max_results: int = 100, offset: int = 0) -> str:
+def glob(
+    pattern: str,
+    path: str = ".",
+    max_results: int = 100,
+    offset: int = 0,
+    _cancellation_token: CancellationToken | None = None,
+) -> str:
     """
     Find files by glob pattern and return compact file entries with sizes.
     """
     try:
+        if cancelled := _cancelled("glob", _cancellation_token):
+            return cancelled
         search_path = Path(path).expanduser().resolve()
         if not search_path.exists():
             return tool_error("glob", f"Directory does not exist: {path}", "NotFound")
@@ -182,7 +233,10 @@ def glob(pattern: str, path: str = ".", max_results: int = 100, offset: int = 0)
         seen = 0
         truncated = False
 
-        for file_path in sorted(search_path.rglob(pattern), key=lambda item: item.as_posix().lower()):
+        for index, file_path in enumerate(sorted(search_path.rglob(pattern), key=lambda item: item.as_posix().lower())):
+            if index % 200 == 0:
+                if cancelled := _cancelled("glob", _cancellation_token):
+                    return cancelled
             if not file_path.is_file() or _is_skipped_path(file_path):
                 continue
             try:
@@ -232,11 +286,14 @@ def grep(
     output_mode: str = "files_with_matches",
     offset: int = 0,
     context: int = 0,
+    _cancellation_token: CancellationToken | None = None,
 ) -> str:
     """
     Search for a regex pattern in files.
     """
     try:
+        if cancelled := _cancelled("grep", _cancellation_token):
+            return cancelled
         if output_mode not in {"files_with_matches", "content", "count"}:
             return tool_error("grep", f"Invalid output_mode: {output_mode}", "InvalidOutputMode")
 
@@ -263,7 +320,10 @@ def grep(
         else:
             files_to_search = sorted(search_path.rglob(glob_pattern), key=lambda item: item.as_posix().lower())
 
-        for file_path in files_to_search:
+        for file_index, file_path in enumerate(files_to_search):
+            if file_index % 100 == 0:
+                if cancelled := _cancelled("grep", _cancellation_token):
+                    return cancelled
             if truncated:
                 break
 
@@ -281,43 +341,36 @@ def grep(
                 rel_path = _relative_path(file_path, search_path)
                 if output_mode == "files_with_matches":
                     with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                        if any(regex.search(line) for line in f):
-                            seen, truncated = _append_paged(results, rel_path, seen, offset, max_results)
+                        for line_no, line in enumerate(f, start=1):
+                            if line_no % 1000 == 0:
+                                if cancelled := _cancelled("grep", _cancellation_token):
+                                    return cancelled
+                            if regex.search(line):
+                                seen, truncated = _append_paged(results, rel_path, seen, offset, max_results)
+                                break
                     continue
 
                 if output_mode == "count":
                     count = 0
                     with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                        for line in f:
+                        for line_no, line in enumerate(f, start=1):
+                            if line_no % 1000 == 0:
+                                if cancelled := _cancelled("grep", _cancellation_token):
+                                    return cancelled
                             if regex.search(line):
                                 count += 1
                     if count:
                         seen, truncated = _append_paged(results, {"file": rel_path, "count": count}, seen, offset, max_results)
                     continue
 
-                lines = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
-                for index, line in enumerate(lines):
-                    if not regex.search(line):
-                        continue
-                    record: dict[str, object] = {
-                        "file": rel_path,
-                        "line": index + 1,
-                        "text": _clip_text(line.strip(), 500),
-                    }
-                    if context:
-                        start = max(0, index - context)
-                        end = min(len(lines), index + context + 1)
-                        record["context"] = [
-                            {
-                                "line": line_index + 1,
-                                "text": _clip_text(lines[line_index].strip(), 500),
-                                "match": line_index == index,
-                            }
-                            for line_index in range(start, end)
-                        ]
+                for record in _grep_content_records(file_path, rel_path, regex, context, _cancellation_token):
                     seen, truncated = _append_paged(results, record, seen, offset, max_results)
                     if truncated:
                         break
+            except _ToolCancelled:
+                if cancelled := _cancelled("grep", _cancellation_token):
+                    return cancelled
+                return tool_error("grep", "Tool cancelled: cancelled", "Cancelled")
             except Exception:
                 continue
 
@@ -350,7 +403,89 @@ def _append_paged(results: list, item: object, seen: int, offset: int, max_resul
     results.append(item)
     return seen, False
 
-def _build_tree(path: Path, prefix: str = "", depth: int = 0, max_depth: int = 2) -> tuple:
+
+def _grep_content_records(
+    file_path: Path,
+    rel_path: str,
+    regex: re.Pattern,
+    context: int,
+    cancellation_token: CancellationToken | None = None,
+):
+    if context <= 0:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as handle:
+            for line_no, line in enumerate(handle, start=1):
+                if line_no % 1000 == 0:
+                    _raise_if_cancelled(cancellation_token)
+                text = line.rstrip("\n").rstrip("\r")
+                if regex.search(text):
+                    yield {"file": rel_path, "line": line_no, "text": _clip_text(text.strip(), 500)}
+        return
+
+    before_window: deque[tuple[int, str]] = deque(maxlen=context)
+    pending: deque[dict[str, object]] = deque()
+    with open(file_path, "r", encoding="utf-8", errors="replace") as handle:
+        for line_no, line in enumerate(handle, start=1):
+            if line_no % 1000 == 0:
+                _raise_if_cancelled(cancellation_token)
+            text = line.rstrip("\n").rstrip("\r")
+
+            for _ in range(len(pending)):
+                record = pending.popleft()
+                after = record["after"]
+                assert isinstance(after, list)
+                after.append((line_no, text))
+                remaining = int(record["remaining_after"]) - 1
+                record["remaining_after"] = remaining
+                if remaining <= 0:
+                    yield _finalize_grep_record(record)
+                else:
+                    pending.append(record)
+
+            if regex.search(text):
+                pending.append(
+                    {
+                        "file": rel_path,
+                        "line": line_no,
+                        "text": text,
+                        "before": list(before_window),
+                        "after": [],
+                        "remaining_after": context,
+                    }
+                )
+
+            before_window.append((line_no, text))
+
+        while pending:
+            yield _finalize_grep_record(pending.popleft())
+
+
+def _format_grep_context(lines, *, match: bool) -> list[dict[str, object]]:
+    return [
+        {"line": line_no, "text": _clip_text(text.strip(), 500), "match": match}
+        for line_no, text in lines
+    ]
+
+
+def _finalize_grep_record(record: dict[str, object]) -> dict[str, object]:
+    line_no = int(record["line"])
+    text = str(record["text"])
+    before = record["before"]
+    after = record["after"]
+    assert isinstance(before, list)
+    assert isinstance(after, list)
+    return {
+        "file": record["file"],
+        "line": line_no,
+        "text": _clip_text(text.strip(), 500),
+        "context": [
+            *_format_grep_context(before, match=False),
+            {"line": line_no, "text": _clip_text(text.strip(), 500), "match": True},
+            *_format_grep_context(after, match=False),
+        ],
+    }
+
+
+def _build_tree(path: Path, prefix: str = "", depth: int = 0, max_depth: int = 2, pattern: str = "*") -> tuple:
     try:
         items = sorted(path.iterdir(), key=lambda x: (not x.is_dir(), x.name))
     except PermissionError:
@@ -364,13 +499,15 @@ def _build_tree(path: Path, prefix: str = "", depth: int = 0, max_depth: int = 2
         if item.is_dir():
             lines.append(f"{prefix}{conn}📁 {item.name}/")
             if depth < max_depth - 1:
-                sub, f, d = _build_tree(item, prefix + ext, depth + 1, max_depth)
+                sub, f, d = _build_tree(item, prefix + ext, depth + 1, max_depth, pattern)
                 lines.extend(sub)
                 dirs += 1 + d
                 files += f
             else:
                 dirs += 1
         else:
+            if not fnmatch.fnmatch(item.name, pattern):
+                continue
             lines.append(f"{prefix}{conn}📄 {item.name} ({_format_size(item.stat().st_size)})")
             files += 1
     return lines, files, dirs
@@ -389,7 +526,7 @@ def list_files(directory: str = ".", pattern: str = "*", recursive: bool = True,
                 if f.is_file(): result.append(f"📄 {f.name} ({_format_size(f.stat().st_size)})")
                 else: result.append(f"📁 {f.name}/")
             return tool_ok("list_files", "\n".join(result) or "没有找到文件", meta={"directory": str(path), "recursive": False, "pattern": pattern})
-        lines, f, d = _build_tree(path, max_depth=max_depth)
+        lines, f, d = _build_tree(path, max_depth=max_depth, pattern=pattern)
         return tool_ok(
             "list_files",
             "\n".join([f"📁 {path}/"] + lines + ["", f"总计: {d} 个文件夹, {f} 个文件"]),

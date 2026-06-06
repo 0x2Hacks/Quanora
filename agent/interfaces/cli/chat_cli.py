@@ -184,9 +184,12 @@ class ChatCLI:
             if not user_input:
                 continue
             if self._is_slash_command(user_input):
-                should_exit = self._event_loop.run_until_complete(self._run_slash_command_async(user_input))
-                if should_exit:
-                    break
+                try:
+                    should_exit = self._run_slash_command_blocking(user_input)
+                    if should_exit:
+                        break
+                except KeyboardInterrupt:
+                    print("\n[User Interrupted: Command cancelled.]")
                 continue
 
             print("\nAgent:")
@@ -363,10 +366,19 @@ class ChatCLI:
     def _is_slash_command(self, text: str) -> bool:
         return text.lstrip().startswith("/")
 
-    async def _run_slash_command_async(self, user_input: str) -> bool:
+    async def _run_slash_command_async(
+        self,
+        user_input: str,
+        cancellation_token=None,
+    ) -> bool:
         result = await self._slash_router.execute(
             user_input,
-            SlashCommandContext(runtime=self._runtime, session=self._session, debug=self._debug),
+            SlashCommandContext(
+                runtime=self._runtime,
+                session=self._session,
+                debug=self._debug,
+                cancellation_token=cancellation_token,
+            ),
         )
         if result.clear_screen:
             self._console.clear()
@@ -375,6 +387,24 @@ class ChatCLI:
         if result.text:
             render_markdown(result.text)
         return result.should_exit
+
+    def _run_slash_command_blocking(self, user_input: str) -> bool:
+        if self._event_loop is None:
+            raise RuntimeError("Event loop is not initialized.")
+        cancel_source = CancellationTokenSource()
+        self._current_cancel_source = cancel_source
+        task = self._event_loop.create_task(
+            self._run_slash_command_async(user_input, cancellation_token=cancel_source.token)
+        )
+        try:
+            return self._event_loop.run_until_complete(task)
+        except KeyboardInterrupt:
+            self._cancel_current_turn("User interrupted")
+            self._settle_interrupted_turn(task)
+            raise
+        finally:
+            self._current_cancel_source = None
+            cancel_source.dispose()
 
     async def _load_latest_usage_async(self) -> None:
         get_usage = getattr(self._session, "get_latest_sampling_usage", None)

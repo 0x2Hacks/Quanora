@@ -47,7 +47,7 @@ class AsyncRuntimeFacade:
             session_updated = True
         return {"runtime": runtime_updated, "session": session_updated}
 
-    async def compact_context(self, reason: str = "manual") -> dict:
+    async def compact_context(self, reason: str = "manual", cancellation_token: CancellationToken | None = None) -> dict:
         """Manually compact the current session through the turn runner."""
         await self.initialize()
         compact = getattr(self._turn_runner, "compact_context", None)
@@ -56,7 +56,17 @@ class AsyncRuntimeFacade:
             if callable(compact_session):
                 return await compact_session()
             raise RuntimeError("Compact is not supported by this runtime.")
-        return await compact(self._session_store, reason=reason, phase="manual")
+        try:
+            return await compact(
+                self._session_store,
+                reason=reason,
+                phase="manual",
+                cancellation_token=cancellation_token,
+            )
+        except TypeError as exc:
+            if "cancellation_token" not in str(exc):
+                raise
+            return await compact(self._session_store, reason=reason, phase="manual")
 
     async def run_turn(
         self,

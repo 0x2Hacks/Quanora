@@ -6,7 +6,7 @@ from typing import Any
 
 from .model import ensure_plan_defaults
 from .store import load_plan_if_exists
-from .summary import plan_state, render_compact_plan_summary, unfinished_steps
+from .state_summary import plan_state, render_compact_plan_summary, unfinished_steps
 
 
 class PlanContextProvider:

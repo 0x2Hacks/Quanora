@@ -137,6 +137,12 @@ class ContextManager:
         budget.hard_limit_tokens = int(budget.resolved_hard_limit_tokens() * factor)
         return budget.resolved_hard_limit_tokens()
 
+    def snapshot_hard_limit(self):
+        return self._estimator.budget.hard_limit_tokens
+
+    def restore_hard_limit(self, hard_limit) -> None:
+        self._estimator.budget.hard_limit_tokens = hard_limit
+
     def rescue_context(self, internal_messages: list[dict], final_messages: list[dict]) -> tuple[list[dict], list[dict]]:
         """Surgical Context Rescue: Drops the oldest cold/tool messages instead of blindly shrinking budgets."""
         # Find oldest non-system message that isn't already dropped
@@ -178,13 +184,15 @@ class ContextManager:
             "plan_id": None,
             "plan_version": None,
             "plan_state": "none",
+            "plan_error_type": None,
         }
         if not self._plan_context_provider:
             return [], stats, decisions
         try:
             return self._plan_context_provider.build_context()
-        except Exception:
+        except Exception as exc:
             decisions["plan_state"] = "error"
+            decisions["plan_error_type"] = type(exc).__name__
             return [], stats, decisions
 
     def _build_skill_messages(self, active_skill_matches: list | None = None) -> tuple[list[dict], dict, dict]:
@@ -198,13 +206,15 @@ class ContextManager:
             "skills_available": False,
             "active_skills": [],
             "skill_injection_applied": False,
+            "skill_error_type": None,
         }
         if not self._skill_repository:
             return [], stats, decisions
 
         try:
             skills = list(self._skill_repository.list_skills())
-        except Exception:
+        except Exception as exc:
+            decisions["skill_error_type"] = type(exc).__name__
             return [], stats, decisions
         if not skills:
             return [], stats, decisions

@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from agent.interfaces.cli.chat_cli import ChatCLI
 from agent.interfaces.cli.ui import GitPromptStatus
 from agent.interfaces.cli.commands import SlashCommandContext, SlashCommandRouter
+from agent.application.runtime.cancellation import CancellationTokenSource
 from agent.infrastructure.config import Config
 
 
@@ -91,6 +92,22 @@ class FakeRuntime:
     async def set_model(self, model):
         self.model = model
         return {"runtime": True, "session": False}
+
+
+class TokenAwareCompactRuntime:
+    def __init__(self):
+        self.received_token = None
+
+    async def compact_context(self, reason="manual", cancellation_token=None):
+        self.received_token = cancellation_token
+        return {
+            "id": "token_compact_1",
+            "source": {
+                "message_start_index": 0,
+                "message_end_index_exclusive": 1,
+                "tool_call_ids": [],
+            },
+        }
 
 
 class EmptyStream:
@@ -447,6 +464,24 @@ async def test_compact_calls_session_compact_context() -> None:
 
 
 @pytest.mark.asyncio
+async def test_compact_passes_cancellation_token_to_runtime() -> None:
+    source = CancellationTokenSource()
+    runtime = TokenAwareCompactRuntime()
+    context = SlashCommandContext(
+        runtime=runtime,
+        session=FakeSession(),
+        debug=True,
+        cancellation_token=source.token,
+    )
+
+    result = await SlashCommandRouter().execute("/compact", context)
+
+    assert "Compact complete." in result.text
+    assert "token_compact_1" in result.text
+    assert runtime.received_token is source.token
+
+
+@pytest.mark.asyncio
 async def test_exit_requests_cli_exit() -> None:
     result = await SlashCommandRouter().execute("/exit", _context())
 
@@ -629,6 +664,7 @@ def main() -> int:
     asyncio.run(test_status_does_not_show_recent_tools())
     asyncio.run(test_model_rejects_invalid_set_args())
     asyncio.run(test_compact_calls_session_compact_context())
+    asyncio.run(test_compact_passes_cancellation_token_to_runtime())
     asyncio.run(test_clear_requests_screen_clear())
     asyncio.run(test_clear_rejects_extra_args())
     asyncio.run(test_draft_rejects_invalid_args())

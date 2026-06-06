@@ -14,7 +14,7 @@ from agent.application.runtime.async_tool_call_processor import AsyncToolCallPro
 from agent.application.runtime.cancellation import CancellationTokenSource
 from agent.domain import ParsedToolCall
 from agent.domain.events import ToolCallStartedEvent, ToolResultEvent
-from agent.domain.jobs import ToolExecutionResult
+from agent.domain.tool_result import ToolExecutionResult
 
 
 class FakeToolExecutor:
@@ -27,6 +27,18 @@ class FakeToolExecutor:
     async def execute_async(self, name: str, args: dict, raw_args: str | None = None):
         self.received_args = dict(args)
         return ToolExecutionResult(status="ok", result_str="done")
+
+
+class FakeSyncToolExecutor:
+    def __init__(self):
+        self.received_args = None
+
+    def is_async_tool(self, name: str) -> bool:
+        return False
+
+    def execute_sync(self, name: str, args: dict, raw_args: str | None = None):
+        self.received_args = dict(args)
+        return ToolExecutionResult(status="ok", result_str="sync done")
 
 
 class FakeEmptyBashOutputExecutor:
@@ -121,6 +133,33 @@ async def test_bash_cancellation_token_is_not_persisted_in_tool_args() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sync_tool_receives_cancellation_token_without_persisting_private_args() -> None:
+    executor = FakeSyncToolExecutor()
+    session = FakeSession()
+    processor = AsyncToolCallProcessor(tool_executor=executor)
+    cancel_source = CancellationTokenSource()
+    call = ParsedToolCall(call_id="call_sync", name="read_file", raw_args='{"file_path":"demo.txt"}')
+
+    events = [
+        event
+        async for event in processor.execute(
+            session=session,
+            tool_calls=[call],
+            cancellation_token=cancel_source.token,
+        )
+    ]
+
+    if executor.received_args.get("_cancellation_token") is not cancel_source.token:
+        raise AssertionError(f"Expected sync execution args to include cancellation token, got: {executor.received_args}")
+    result_events = [event for event in events if isinstance(event, ToolResultEvent)]
+    if len(result_events) != 1 or result_events[0].status != "completed":
+        raise AssertionError(f"Expected completed sync tool result, got: {events}")
+    persisted_args = session.persisted_tool_calls[0][0][2]
+    if persisted_args != {"file_path": "demo.txt"}:
+        raise AssertionError(f"Expected persisted args to exclude private token, got: {persisted_args}")
+
+
+@pytest.mark.asyncio
 async def test_invalid_tool_args_emit_failed_result_without_started_event() -> None:
     processor = AsyncToolCallProcessor(tool_executor=FakeToolExecutor())
     session = FakeSession()
@@ -146,7 +185,7 @@ async def test_invalid_tool_args_emit_failed_result_without_started_event() -> N
 
 
 @pytest.mark.asyncio
-async def test_successful_tool_does_not_require_job_service() -> None:
+async def test_successful_tool_persists_result_directly() -> None:
     processor = AsyncToolCallProcessor(tool_executor=FakeToolExecutor())
     session = FakeSession()
     call = ParsedToolCall(
@@ -292,8 +331,9 @@ def main() -> int:
     import asyncio
 
     asyncio.run(test_bash_cancellation_token_is_not_persisted_in_tool_args())
+    asyncio.run(test_sync_tool_receives_cancellation_token_without_persisting_private_args())
     asyncio.run(test_invalid_tool_args_emit_failed_result_without_started_event())
-    asyncio.run(test_successful_tool_does_not_require_job_service())
+    asyncio.run(test_successful_tool_persists_result_directly())
     asyncio.run(test_tool_result_event_reports_persist_failure())
     asyncio.run(test_tool_result_event_reports_tool_message_persist_failure())
     asyncio.run(test_async_tool_processor_limits_repeated_empty_bash_output())

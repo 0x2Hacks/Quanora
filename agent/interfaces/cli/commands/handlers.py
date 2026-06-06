@@ -127,7 +127,7 @@ async def handle_skill(context: SlashCommandContext, args: list[str]) -> str:
 async def handle_plan(context: SlashCommandContext, args: list[str]) -> str:
     try:
         from agent.infrastructure.plans.store import load_plan_if_exists
-        from agent.infrastructure.plans.summary import render_compact_plan_summary
+        from agent.infrastructure.plans.state_summary import render_compact_plan_summary
 
         plan = load_plan_if_exists()
         summary = render_compact_plan_summary(plan) if plan else ""
@@ -142,9 +142,12 @@ async def handle_compact(context: SlashCommandContext, args: list[str]) -> str:
     compact_context = getattr(context.runtime, "compact_context", None)
     if callable(compact_context):
         try:
-            record = await compact_context(reason="manual")
+            record = await compact_context(reason="manual", cancellation_token=context.cancellation_token)
         except TypeError:
-            record = await compact_context()
+            try:
+                record = await compact_context(reason="manual")
+            except TypeError:
+                record = await compact_context()
     else:
         compact_context = getattr(context.session, "compact_context", None)
         if not callable(compact_context):

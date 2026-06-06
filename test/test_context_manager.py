@@ -118,6 +118,32 @@ async def test_context_manager_build_is_stable_and_has_no_summary_side_effects()
 
 
 @pytest.mark.asyncio
+async def test_context_manager_reports_plan_and_skill_error_types() -> None:
+    class BrokenPlanProvider:
+        def build_context(self):
+            raise ValueError("bad plan")
+
+    class BrokenSkillRepository:
+        def list_skills(self):
+            raise RuntimeError("bad skills")
+
+    session = QueryOnlySession([
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "hello"},
+    ])
+    manager = ContextManager(
+        plan_context_provider=BrokenPlanProvider(),
+        skill_repository=BrokenSkillRepository(),
+    )
+
+    result = await manager.build_messages_async(session=session)
+
+    if result.decisions.get("plan_state") != "error" or result.decisions.get("plan_error_type") != "ValueError":
+        raise AssertionError(f"Expected plan error type, got: {result.decisions}")
+    if result.decisions.get("skill_error_type") != "RuntimeError":
+        raise AssertionError(f"Expected skill error type, got: {result.decisions}")
+
+@pytest.mark.asyncio
 async def test_context_manager_new_tool_append_does_not_change_old_tool_content() -> None:
     session_messages = [
         {"role": "system", "content": "sys"},
@@ -149,6 +175,7 @@ def main() -> int:
         await test_context_manager_builds_from_session_queries()
         await test_context_manager_appends_pending_messages()
         await test_context_manager_build_is_stable_and_has_no_summary_side_effects()
+        await test_context_manager_reports_plan_and_skill_error_types()
         await test_context_manager_new_tool_append_does_not_change_old_tool_content()
 
     asyncio.run(_run_all())

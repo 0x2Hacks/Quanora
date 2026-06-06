@@ -121,13 +121,13 @@ class AsyncToolCallProcessor:
     ) -> _ToolCallOutcome:
         try:
             if self._tool_executor.is_async_tool(call.name):
-                execution_args = parsed_args
-                if call.name == "bash":
-                    execution_args = {**parsed_args, "_cancellation_token": cancellation_token}
+                execution_args = {**parsed_args, "_cancellation_token": cancellation_token}
                 result = await self._tool_executor.execute_async(call.name, execution_args, call.raw_args)
             else:
+                execution_args = {**parsed_args, "_cancellation_token": cancellation_token}
+
                 def _sync_run():
-                    return self._tool_executor.execute_sync(call.name, parsed_args, call.raw_args)
+                    return self._tool_executor.execute_sync(call.name, execution_args, call.raw_args)
 
                 result = await asyncio.to_thread(_sync_run)
 

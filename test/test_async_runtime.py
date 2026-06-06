@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 from types import SimpleNamespace
+import httpx
+import openai
 from tenacity import Future, RetryError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +30,7 @@ from agent.domain.events import (
     TurnFailedEvent
 )
 from agent.application.runtime.cancellation import CancellationTokenSource
+from agent.application.services import ContextBudget, ContextEstimator, ContextManager
 
 @pytest.mark.asyncio
 async def test_async_turn_runner_cancellation():
@@ -711,6 +714,81 @@ async def test_async_turn_runner_auto_compacts_before_sampling():
     assert sum(isinstance(event, ContextBuiltEvent) for event in events) == 2
 
 
+@pytest.mark.asyncio
+async def test_context_length_recovery_hard_limit_is_turn_local():
+    class LocalEmptyStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    class FailingThenSuccessfulChatClient:
+        def __init__(self):
+            self.stream_calls = 0
+
+        def stream(self, *args, **kwargs):
+            self.stream_calls += 1
+            if self.stream_calls <= 2:
+                response = httpx.Response(400, request=httpx.Request("POST", "https://example.test"))
+                raise openai.BadRequestError(
+                    "context_length_exceeded",
+                    response=response,
+                    body={"error": {"code": "context_length_exceeded"}},
+                )
+            return LocalEmptyStream()
+
+        async def create(self, messages, tools=None, cancellation_token=None):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="handoff"))])
+
+    class FakeSession:
+        session_id = "session_1"
+
+        def now_iso(self):
+            return "2026-05-08T00:00:00Z"
+
+        async def get_messages_slice(self, *args, **kwargs):
+            return [{"role": "user", "content": "hello"}]
+
+        async def load_messages(self):
+            return [{"role": "user", "content": "hello"}]
+
+        async def get_tool_records(self, *args, **kwargs):
+            return []
+
+        async def get_latest_compaction(self):
+            return None
+
+        async def persist_compaction(self, record):
+            return dict(record)
+
+        async def persist_sampling_usage(self, usage):
+            return None
+
+        async def persist_message(self, *args, **kwargs):
+            return None
+
+    manager = ContextManager(
+        estimator=ContextEstimator(
+            ContextBudget(hard_limit_tokens=1000, context_window_tokens=2000)
+        )
+    )
+    parser = MagicMock()
+    parser.consume_async_stream = AsyncMock(return_value=("", [], None))
+    runner = AsyncTurnRunner(
+        chat_client=FailingThenSuccessfulChatClient(),
+        tool_processor=MagicMock(),
+        stream_parser=parser,
+        tool_schemas=[],
+        context_manager=manager,
+    )
+
+    events = [event async for event in runner.run_turn(FakeSession())]
+
+    assert any(isinstance(event, TurnCompletedEvent) for event in events)
+    assert manager._estimator.budget.hard_limit_tokens == 1000
+
+
 def main() -> int:
     asyncio.run(test_async_turn_runner_cancellation())
     asyncio.run(test_async_turn_runner_stream_cancelled_error_is_cancelled_event())
@@ -726,6 +804,7 @@ def main() -> int:
     asyncio.run(test_async_turn_runner_usage_tolerates_bad_context_stats())
     asyncio.run(test_async_turn_runner_retry_error_emits_visible_failure())
     asyncio.run(test_async_turn_runner_auto_compacts_before_sampling())
+    asyncio.run(test_context_length_recovery_hard_limit_is_turn_local())
     print("Async runtime tests passed.")
     return 0
 

@@ -8,9 +8,10 @@ os.chdir(PROJECT_ROOT)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from agent.application.runtime.cancellation import CancellationTokenSource
 from agent.infrastructure.tools.impl import TOOL_SCHEMAS
 from agent.infrastructure.tools.impl.tools.file_ops import glob as glob_tool
-from agent.infrastructure.tools.impl.tools.file_ops import grep, read_file
+from agent.infrastructure.tools.impl.tools.file_ops import grep, list_files, read_file
 
 
 def parse_payload(raw: str) -> dict:
@@ -90,6 +91,24 @@ def test_grep_output_modes(tmp_path: Path) -> None:
         raise AssertionError(f"Expected per-file match counts, got: {count_payload}")
 
 
+def test_grep_context_streaming_keeps_adjacent_matches(tmp_path: Path) -> None:
+    write(tmp_path / "a.py", "needle one\nneedle two\nplain\n")
+
+    payload = assert_ok(grep("needle", path=str(tmp_path), output_mode="content", context=1))
+    data = payload.get("data") or []
+    lines = [item.get("line") for item in data]
+    if lines != [1, 2]:
+        raise AssertionError(f"Expected adjacent matches to be reported, got: {payload}")
+    if not all("context" in item for item in data):
+        raise AssertionError(f"Expected context records, got: {payload}")
+    second_context = data[1].get("context") or []
+    if second_context[:2] != [
+        {"line": 1, "text": "needle one", "match": False},
+        {"line": 2, "text": "needle two", "match": True},
+    ]:
+        raise AssertionError(f"Expected second match to keep prior context, got: {payload}")
+
+
 def test_grep_rejects_invalid_inputs(tmp_path: Path) -> None:
     write(tmp_path / "a.py", "needle\n")
     assert_error(grep("[", path=str(tmp_path)), "InvalidRegex")
@@ -105,12 +124,39 @@ def test_read_file_paginates_with_meta(tmp_path: Path) -> None:
     meta = payload.get("meta") or {}
     if "   2 | two" not in data or "   3 | three" not in data or "   4 | four" in data:
         raise AssertionError(f"Unexpected read_file data: {payload}")
-    expected = {"shown_start": 2, "shown_end": 3, "total_lines": 4, "truncated": True, "next_offset": 4}
+    expected = {"shown_start": 2, "shown_end": 3, "total_lines": 4, "total_lines_exact": False, "truncated": True, "next_offset": 4}
     for key, value in expected.items():
         if meta.get(key) != value:
             raise AssertionError(f"Expected meta[{key}]={value}, got: {meta}")
 
+    exact_payload = assert_ok(read_file(str(file_path), offset=2, limit=2, include_total=True))
+    exact_meta = exact_payload.get("meta") or {}
+    if exact_meta.get("total_lines") != 4 or exact_meta.get("total_lines_exact") is not True:
+        raise AssertionError(f"Expected exact total line count, got: {exact_payload}")
+
     assert_error(read_file(str(file_path), offset=20, limit=2), "OffsetOutOfRange")
+
+
+def test_sync_file_tools_return_cancelled_payload(tmp_path: Path) -> None:
+    write(tmp_path / "a.py", "needle\n")
+    source = CancellationTokenSource()
+    source.cancel("unit test")
+
+    assert_error(read_file(str(tmp_path / "a.py"), _cancellation_token=source.token), "Cancelled")
+    assert_error(glob_tool("*.py", path=str(tmp_path), _cancellation_token=source.token), "Cancelled")
+    assert_error(grep("needle", path=str(tmp_path), _cancellation_token=source.token), "Cancelled")
+
+
+def test_list_files_recursive_applies_pattern(tmp_path: Path) -> None:
+    write(tmp_path / "src" / "alpha.py", "print('a')\n")
+    write(tmp_path / "src" / "notes.txt", "notes\n")
+
+    payload = assert_ok(list_files(str(tmp_path), pattern="*.py", recursive=True, max_depth=3))
+    data = payload.get("data") or ""
+    if "alpha.py" not in data:
+        raise AssertionError(f"Expected matching Python file, got: {payload}")
+    if "notes.txt" in data:
+        raise AssertionError(f"Did not expect non-matching text file, got: {payload}")
 
 
 def test_schema_includes_glob_and_grep_output_mode_enum() -> None:
@@ -132,9 +178,15 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as temp_dir:
         test_grep_output_modes(Path(temp_dir))
     with tempfile.TemporaryDirectory() as temp_dir:
+        test_grep_context_streaming_keeps_adjacent_matches(Path(temp_dir))
+    with tempfile.TemporaryDirectory() as temp_dir:
         test_grep_rejects_invalid_inputs(Path(temp_dir))
     with tempfile.TemporaryDirectory() as temp_dir:
         test_read_file_paginates_with_meta(Path(temp_dir))
+    with tempfile.TemporaryDirectory() as temp_dir:
+        test_sync_file_tools_return_cancelled_payload(Path(temp_dir))
+    with tempfile.TemporaryDirectory() as temp_dir:
+        test_list_files_recursive_applies_pattern(Path(temp_dir))
     test_schema_includes_glob_and_grep_output_mode_enum()
     print("File navigation tool tests passed.")
     return 0

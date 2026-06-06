@@ -7,6 +7,7 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 
+from agent.application.runtime.cancellation import CancellationToken
 from agent.domain import tool_error, tool_ok
 
 # ---------------------------------------------------------------------------
@@ -23,6 +24,18 @@ except ImportError:
     _HAS_CFFI = False
 
 _SESSION = None
+
+
+def _cancelled(tool_name: str, token: CancellationToken | None) -> str | None:
+    if token and token.is_cancelled:
+        reason = token.reason or "cancelled"
+        return tool_error(
+            tool_name,
+            f"Tool cancelled: {reason}",
+            "Cancelled",
+            meta={"reason": token.reason},
+        )
+    return None
 
 
 def _get_session():
@@ -170,14 +183,23 @@ def _search_ddg(query: str, max_results: int) -> list[dict[str, str]]:
 # Public tool functions
 # ---------------------------------------------------------------------------
 
-def search_web(query: str, max_results: int = 5) -> str:
+def search_web(
+    query: str,
+    max_results: int = 5,
+    _cancellation_token: CancellationToken | None = None,
+) -> str:
     """
     Search the internet using multiple engines with automatic fallback (Bing -> Baidu -> DDG).
     Works reliably in mainland China.
     :param query: Search keywords (supports Chinese and English)
     :param max_results: Max number of results (default 5)
     """
-    max_results = int(max_results)
+    if cancelled := _cancelled("search_web", _cancellation_token):
+        return cancelled
+    query = str(query or "").strip()
+    if not query:
+        return tool_error("search_web", "query is required.", "ValidationError")
+    max_results = _clamp_search_results(max_results)
     errors: list[str] = []
 
     # Detect Chinese characters in query to prioritize Baidu for Chinese content
@@ -193,8 +215,12 @@ def search_web(query: str, max_results: int = 5) -> str:
     ]
 
     for name, engine_fn in engines:
+        if cancelled := _cancelled("search_web", _cancellation_token):
+            return cancelled
         try:
             results = engine_fn(query, max_results)
+            if cancelled := _cancelled("search_web", _cancellation_token):
+                return cancelled
             if results:
                 return tool_ok(
                     "search_web",
@@ -212,13 +238,23 @@ def search_web(query: str, max_results: int = 5) -> str:
     )
 
 
-def fetch_web_page(url: str) -> str:
+def _clamp_search_results(value) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 5
+    return max(1, min(parsed, 10))
+
+
+def fetch_web_page(url: str, _cancellation_token: CancellationToken | None = None) -> str:
     """
     Fetch a web page and extract its main content as Markdown.
     Automatically strips navigation, ads, footers, and other boilerplate.
     :param url: Target web page URL
     """
     try:
+        if cancelled := _cancelled("fetch_web_page", _cancellation_token):
+            return cancelled
         import trafilatura
 
         session = _get_session()
@@ -229,6 +265,8 @@ def fetch_web_page(url: str) -> str:
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
         }, timeout=15)
         response.raise_for_status()
+        if cancelled := _cancelled("fetch_web_page", _cancellation_token):
+            return cancelled
 
         html = response.text
         if not html:
@@ -244,6 +282,9 @@ def fetch_web_page(url: str) -> str:
         )
 
         # Fallback: lower precision
+        if cancelled := _cancelled("fetch_web_page", _cancellation_token):
+            return cancelled
+
         if not content:
             content = trafilatura.extract(
                 html,
@@ -254,6 +295,9 @@ def fetch_web_page(url: str) -> str:
             )
 
         # Last resort: plain text via BS4
+        if cancelled := _cancelled("fetch_web_page", _cancellation_token):
+            return cancelled
+
         if not content:
             soup = BeautifulSoup(html, "html.parser")
             for tag in soup(["script", "style", "nav", "footer", "header"]):

@@ -3,9 +3,12 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 os.chdir(PROJECT_ROOT)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 
 def test_resume_mode_flag_is_removed() -> None:
@@ -90,6 +93,26 @@ def test_doctor_reports_invalid_settings_json(tmp_path) -> None:
         raise AssertionError(f"Expected friendly diagnostics, got: {result.stderr}")
 
 
+def test_main_returns_130_on_keyboard_interrupt() -> None:
+    import main as main_module
+
+    class InterruptingCli:
+        def start(self):
+            raise KeyboardInterrupt
+
+    with (
+        patch.object(sys, "argv", ["main.py"]),
+        patch("agent.infrastructure.config.Config.ensure_user_settings_template"),
+        patch("agent.infrastructure.config.Config.reload"),
+        patch("agent.infrastructure.config.Config.validate"),
+        patch("agent.bootstrap.build_basic_agent_dependencies", return_value={"cli": InterruptingCli()}),
+    ):
+        result = main_module.main()
+
+    if result != 130:
+        raise AssertionError(f"Expected Ctrl+C exit code 130, got: {result}")
+
+
 def main() -> int:
     test_resume_mode_flag_is_removed()
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -98,6 +121,7 @@ def main() -> int:
         test_doctor_runs_without_api_key(Path(temp_dir))
     with tempfile.TemporaryDirectory() as temp_dir:
         test_doctor_reports_invalid_settings_json(Path(temp_dir))
+    test_main_returns_130_on_keyboard_interrupt()
     print("Main CLI arg tests passed.")
     return 0
 

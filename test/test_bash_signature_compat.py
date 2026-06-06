@@ -1,14 +1,20 @@
 import unittest
 import json
 import asyncio
+import os
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+os.chdir(PROJECT_ROOT)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from agent.infrastructure.tools.impl.tools.bash import bash
 
-class TestBashJobCancel(unittest.TestCase):
-    # This test acts as a stub to verify the refactored bash runs.
-    # True asynchronous cancellation will be tested more thoroughly in Phase 3
-    # once start_job returns a real background job handle.
-    # Here we just verify that bash doesn't crash with the new parameters.
+class TestBashSignatureCompat(unittest.TestCase):
+    # This verifies the bash tool signature stays callable with current defaults.
+    # Real cancellation behavior is covered by the dedicated bash cancellation tests.
     
     def test_bash_runs_with_new_signature(self):
         res = asyncio.run(bash("echo 'testing bash'", session_id="test_session"))

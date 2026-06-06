@@ -4,7 +4,19 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+
+@dataclass(slots=True)
+class ToolExecutionResult:
+    """Structured result for tool execution."""
+    status: Literal["ok", "error", "cancelled"]
+    result_str: str = ""
+    error_msg: str = ""
+    error_type: str = ""
+    exit_code: int = 0
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 def _utc_now_iso() -> str:

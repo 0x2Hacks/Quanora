@@ -83,12 +83,21 @@ def append_event(events_file: Path, event: dict[str, Any]) -> None:
     with events_file.open("a", encoding="utf-8") as handle:
         handle.write(line + "\n")
         handle.flush()
+        os.fsync(handle.fileno())
 
 
 def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
-    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp = write_json_temp(path, data)
     os.replace(tmp, path)
+
+
+def write_json_temp(path: Path, data: dict[str, Any]) -> Path:
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
+        handle.flush()
+        os.fsync(handle.fileno())
+    return tmp
 
 
 def bump_version(plan: dict[str, Any]) -> tuple[int, int]:
@@ -118,5 +127,10 @@ def persist_plan_update(
         "from_version": old_version,
         "to_version": new_version,
     }
-    append_event(events_file, event)
-    write_json_atomic(plan_file, plan)
+    tmp_plan_file = write_json_temp(plan_file, plan)
+    try:
+        append_event(events_file, event)
+        os.replace(tmp_plan_file, plan_file)
+    finally:
+        if tmp_plan_file.exists():
+            tmp_plan_file.unlink()

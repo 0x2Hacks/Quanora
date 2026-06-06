@@ -22,6 +22,7 @@ from agent.infrastructure.tools.impl.tools.plan import (
     plan_update_step,
 )
 from agent.infrastructure.tools.impl import TOOLS, TOOL_SCHEMAS
+from agent.infrastructure.plans import store as plan_store
 
 @pytest.fixture(autouse=True)
 def setup_session(tmp_path: Path):
@@ -250,6 +251,47 @@ def test_plan_next_all_steps_terminal() -> None:
     assert_error(rejected, "ValidationError")
 
 
+def test_persist_plan_update_writes_temp_then_event_then_snapshot(monkeypatch, tmp_path: Path) -> None:
+    plan_file = tmp_path / "plan.json"
+    events_file = tmp_path / "plan_events.jsonl"
+    plan = {"plan_id": "p1", "version": 1}
+    calls = []
+    original_write_json_temp = plan_store.write_json_temp
+    original_append_event = plan_store.append_event
+    original_replace = plan_store.os.replace
+
+    def record_temp(path, data):
+        calls.append("temp")
+        return original_write_json_temp(path, data)
+
+    def record_append(path, event):
+        calls.append("append")
+        return original_append_event(path, event)
+
+    def record_replace(src, dst):
+        calls.append("replace")
+        return original_replace(src, dst)
+
+    monkeypatch.setattr(plan_store, "write_json_temp", record_temp)
+    monkeypatch.setattr(plan_store, "append_event", record_append)
+    monkeypatch.setattr(plan_store.os, "replace", record_replace)
+
+    plan_store.persist_plan_update(
+        plan=plan,
+        plan_file=plan_file,
+        events_file=events_file,
+        event_type="step_updated",
+        payload={"step_id": "s1"},
+    )
+
+    if calls != ["temp", "append", "replace"]:
+        raise AssertionError(f"Expected temp snapshot, event, replace sequence, got: {calls}")
+    if json.loads(plan_file.read_text(encoding="utf-8"))["version"] != 2:
+        raise AssertionError("Expected updated plan snapshot to be written.")
+    if len(events_file.read_text(encoding="utf-8").splitlines()) != 1:
+        raise AssertionError("Expected exactly one plan event.")
+
+
 def main() -> int:
     temp_root = PROJECT_ROOT / "test" / "__plan_tool_tmp_sessions__"
     sid = "sid_test_plan"
@@ -274,6 +316,11 @@ def main() -> int:
             raise AssertionError("Expected plan_events.jsonl to be created.")
         if len(events.read_text(encoding="utf-8").splitlines()) < 3:
             raise AssertionError("Expected multiple plan events.")
+        monkeypatch = pytest.MonkeyPatch()
+        try:
+            test_persist_plan_update_writes_temp_then_event_then_snapshot(monkeypatch, temp_root)
+        finally:
+            monkeypatch.undo()
         print("All plan tool tests passed.")
         return 0
     finally:

@@ -26,8 +26,10 @@ class SessionFiles:
                     return json.load(f)
         except Timeout as e:
             raise RuntimeError(f"Session is currently in use by another process. Failed to acquire lock for: {path}") from e
-        except Exception:
-            return None
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Corrupted JSON file: {path}: {e}") from e
+        except OSError as e:
+            raise RuntimeError(f"Failed to read JSON file: {path}: {e}") from e
 
     def write_json(self, path: str, data: dict) -> None:
         tmp = f"{path}.{uuid.uuid4().hex}.tmp"

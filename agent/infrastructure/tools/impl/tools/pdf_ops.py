@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent.application.runtime.cancellation import CancellationToken
 from agent.domain import tool_error, tool_ok
 
 _MAX_PAGES_PER_CALL = 30
@@ -11,11 +12,33 @@ _TEXT_THRESHOLD = 50  # chars — below this, page is considered scanned/image
 _IMAGE_THRESHOLD = 10  # images — above this, page is treated as scanned even with text
 
 
+class _PdfCancelled(Exception):
+    pass
+
+
+def _cancelled(token: CancellationToken | None) -> str | None:
+    if token and token.is_cancelled:
+        reason = token.reason or "cancelled"
+        return tool_error(
+            "read_pdf",
+            f"Tool cancelled: {reason}",
+            "Cancelled",
+            meta={"reason": token.reason},
+        )
+    return None
+
+
+def _raise_if_cancelled(token: CancellationToken | None) -> None:
+    if token and token.is_cancelled:
+        raise _PdfCancelled
+
+
 def read_pdf(
     file_path: str,
     start_page: int = 1,
     end_page: int | None = None,
     force_ocr: bool = False,
+    _cancellation_token: CancellationToken | None = None,
 ) -> str:
     """Parse a PDF file and return structured markdown text.
     Supports both text-based and image-based (scanned) PDFs.
@@ -26,6 +49,8 @@ def read_pdf(
     :param force_ocr: Force OCR even for text pages
     """
     try:
+        if cancelled := _cancelled(_cancellation_token):
+            return cancelled
         import pymupdf
 
         path = Path(file_path)
@@ -59,6 +84,7 @@ def read_pdf(
             # Classify only the requested slice (text length + image count)
             page_types: dict[int, str] = {}
             for i in requested_pages:
+                _raise_if_cancelled(_cancellation_token)
                 text = doc[i].get_text().strip()
                 image_count = len(doc[i].get_images(full=True))
                 is_scanned = len(text) < _TEXT_THRESHOLD or image_count > _IMAGE_THRESHOLD
@@ -67,12 +93,18 @@ def read_pdf(
             scanned_count = sum(1 for p in requested_pages if page_types.get(p, "text") == "scanned")
             needs_ocr = force_ocr or scanned_count > len(requested_pages) * 0.5
 
-            markdown_parts = _extract_pages(doc, requested_pages, force_ocr=needs_ocr)
+            markdown_parts = _extract_pages(
+                doc,
+                requested_pages,
+                force_ocr=needs_ocr,
+                cancellation_token=_cancellation_token,
+            )
 
         # Enhance text pages with pdfplumber tables (separate context)
         text_page_indices = [p for p in requested_pages if page_types.get(p, "text") == "text" and not needs_ocr]
         if text_page_indices:
-            table_md = _extract_tables(path, text_page_indices)
+            _raise_if_cancelled(_cancellation_token)
+            table_md = _extract_tables(path, text_page_indices, cancellation_token=_cancellation_token)
             if table_md:
                 markdown_parts = markdown_parts + "\n\n### 表格数据\n\n" + table_md
 
@@ -83,6 +115,7 @@ def read_pdf(
             "",
         ]
         for i, page_idx in enumerate(requested_pages):
+            _raise_if_cancelled(_cancellation_token)
             header = f"---\n## Page {page_idx + 1}\n---"
             content = markdown_parts[i] if i < len(markdown_parts) else ""
             output_lines.append(header)
@@ -101,24 +134,49 @@ def read_pdf(
                 "has_more": end < total_pages,
             },
         )
+    except _PdfCancelled:
+        if cancelled := _cancelled(_cancellation_token):
+            return cancelled
+        return tool_error("read_pdf", "Tool cancelled: cancelled", "Cancelled")
     except Exception as e:
         return tool_error("read_pdf", f"解析错误: {e}", type(e).__name__)
 
 
-def _extract_pages(doc, page_indices: list[int], *, force_ocr: bool = False) -> list[str]:
+def _extract_pages(
+    doc,
+    page_indices: list[int],
+    *,
+    force_ocr: bool = False,
+    cancellation_token: CancellationToken | None = None,
+) -> list[str]:
     """Extract markdown text for specified pages, one at a time to isolate failures."""
     results: list[str] = []
     for page_idx in page_indices:
+        _raise_if_cancelled(cancellation_token)
         try:
-            text = _extract_single_page(doc, page_idx, force_ocr=force_ocr)
+            text = _extract_single_page(
+                doc,
+                page_idx,
+                force_ocr=force_ocr,
+                cancellation_token=cancellation_token,
+            )
             results.append(text)
+        except _PdfCancelled:
+            raise
         except Exception:
             results.append(f"[第{page_idx + 1}页: 解析失败]")
     return results
 
 
-def _extract_single_page(doc, page_idx: int, *, force_ocr: bool = False) -> str:
+def _extract_single_page(
+    doc,
+    page_idx: int,
+    *,
+    force_ocr: bool = False,
+    cancellation_token: CancellationToken | None = None,
+) -> str:
     """Extract text from a single page. Uses fast render+OCR for scanned pages."""
+    _raise_if_cancelled(cancellation_token)
     page = doc[page_idx]
     image_count = len(page.get_images(full=True))
 
@@ -132,27 +190,33 @@ def _extract_single_page(doc, page_idx: int, *, force_ocr: bool = False) -> str:
                 pages=[page_idx],
                 force_ocr=False,
             )
+            _raise_if_cancelled(cancellation_token)
             text = pages[0].get("text", "").strip() if pages else ""
             if len(text) >= _TEXT_THRESHOLD:
                 return text
+        except _PdfCancelled:
+            raise
         except Exception:
             pass
 
-    return _ocr_page(doc, page_idx)
+    return _ocr_page(doc, page_idx, cancellation_token=cancellation_token)
 
 
-def _ocr_page(doc, page_idx: int) -> str:
+def _ocr_page(doc, page_idx: int, cancellation_token: CancellationToken | None = None) -> str:
     """Render a page to image and run RapidOCR on it. One image, one OCR call."""
     from rapidocr_onnxruntime import RapidOCR
     import numpy as np
 
+    _raise_if_cancelled(cancellation_token)
     page = doc[page_idx]
     pix = page.get_pixmap(dpi=150)
 
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, pix.n)
 
     ocr = RapidOCR()
+    _raise_if_cancelled(cancellation_token)
     result, _ = ocr(img)
+    _raise_if_cancelled(cancellation_token)
 
     if not result:
         return f"[第{page_idx + 1}页: OCR解析失败，该页可能为纯图片或空白页]"
@@ -161,17 +225,23 @@ def _ocr_page(doc, page_idx: int) -> str:
     return "\n\n".join(lines)
 
 
-def _extract_tables(path: Path, page_indices: list[int]) -> str:
+def _extract_tables(
+    path: Path,
+    page_indices: list[int],
+    cancellation_token: CancellationToken | None = None,
+) -> str:
     """Extract tables from text-based pages using pdfplumber."""
     import pdfplumber
 
     tables_out: list[str] = []
     with pdfplumber.open(str(path)) as pdf:
         for page_idx in page_indices:
+            _raise_if_cancelled(cancellation_token)
             if page_idx >= len(pdf.pages):
                 continue
             page = pdf.pages[page_idx]
             found = page.find_tables()
+            _raise_if_cancelled(cancellation_token)
             for table in found:
                 data = table.extract()
                 if data and len(data) > 0:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.application import ContextBudget, ContextEstimator, ContextManager, ToolExecutor, JobService
+from agent.application import ContextBudget, ContextEstimator, ContextManager, ToolExecutor
 from agent.application.services.skill_selector import SkillSelector
 from agent.application.runtime.async_runtime_facade import AsyncRuntimeFacade
 from agent.application.runtime.async_turn_runner import AsyncTurnRunner
@@ -10,7 +10,6 @@ from agent.application.runtime.message_stream_parser import MessageStreamParser
 from agent.application.ports.async_session_store import AsyncSessionStore
 from agent.infrastructure.config import Config
 from agent.infrastructure.llm.openai_async_chat_client import AsyncOpenAIChatClient
-from agent.infrastructure.persistence import JobStoreJsonl, TaskOutputStoreFile
 from agent.infrastructure.persistence.async_jsonl_session_store import AsyncJsonlSessionStore
 from agent.infrastructure.plans import PlanContextProvider
 from agent.infrastructure.skills import SkillRepository
@@ -37,11 +36,6 @@ def build_basic_agent_dependencies(
         model=model,
         system_prompt=SYSTEM_PROMPT,
     )
-    
-    store_dir = AsyncJsonlSessionStore.resolve_session_root(session_dir)
-    job_store = JobStoreJsonl(directory=store_dir)
-    output_store = TaskOutputStoreFile(directory=store_dir)
-    job_service = JobService(job_store=job_store, output_store=output_store)
 
     tool_registry = DefaultToolRegistry(schemas=tools)
     tool_executor = ToolExecutor(registry=tool_registry)
@@ -92,7 +86,6 @@ def build_basic_agent_dependencies(
         "tool_registry": tool_registry,
         "runtime": runtime,
         "cli": cli,
-        "job_service": job_service,
         "skill_repository": skill_repository,
         "skill_selector": skill_selector,
         "plan_context_provider": plan_context_provider,

@@ -64,6 +64,23 @@ class InterruptibleRuntime:
         return self.stream
 
 
+class InterruptibleSlashRuntime:
+    def __init__(self):
+        self.received_token = None
+
+    async def compact_context(self, reason="manual", cancellation_token=None):
+        self.received_token = cancellation_token
+        await cancellation_token.wait()
+        return {
+            "id": "compact_cancelled",
+            "source": {
+                "message_start_index": 0,
+                "message_end_index_exclusive": 0,
+                "tool_call_ids": [],
+            },
+        }
+
+
 class FakeSession:
     pass
 
@@ -153,10 +170,34 @@ def test_run_turn_blocking_cancels_and_closes_stream_on_interrupt() -> None:
             loop.close()
 
 
+def test_run_slash_command_blocking_cancels_and_settles_on_interrupt() -> None:
+    runtime = InterruptibleSlashRuntime()
+    cli = ChatCLI(runtime=runtime, session=FakeSession())
+    loop = InterruptingLoop()
+    cli._event_loop = loop
+
+    try:
+        try:
+            cli._run_slash_command_blocking("/compact")
+        except KeyboardInterrupt:
+            pass
+        else:
+            raise AssertionError("Expected interrupt to propagate after slash command cleanup")
+
+        if runtime.received_token is None or not runtime.received_token.is_cancelled:
+            raise AssertionError("Expected slash command cancellation token to be cancelled")
+        if loop.task is None or not loop.task.done():
+            raise AssertionError("Expected interrupted slash command task to settle")
+    finally:
+        if not loop.is_closed():
+            loop.close()
+
+
 def main() -> int:
     test_run_turn_async_closes_event_stream_and_passes_token()
     test_shutdown_loop_cancels_pending_tasks()
     test_run_turn_blocking_cancels_and_closes_stream_on_interrupt()
+    test_run_slash_command_blocking_cancels_and_settles_on_interrupt()
     print("ChatCLI shutdown tests passed.")
     return 0
 

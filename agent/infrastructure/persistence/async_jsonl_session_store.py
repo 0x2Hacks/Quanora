@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
 import uuid
@@ -53,6 +54,8 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
         self._message_count = 0
         self._tool_call_count = 0
         self._last_preview = ""
+        self._projected_messages_cache_key = None
+        self._projected_messages_cache = None
         
         self._files = SessionFiles()
         self._msg_repo = None
@@ -141,6 +144,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
         open(self._session_paths["tool_calls"], "a", encoding="utf-8").close()
         
         self._setup_repos()
+        self._invalidate_projection_cache()
         
         now = self.now_iso()
         self._message_count = 0
@@ -166,6 +170,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
             raise ValueError("Unsupported legacy session schema; start a new session.")
             
         self._setup_repos()
+        self._invalidate_projection_cache()
         
         self._session_meta = meta
         original_window = self._session_meta.get("auto_compact_window")
@@ -236,6 +241,41 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
         self._files.write_json(self._session_paths["meta"], self._session_meta)
         self._update_index()
 
+    def _invalidate_projection_cache(self) -> None:
+        self._projected_messages_cache_key = None
+        self._projected_messages_cache = None
+
+    def _projection_file_signature(self, path: str | None) -> tuple[int, int]:
+        if not path:
+            return (0, 0)
+        try:
+            stat = os.stat(path)
+        except FileNotFoundError:
+            return (0, 0)
+        return (int(stat.st_size), int(stat.st_mtime_ns))
+
+    def _projection_cache_key_sync(self) -> tuple[Any, ...]:
+        paths = self._session_paths or {}
+        return (
+            self._system_prompt,
+            self._projection_file_signature(paths.get("messages")),
+            self._projection_file_signature(paths.get("tool_calls")),
+            self._projection_file_signature(paths.get("compactions")),
+        )
+
+    def _projected_messages_sync(self) -> list[dict[str, Any]]:
+        key = self._projection_cache_key_sync()
+        if self._projected_messages_cache_key == key and self._projected_messages_cache is not None:
+            return copy.deepcopy(self._projected_messages_cache)
+
+        messages = self._msg_repo.load_messages() if self._msg_repo else []
+        tool_records = self._tool_repo.load_tool_calls() if self._tool_repo else []
+        compactions = self._compaction_repo.load_compactions() if self._compaction_repo else []
+        built_messages = project_messages(messages, tool_records, compactions, self._system_prompt)
+        self._projected_messages_cache_key = key
+        self._projected_messages_cache = copy.deepcopy(built_messages)
+        return copy.deepcopy(built_messages)
+
     def _auto_compact_window_sync(self) -> dict[str, Any]:
         if not isinstance(self._session_meta, dict):
             return default_auto_compact_window()
@@ -269,6 +309,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
         has_system = any(isinstance(m, dict) and m.get("role") == "system" for m in messages)
         if not has_system and self._system_prompt:
             self._msg_repo.persist_message(self.now_iso(), "system", self._system_prompt)
+            self._invalidate_projection_cache()
             self._message_count += 1
             if self._session_meta:
                 self._session_meta["message_count"] = self._message_count
@@ -312,6 +353,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                 if not self._msg_repo:
                     return
                 self._msg_repo.persist_message(self.now_iso(), role, content, tool_call_id, tool_name, meta)
+                self._invalidate_projection_cache()
                 self._message_count += 1
                 if role == "assistant" and content:
                     self._last_preview = content[:200]
@@ -354,6 +396,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                     model_content_policy=model_content_policy,
                     artifact_ref=artifact_ref,
                 )
+                self._invalidate_projection_cache()
                 self._tool_call_count += 1
                 if self._session_meta:
                     self._session_meta["tool_call_count"] = self._tool_call_count
@@ -381,11 +424,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
         roles: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         def _get():
-            messages = self._msg_repo.load_messages() if self._msg_repo else []
-            tool_records = self._tool_repo.load_tool_calls() if self._tool_repo else []
-            compactions = self._compaction_repo.load_compactions() if self._compaction_repo else []
-            built_messages = project_messages(messages, tool_records, compactions, self._system_prompt)
-                
+            built_messages = self._projected_messages_sync()
             if roles:
                 allowed_roles = set(roles)
                 built_messages = [message for message in built_messages if message.get("role") in allowed_roles]
@@ -475,6 +514,7 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                     "",
                     meta={"kind": "compact_boundary", "compact_id": compact_id},
                 )
+                self._invalidate_projection_cache()
                 self._message_count += 1
                 if self._session_meta:
                     self._session_meta["message_count"] = self._message_count

@@ -62,6 +62,7 @@ _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
             "file_path": "文件绝对或相对路径",
             "offset": "起始行号（默认 1）",
             "limit": "最多读取的行数（默认 1000 行，最大 2000 行；超过会被截断）",
+            "include_total": "是否继续扫描到 EOF 以返回精确总行数。默认 False，仅读取请求页和一行 lookahead。",
         },
     },
     "read_pdf": {
