@@ -504,3 +504,88 @@ def test_build_system_prompt_self_doc_includes_scenario_routing():
     assert "优化已有文档" in p
     assert "请选择文档操作场景" in p
     assert "请提供目标 Markdown 文件名称" in p
+
+
+# ===========================================================================
+# Onboarding trigger tests
+# ===========================================================================
+
+class TestSelfDocOnboardingTrigger:
+    """Tests for the __SELF_DOC_ONBOARDING__ auto-kickoff mechanism.
+
+    Mirrors the pattern established by TestQuantPhase0Onboarding in
+    test_quant_phase0.py for the __QUANT_ONBOARDING__ trigger.
+    """
+
+    def test_prompt_contains_onboarding_section(self):
+        """The prompt must contain an AUTO-KICKOFF section for self-doc."""
+        from agent.prompts import SELF_DOC_MODE_PROMPT
+
+        assert "AUTO-KICKOFF" in SELF_DOC_MODE_PROMPT
+
+    def test_prompt_contains_onboarding_trigger(self):
+        """The prompt must reference the __SELF_DOC_ONBOARDING__ trigger."""
+        from agent.prompts import SELF_DOC_MODE_PROMPT
+
+        assert "__SELF_DOC_ONBOARDING__" in SELF_DOC_MODE_PROMPT
+
+    def test_prompt_contains_onboarding_greeting_template(self):
+        """The prompt must contain the welcome greeting with scenario and
+        filename questions."""
+        from agent.prompts import SELF_DOC_MODE_PROMPT
+
+        # Greeting must tell the user what to provide
+        assert "Welcome to Self-Doc Mode" in SELF_DOC_MODE_PROMPT
+        # Scenario selection (A/B)
+        assert "A" in SELF_DOC_MODE_PROMPT
+        assert "B" in SELF_DOC_MODE_PROMPT
+        assert "初次生成" in SELF_DOC_MODE_PROMPT
+        assert "优化已有文档" in SELF_DOC_MODE_PROMPT
+        # Filename question
+        assert "Markdown 文件名称" in SELF_DOC_MODE_PROMPT
+
+    def test_cli_loop_sends_onboarding_trigger(self):
+        """ChatCLI._loop should send __SELF_DOC_ONBOARDING__ when
+        _self_doc is True."""
+        import inspect
+        from agent.interfaces.cli.chat_cli import ChatCLI
+
+        source = inspect.getsource(ChatCLI._loop)
+        assert "__SELF_DOC_ONBOARDING__" in source
+        assert "_self_doc" in source
+
+    def test_cli_init_accepts_self_doc_parameter(self):
+        """ChatCLI.__init__ must accept a self_doc parameter."""
+        import inspect
+        from agent.interfaces.cli.chat_cli import ChatCLI
+
+        sig = inspect.signature(ChatCLI.__init__)
+        assert "self_doc" in sig.parameters
+
+    def test_cli_onboarding_guarded_by_self_doc_flag(self):
+        """The onboarding trigger must be guarded by an 'if self._self_doc'
+        check so it only fires in self-doc mode."""
+        import inspect
+        from agent.interfaces.cli.chat_cli import ChatCLI
+
+        source = inspect.getsource(ChatCLI._loop)
+        # Find the __SELF_DOC_ONBOARDING__ injection block
+        assert "self._self_doc" in source
+        assert "__SELF_DOC_ONBOARDING__" in source
+
+    def test_container_passes_self_doc_to_chat_cli(self):
+        """build_basic_agent_dependencies must pass self_doc to ChatCLI."""
+        import inspect
+        from agent.bootstrap.container import build_basic_agent_dependencies
+
+        source = inspect.getsource(build_basic_agent_dependencies)
+        assert "self_doc=self_doc" in source
+
+    def test_build_system_prompt_includes_onboarding_trigger(self):
+        """build_system_prompt(self_doc=True) must include the
+        __SELF_DOC_ONBOARDING__ trigger instruction."""
+        from agent.prompts import build_system_prompt
+
+        p = build_system_prompt(self_doc=True)
+        assert "__SELF_DOC_ONBOARDING__" in p
+        assert "AUTO-KICKOFF" in p

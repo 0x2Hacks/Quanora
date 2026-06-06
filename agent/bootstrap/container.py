@@ -108,7 +108,7 @@ def build_basic_agent_dependencies(
     
     runtime = AsyncRuntimeFacade(turn_runner=turn_runner, session_store=session)
     
-    cli = ChatCLI(runtime=runtime, session=session, debug=debug, self_dev=self_dev, self_quant=self_quant)
+    cli = ChatCLI(runtime=runtime, session=session, debug=debug, self_dev=self_dev, self_quant=self_quant, self_doc=self_doc)
 
     return {
         "chat_client": async_chat_client,

@@ -56,6 +56,44 @@
         "m5"
       ],
       "created_at": 1779951507.0446224
+    },
+    {
+      "id": "re_24d6b1be7372",
+      "project_id": "spec_xauusd_timeseries_signal_backtest_spec_md_backtest",
+      "strategy_name": "spot_control_futures_pump",
+      "strategy_category": "other",
+      "expression": "",
+      "parameters": {},
+      "instrument": "LAB",
+      "universe": "",
+      "region": "",
+      "timeframe": "daily",
+      "date_range": "2025-10~2026-06",
+      "market_regime": "high_volatility",
+      "outcome": "insight",
+      "performance": {},
+      "what_worked": "直接从CoinMarketCap/Coinglass获取LAB实时数据，从脉脉/Gate.io研究报告获取RAVE操纵流水线深度分析",
+      "what_failed": "通用搜索引擎(search_web)对LAB/RAVE/SIREN等代币名识别率极低，无法获取深度分析",
+      "key_insight": "LAB 368x 涨幅验证了\"控盘现货+拉盘合约\"五阶段模型：OTC囤积→现货控盘→合约上线→拉盘收割→出货反手。超低流通率(31%)是最强信号，合约/现货22:1交易量比是深度极薄的直接证据。",
+      "pitfalls": [
+        "搜索引擎无法识别LAB作为加密货币关键词，需直接访问CoinMarketCap/Coinglass",
+        "中文'妖币'搜索效果极差，需使用英文关键词如low float manipulation",
+        "LAB关键词与实验室含义冲突，搜索需加crypto/binance限定词"
+      ],
+      "next_steps": [],
+      "source_session_id": "",
+      "source_turn_id": "",
+      "tags": [
+        "LAB",
+        "RAVE",
+        "SIREN",
+        "控盘",
+        "short_squeeze",
+        "低流通",
+        "Binance_Alpha",
+        "资金费率"
+      ],
+      "created_at": 1780716462.4910905
     }
   ]
 }
