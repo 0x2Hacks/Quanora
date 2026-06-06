@@ -1205,7 +1205,82 @@ The task git system guarantees strict isolation from the agent git:
 ⚠ If you detect a `.git/` directory inside a task workspace that
   was NOT created by `task_git_init`, report it to the user — it
   may indicate a nested repo violation.
+
+═══════════════════════════════════════════════════════════════════════════
+ §8  STRICT DEFAULTS — DO NOT OVERRIDE WITHOUT USER CONSENT
+═══════════════════════════════════════════════════════════════════════════
+
+In quant-research mode, **default parameters exist for a reason**: they are
+the baseline against which all experiments are measured.  Changing them
+silently invalidates comparisons, wastes compute, and produces results that
+cannot be reproduced or compared with prior work.
+
+**ABSOLUTE PROHIBITIONS (unless the user EXPLICITLY requests a change):**
+
+1. **Do NOT change data frequency / timeframe.**
+   - Default: daily (D1).  Do NOT switch to M5, M15, H1, H4, weekly, etc.
+     unless the user specifically asks for a different timeframe.
+
+2. **Do NOT change the stock universe.**
+   - Default: TOP3000 (USA).  Do NOT switch to TOP500, TOP200, etc.
+     unless the user specifically requests it.
+
+3. **Do NOT change WorldQuant Brain simulation defaults.**
+   - delay: 1  →  Do NOT use delay=0 or delay=5.
+   - neutralization: INDUSTRY  →  Do NOT use MARKET, SECTOR, or NONE.
+   - truncation: 0.08  →  Do NOT change to 0.05, 0.1, etc.
+   - decay: 0  →  Do NOT change unless asked.
+   - region: USA  →  Do NOT switch to CHN, EUR, etc. unless asked.
+
+4. **Do NOT change default indicator parameters.**
+   - MACD: 12/26/9  →  Do NOT use 8/21/5 etc. unless asked.
+   - RSI: 14  →  Do NOT use 7 or 21 unless asked.
+   - Bollinger Bands: 20, 2σ  →  Do NOT change unless asked.
+   - ATR: 14  →  Do NOT change unless asked.
+   - Moving averages: 20/50/200  →  Do NOT change unless asked.
+
+5. **Do NOT change default backtest window.**
+   - Use the platform's default date range.  Do NOT narrow or widen it
+     unless the user explicitly requests it.
+
+**If you believe a non-default parameter would significantly improve results:**
+- STOP and ASK the user first: "I'd like to try [parameter=X] because
+  [reason]. Shall I proceed?"
+- ONLY proceed after receiving explicit user approval.
+- NEVER silently change a default and run the experiment.
+
+**Rationale:** Every time a default is silently overridden, the result
+becomes incomparable with the baseline.  This wastes research budget and
+creates confusion.  If the user wants to explore a different parameter
+space, they will tell you.
 </self_quant_mode>
+"""
+
+# ──────────────────────────────────────────────────────────────────────
+# Compact defaults guard — injected into the system prompt ONLY when
+# quant-research mode is active.  The full SELF_QUANT_MODE_PROMPT (with
+# rationale, examples, etc.) is printed to the console instead.
+# ──────────────────────────────────────────────────────────────────────
+
+QUANT_DEFAULTS_GUARD = """
+<quant_defaults_guard priority="ABSOLUTE">
+In quant-research mode you MUST NOT silently override default parameters.
+Defaults are the baseline for all experiments — changing them silently
+makes results incomparable and wastes research budget.
+
+**PROHIBITED without explicit user request:**
+- Changing data frequency/timeframe (default: daily D1)
+- Changing stock universe (default: TOP3000 USA)
+- Changing WQ Brain simulation params: delay=1, neutralization=INDUSTRY,
+  truncation=0.08, decay=0, region=USA
+- Changing indicator params: MACD 12/26/9, RSI 14, BB 20/2σ, ATR 14,
+  MA 20/50/200
+- Changing backtest date range from platform default
+
+**If you believe a non-default value would help:** STOP and ASK the user
+first.  Only proceed after explicit approval.  NEVER silently change a
+default and run the experiment.
+</quant_defaults_guard>
 """
 
 def build_system_prompt(
@@ -1213,8 +1288,7 @@ def build_system_prompt(
     self_doc: bool = False,
     self_quant: bool = False,
 ) -> str:
-    """Assemble the system prompt, optionally including the self-dev,
-    self-doc, or self-quant addendum.
+    """Assemble the system prompt.
 
     The bootstrap container calls this once at startup; the value is then
     persisted at the head of the session log so it survives session resumes.
@@ -1222,12 +1296,25 @@ def build_system_prompt(
     ``self_dev``, ``self_doc``, and ``self_quant`` are mutually exclusive.
     If more than one is True, ``self_dev`` takes precedence (it is the most
     permissive), then ``self_doc``.
+
+    NOTE: SELF_DEV_MODE_PROMPT and SELF_QUANT_MODE_PROMPT are NO LONGER
+    injected into the system prompt fed to the LLM.  They are printed
+    directly to the console at startup instead (see chat_cli.py
+    _render_banner).  This saves significant context-window tokens while
+    still surfacing the rules to the user.  If the user later reports that
+    the LLM needs to see certain rules, we can re-inject a minimal subset.
     """
     base = SYSTEM_PROMPT
+    # Self-dev / self-quant prompts are now printed to console, not fed to LLM.
+    # See chat_cli._render_banner() for the console print.
+    # However, in quant mode we inject a MINIMAL defaults guard so the LLM
+    # actually obeys the "do not override defaults" rule.  The full prompt
+    # (with rationale, examples, etc.) lives in SELF_QUANT_MODE_PROMPT and
+    # is only printed to the console.
     if self_dev:
-        return base + SELF_DEV_MODE_PROMPT
+        return base
     if self_doc:
         return base + SELF_DOC_MODE_PROMPT
     if self_quant:
-        return base + SELF_QUANT_MODE_PROMPT
+        base += QUANT_DEFAULTS_GUARD
     return base

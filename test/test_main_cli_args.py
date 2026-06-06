@@ -86,31 +86,36 @@ def test_quant_research_mode_mutual_exclusion() -> None:
 
 
 def test_quant_research_prompt_injected() -> None:
-    """build_system_prompt(self_quant=True) should include the quant addendum."""
+    """build_system_prompt(self_quant=True) should include the defaults guard
+    but NOT the full self_quant_mode prompt (that is printed to console)."""
     from agent.prompts import build_system_prompt
 
     prompt = build_system_prompt(self_quant=True)
-    assert "self_quant_mode" in prompt, "Missing <self_quant_mode> tag"
-    assert "QUANT-RESEARCH MODE" in prompt, "Missing QUANT-RESEARCH MODE header"
-    assert "MANDATORY RESEARCH LIFECYCLE" in prompt, "Missing lifecycle section"
-    assert "ONBOARDING" in prompt, "Missing onboarding section"
+    # The full SELF_QUANT_MODE_PROMPT is printed to console, not in LLM prompt
+    assert "self_quant_mode" not in prompt, "Full <self_quant_mode> should NOT be in LLM prompt"
+    # But the compact defaults guard IS injected
+    assert "quant_defaults_guard" in prompt, "Missing <quant_defaults_guard> tag"
+    assert "PROHIBITED without explicit user request" in prompt, "Missing defaults guard rules"
 
 
 def test_quant_research_prompt_exclusivity() -> None:
-    """self_quant and self_dev / self_doc should be mutually exclusive in prompt."""
+    """self_quant and self_dev should be mutually exclusive in prompt.
+    self_dev no longer injects its prompt; self_quant injects the guard."""
     from agent.prompts import build_system_prompt
 
-    # self_dev takes precedence
+    # self_dev takes precedence — neither self_quant_mode nor guard present
     p = build_system_prompt(self_dev=True, self_quant=True)
-    assert "self_dev_mode" in p and "self_quant_mode" not in p
+    assert "self_dev_mode" not in p and "self_quant_mode" not in p
+    assert "quant_defaults_guard" not in p
 
     # self_doc takes precedence over self_quant
     p = build_system_prompt(self_doc=True, self_quant=True)
     assert "self_doc_mode" in p and "self_quant_mode" not in p
 
-    # self_quant alone works
+    # self_quant alone — guard present, no full mode prompts
     p = build_system_prompt(self_quant=True)
-    assert "self_quant_mode" in p and "self_dev_mode" not in p and "self_doc_mode" not in p
+    assert "self_quant_mode" not in p and "self_dev_mode" not in p and "self_doc_mode" not in p
+    assert "quant_defaults_guard" in p
 
 
 def test_container_accepts_self_quant() -> None:
