@@ -12,21 +12,6 @@ from agent.application.runtime.cancellation import CancellationToken
 class MessageStreamParser:
     """Parses OpenAI-compatible message streams and structures."""
 
-    def parse_tool_calls_from_message(self, assistant_message) -> list[ParsedToolCall]:
-        """Extract tool calls from a non-streaming assistant message."""
-        calls: list[ParsedToolCall] = []
-        if not assistant_message.tool_calls:
-            return calls
-        for item in assistant_message.tool_calls:
-            calls.append(
-                ParsedToolCall(
-                    call_id=item.id,
-                    name=item.function.name,
-                    raw_args=item.function.arguments or "",
-                )
-            )
-        return calls
-
     async def consume_async_stream(
         self,
         response: AsyncIterator[Any],

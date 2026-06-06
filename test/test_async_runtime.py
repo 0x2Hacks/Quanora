@@ -54,7 +54,6 @@ async def test_async_turn_runner_stream():
     mock_processor.execute_tool_calls = MagicMock()
     
     mock_parser = MagicMock()
-    mock_parser.parse_tool_calls_from_message.return_value = []
     
     # We must mock consume_async_stream because AsyncTurnRunner uses it
     async def mock_consume(*args, **kwargs):
