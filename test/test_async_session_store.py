@@ -129,6 +129,25 @@ def test_session_files_load_json_waits_for_active_writer(tmp_path):
     assert read_result == [{"schema_version": "2.0"}]
 
 
+def test_session_files_write_json_removes_tmp_on_replace_failure(monkeypatch, tmp_path):
+    path = tmp_path / "meta.json"
+    files = SessionFiles()
+    real_replace = os.replace
+
+    def fail_after_tmp(src, dst):
+        if str(dst) == str(path):
+            raise OSError("replace failed")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", fail_after_tmp)
+
+    with pytest.raises(OSError, match="replace failed"):
+        files.write_json(str(path), {"schema_version": "2.0"})
+
+    leftovers = list(tmp_path.glob("meta.json.*.tmp"))
+    assert leftovers == []
+
+
 @pytest.mark.asyncio
 async def test_persist_tool_call_writes_model_content(temp_session_dir):
     store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
@@ -520,6 +539,12 @@ def main() -> int:
             test_session_files_read_jsonl_waits_for_active_writer(Path(tmp))
         with tempfile.TemporaryDirectory() as tmp:
             test_session_files_load_json_waits_for_active_writer(Path(tmp))
+        with tempfile.TemporaryDirectory() as tmp:
+            monkeypatch = pytest.MonkeyPatch()
+            try:
+                test_session_files_write_json_removes_tmp_on_replace_failure(monkeypatch, Path(tmp))
+            finally:
+                monkeypatch.undo()
 
     asyncio.run(_run_all())
     print("AsyncJsonlSessionStore tests passed.")

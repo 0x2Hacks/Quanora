@@ -39,7 +39,11 @@ class SessionFiles:
                     os.fsync(f.fileno())
                 os.replace(tmp, path)
         except Timeout as e:
+            self._remove_tmp(tmp)
             raise RuntimeError(f"Session is currently in use by another process. Failed to acquire lock for: {path}") from e
+        except Exception:
+            self._remove_tmp(tmp)
+            raise
 
     def append_jsonl(self, path: str, data: dict) -> None:
         line = json.dumps(data, ensure_ascii=False)
@@ -67,3 +71,10 @@ class SessionFiles:
                     except Exception:
                         continue
         return items
+
+    def _remove_tmp(self, path: str) -> None:
+        try:
+            if os.path.exists(path):
+                os.unlink(path)
+        except Exception:
+            pass
