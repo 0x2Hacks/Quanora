@@ -10,16 +10,15 @@ from tenacity import RetryError
 
 from agent.application.ports.async_session_store import AsyncSessionStore
 from agent.application.ports.async_chat_client import AsyncChatClient
-from agent.application.services import CompactionService, ContextManager, normalize_sampling_usage
+from agent.application.services import CompactionService, ContextManager
 from agent.application.runtime.cancellation import CancellationToken
+from agent.application.runtime.model_stream_pump import ModelStreamResult, pump_model_stream_events
 from agent.domain.events import (
     RuntimeEvent,
-    AssistantDeltaEvent,
     AssistantMessageCompletedEvent,
     ContextBuiltEvent,
     SkillActivatedEvent,
     ToolRequestedEvent,
-    TokenStatsUpdatedEvent,
     TurnCompletedEvent,
     TurnFailedEvent,
     TurnCancelledEvent,
@@ -141,76 +140,21 @@ class AsyncTurnRunner:
                         cancellation_token=cancellation_token
                     )
 
-                    event_queue = asyncio.Queue()
+                    stream_result = ModelStreamResult()
+                    async for event in pump_model_stream_events(
+                        stream_response=stream_response,
+                        stream_parser=self._stream_parser,
+                        session=session,
+                        turn_id=turn_id,
+                        cancellation_token=cancellation_token,
+                        context_stats=context_stats,
+                        persist_sampling_usage=self._persist_sampling_usage,
+                        result=stream_result,
+                    ):
+                        yield event
 
-                    async def _consume():
-                        try:
-                            async def _on_content_async(text: str):
-                                await event_queue.put(
-                                    AssistantDeltaEvent(
-                                        **event_meta(session, turn_id),
-                                        text=text,
-                                    )
-                                )
-
-                            parsed = await self._stream_parser.consume_async_stream(
-                                stream_response,
-                                _on_content_async,
-                                cancellation_token
-                            )
-                            if isinstance(parsed, tuple) and len(parsed) == 3:
-                                content, calls, usage = parsed
-                            else:
-                                content, calls = parsed
-                                usage = None
-                            if usage is not None:
-                                normalized_usage = normalize_sampling_usage(
-                                    usage,
-                                    sampling_kind="assistant",
-                                    context_window_tokens=int(context_stats.get("context_window_tokens") or 258400),
-                                    effective_context_window_tokens=int(
-                                        context_stats.get("effective_context_window_tokens") or 245480
-                                    ),
-                                )
-                                if normalized_usage:
-                                    await self._persist_sampling_usage(session, normalized_usage)
-                                    await event_queue.put(
-                                        TokenStatsUpdatedEvent(
-                                            **event_meta(session, turn_id),
-                                            stats=normalized_usage,
-                                        )
-                                    )
-                            return content, calls
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as e:
-                            await event_queue.put(e)
-                            return "", []
-                        finally:
-                            try:
-                                await event_queue.put(None)
-                            except asyncio.CancelledError:
-                                event_queue.put_nowait(None)
-
-                    consume_task = asyncio.create_task(_consume())
-
-                    try:
-                        while True:
-                            event = await event_queue.get()
-                            if event is None:
-                                break
-                            if isinstance(event, Exception):
-                                raise event
-                            yield event
-                    finally:
-                        if not consume_task.done():
-                            consume_task.cancel()
-                            try:
-                                await consume_task
-                            except (asyncio.CancelledError, Exception):
-                                pass
-
-                    content_text, parsed_tool_calls = consume_task.result()
+                    content_text = stream_result.content
+                    parsed_tool_calls = stream_result.tool_calls
                     
                     if content_text:
                         await session.persist_message("assistant", content_text)
