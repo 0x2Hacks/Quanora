@@ -81,8 +81,6 @@ async def handle_sessions(context: SlashCommandContext, args: list[str]) -> str:
         return "Sessions are not supported by this session store."
     try:
         sessions = await list_sessions(limit=limit)
-    except TypeError:
-        sessions = await list_sessions()
     except Exception as exc:
         return f"Command failed: {exc}"
     if not sessions:

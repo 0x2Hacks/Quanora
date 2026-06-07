@@ -284,19 +284,11 @@ class AsyncTurnRunner:
         active_skill_matches: list | None,
         allow_rescue: bool = False,
     ):
-        try:
-            return await self._context_manager.build_messages_async(
-                session=session,
-                active_skill_matches=active_skill_matches,
-                allow_rescue=allow_rescue,
-            )
-        except TypeError as exc:
-            if "allow_rescue" not in str(exc):
-                raise
-            return await self._context_manager.build_messages_async(
-                session=session,
-                active_skill_matches=active_skill_matches,
-            )
+        return await self._context_manager.build_messages_async(
+            session=session,
+            active_skill_matches=active_skill_matches,
+            allow_rescue=allow_rescue,
+        )
 
     async def _persist_sampling_usage(self, session: AsyncSessionStore, usage: dict) -> None:
         persist_usage = getattr(session, "persist_sampling_usage", None)
