@@ -8,7 +8,7 @@ from typing import Any
 from bs4 import BeautifulSoup
 
 from agent.application.runtime.cancellation import CancellationToken
-from agent.domain import tool_error, tool_ok
+from agent.domain import tool_cancelled, tool_error, tool_ok
 
 # ---------------------------------------------------------------------------
 # HTTP session (curl_cffi with Chrome TLS fingerprint impersonation)
@@ -28,13 +28,7 @@ _SESSION = None
 
 def _cancelled(tool_name: str, token: CancellationToken | None) -> str | None:
     if token and token.is_cancelled:
-        reason = token.reason or "cancelled"
-        return tool_error(
-            tool_name,
-            f"Tool cancelled: {reason}",
-            "Cancelled",
-            meta={"reason": token.reason},
-        )
+        return tool_cancelled(tool_name, token.reason)
     return None
 
 

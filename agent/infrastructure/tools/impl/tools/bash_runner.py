@@ -11,7 +11,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from agent.domain.tool_result import ToolExecutionResult
-from agent.domain import tool_error, tool_ok
+from agent.domain import tool_cancelled, tool_error, tool_ok
 from agent.application.runtime.cancellation import CancellationToken
 from .bash_session_pool import ShellState
 
@@ -588,15 +588,9 @@ class BashRunner:
             cancelled = await self._wait_for_update_or_exit_or_cancel(bg, wait_ms, cancellation_token)
             if cancelled:
                 reason = cancellation_token.reason if cancellation_token else "cancelled"
-                message_reason = reason or "cancelled"
                 return ToolExecutionResult(
                     status="ok",
-                    result_str=tool_error(
-                        "bash_output",
-                        f"Tool cancelled: {message_reason}",
-                        "Cancelled",
-                        meta={"bg_id": bg_id, "reason": reason},
-                    ),
+                    result_str=tool_cancelled("bash_output", reason),
                     exit_code=-1,
                 )
             stdout, stderr, truncated = self._delta_output(bg, max_output_chars)

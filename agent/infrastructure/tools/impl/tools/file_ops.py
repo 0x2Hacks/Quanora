@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 
 from agent.application.runtime.cancellation import CancellationToken
-from agent.domain import tool_error, tool_ok
+from agent.domain import tool_cancelled, tool_error, tool_ok
 
 _SKIP_DIRS = frozenset({
     ".git", "node_modules", "venv", ".venv", "__pycache__",
@@ -20,13 +20,7 @@ _MAX_LINE_CHARS = 2000
 
 def _cancelled(tool_name: str, token: CancellationToken | None) -> str | None:
     if token and token.is_cancelled:
-        reason = token.reason or "cancelled"
-        return tool_error(
-            tool_name,
-            f"Tool cancelled: {reason}",
-            "Cancelled",
-            meta={"reason": token.reason},
-        )
+        return tool_cancelled(tool_name, token.reason)
     return None
 
 
@@ -370,7 +364,7 @@ def grep(
             except _ToolCancelled:
                 if cancelled := _cancelled("grep", _cancellation_token):
                     return cancelled
-                return tool_error("grep", "Tool cancelled: cancelled", "Cancelled")
+                return tool_cancelled("grep")
             except Exception:
                 continue
 

@@ -1,7 +1,7 @@
 """Domain models and parsing helpers."""
 
 from .tool_payload import ParsedToolCall, looks_like_tool_payload, parse_tool_args
-from .tool_result import ToolExecutionResult, tool_error, tool_ok
+from .tool_result import ToolExecutionResult, tool_cancelled, tool_error, tool_ok
 from .events import (
     RuntimeEvent,
     event_meta,
@@ -27,6 +27,7 @@ __all__ = [
     "looks_like_tool_payload",
     "parse_tool_args",
     "tool_error",
+    "tool_cancelled",
     "tool_ok",
     "RuntimeEvent",
     "event_meta",

@@ -42,3 +42,13 @@ def tool_error(
     if meta is not None:
         payload["meta"] = meta
     return json.dumps(payload, ensure_ascii=False)
+
+
+def tool_cancelled(tool: str, reason: str | None = None) -> str:
+    normalized_reason = reason or "cancelled"
+    return tool_error(
+        tool,
+        f"Tool cancelled: {normalized_reason}",
+        "Cancelled",
+        meta={"reason": normalized_reason},
+    )

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent.application.runtime.cancellation import CancellationToken
-from agent.domain import tool_error, tool_ok
+from agent.domain import tool_cancelled, tool_error, tool_ok
 
 _MAX_PAGES_PER_CALL = 30
 _TEXT_THRESHOLD = 50  # chars — below this, page is considered scanned/image
@@ -18,13 +18,7 @@ class _PdfCancelled(Exception):
 
 def _cancelled(token: CancellationToken | None) -> str | None:
     if token and token.is_cancelled:
-        reason = token.reason or "cancelled"
-        return tool_error(
-            "read_pdf",
-            f"Tool cancelled: {reason}",
-            "Cancelled",
-            meta={"reason": token.reason},
-        )
+        return tool_cancelled("read_pdf", token.reason)
     return None
 
 
@@ -137,7 +131,7 @@ def read_pdf(
     except _PdfCancelled:
         if cancelled := _cancelled(_cancellation_token):
             return cancelled
-        return tool_error("read_pdf", "Tool cancelled: cancelled", "Cancelled")
+        return tool_cancelled("read_pdf")
     except Exception as e:
         return tool_error("read_pdf", f"解析错误: {e}", type(e).__name__)
 
