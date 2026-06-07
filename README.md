@@ -1,10 +1,10 @@
 # 🤖 ChainPeer Agent
 
 ![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)
-![Architecture](https://img.shields.io/badge/Architecture-Hexagonal-success.svg)
+![Architecture](https://img.shields.io/badge/Architecture-Layered-success.svg)
 ![Status](https://img.shields.io/badge/Status-Active-brightgreen.svg)
 
-A highly robust, context-aware, and production-ready Autonomous Coding Agent. Designed with a clean hexagonal architecture, it features **Event Sourcing for session persistence**, a **DAG-based task planner**, and an innovative **Dynamic Context Budgeting** system to manage infinite context streams seamlessly.
+A context-aware autonomous coding agent with a clean layered architecture. It uses **append-only session records** for resume, a **DAG-based plan tool**, and runtime context management built around compaction, tool-result normalization, and context-length rescue.
 
 ---
 
@@ -12,10 +12,10 @@ A highly robust, context-aware, and production-ready Autonomous Coding Agent. De
 
 Most open-source agents suffer from two fatal flaws: they crash when tool outputs are too large, and they lose state if interrupted. ChainPeer solves this with enterprise-grade engineering:
 
-- 🧠 **Infinite Context Illusion**: Utilizes a "Three-Tier Budget" (System/Conversation/Tools). Massive tool outputs are dynamically truncated (Hot/Warm/Cold), and long conversations are transparently summarized in the background. You never hit the `ContextLengthExceeded` wall.
-- 💾 **Event Sourcing & Fail-Safe Resume**: Every message and tool output is appended to a `.jsonl` stream. You can hit `Ctrl+C` anytime. Run `python main.py -c` and the agent will reconstruct its memory exactly where you left off.
-- 🗺️ **DAG Task Planning**: The agent doesn't just guess the next step. It builds a Directed Acyclic Graph (DAG) for complex tasks, executes them with optimistic locking, and blocks dependent tasks until prerequisites are met.
-- 🏗️ **Hexagonal Architecture**: Beautifully decoupled. The `application` layer (brains) is strictly separated from the `infrastructure` layer (hands). Swapping LLM providers or storage engines requires zero changes to the core logic.
+- 🧠 **Context Management**: `ContextManager` builds model input from persisted records, `ContextEstimator` tracks budget pressure, `CompactionService` creates compact handoffs, and `ToolResultNormalizer` keeps large tool outputs model-safe.
+- 💾 **Fail-Safe Resume**: Messages, tool calls, compactions, and session metadata are stored as append-only local records. Run `python main.py -c` to resume the latest session.
+- 🗺️ **DAG Task Planning**: The plan tool validates dependency graphs, persists control state, and blocks dependent steps until prerequisites are completed.
+- 🏗️ **Layered Architecture**: The `application` layer owns runtime orchestration and service logic, `infrastructure` owns LLM/persistence/tool adapters, and `interfaces` exposes the CLI and session API adapters.
 
 ---
 
@@ -77,16 +77,21 @@ ChainPeer strictly follows the Dependency Inversion Principle.
 
 ```text
 agent/
-├── application/       # The Brain: Context Management, Tool Execution routing, Budget Estimators.
-│   ├── services/      # Core logic (e.g., ContextManager, ToolContextPolicy)
-│   └── ports/         # Abstract Interfaces (ChatClient, SessionStore)
-├── infrastructure/    # The Hands: API calls, File I/O, OS interactions.
-│   ├── llm/           # OpenAI Client implementation
-│   ├── persistence/   # Jsonl Session Store (Event Sourcing)
-│   └── tools/impl/    # Tool logic (Bash, File Ops, Plan DAG)
-└── interfaces/        # The Face: CLI, Web UI (Future)
+├── application/
+│   ├── runtime/       # AsyncRuntimeFacade, AsyncTurnRunner, AsyncToolCallProcessor
+│   ├── services/      # ContextManager, ContextEstimator, CompactionService, ToolResultNormalizer
+│   └── ports/         # AsyncChatClient, AsyncSessionStore, ToolRegistry
+├── infrastructure/
+│   ├── llm/           # OpenAI-compatible async chat client
+│   ├── persistence/   # AsyncJsonlSessionStore and record repositories
+│   ├── plans/         # Plan state, DAG validation, plan context injection
+│   └── tools/impl/    # Bash, file, web, PDF, plan, and skill tools
+└── interfaces/
+    ├── cli/           # Interactive CLI, slash commands, status rendering
+    └── api/           # FastAPI session turn streaming
 ```
-*(For detailed Mermaid architecture diagrams, check the `.docs/architecture-diagrams.md` file.)*
+
+Runtime and persistence stream boundaries are documented in `docs/runtime-and-persistence.md`.
 
 ---
 
@@ -107,7 +112,7 @@ We believe in reliable agents. Run the test suite:
 ```bash
 pytest test/ -q
 ```
-*(Includes rigorous tests for Context Budgets, Tool Truncation, and Event Sourcing resume logic).*
+The repository includes focused tests for context budgets, tool-result normalization, compaction, append-only session records, resume behavior, runtime events, plans, skills, and CLI slash commands.
 
 ---
 

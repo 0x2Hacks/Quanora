@@ -1,4 +1,10 @@
-"""Runtime event definitions for conversation and tool execution."""
+"""Runtime event definitions for conversation and tool execution.
+
+Runtime events are live transport/progress signals for CLI and API consumers.
+They are serializable, but they are not the persisted source of truth for
+session reconstruction; persisted messages, tool calls, compactions, and plan
+control records own that responsibility.
+"""
 
 from __future__ import annotations
 
