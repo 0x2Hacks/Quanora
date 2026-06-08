@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from agent.infrastructure.persistence.async_jsonl_session_store import AsyncJsonlSessionStore
 from agent.infrastructure.persistence.session_files import SessionFiles
+from agent.domain.compaction import COMPACT_CONTINUATION_USER_CONTENT
 
 @pytest.fixture
 def temp_session_dir():
@@ -183,6 +184,33 @@ async def test_persist_tool_call_writes_model_content(temp_session_dir):
     assert records[0]["model_content"] == "fixed model content"
     tool_message = next(message for message in messages if message.get("role") == "tool")
     assert tool_message["content"] == "fixed model content"
+
+
+@pytest.mark.asyncio
+async def test_message_projector_deduplicates_tool_messages(temp_session_dir):
+    store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
+    await store.initialize()
+    await store.persist_message("assistant", "", meta={"tool_calls": [{"id": "call_1", "name": "bash"}]})
+    await store.persist_tool_call(
+        call_id="call_1",
+        name="bash",
+        parsed_args={"command": "date"},
+        raw_args='{"command":"date"}',
+        ts_start=store.now_iso(),
+        ts_end=store.now_iso(),
+        result_payload=json.dumps({"ok": True, "tool": "bash", "data": "raw result"}),
+        model_content="fixed model content",
+        model_content_format="tool_result_v1",
+        model_content_policy={"version": "tool_result_v1"},
+        artifact_ref=None,
+    )
+    await store.persist_message("tool", "", tool_call_id="call_1", tool_name="bash")
+
+    messages = await store.get_messages_slice()
+    tool_messages = [message for message in messages if message.get("role") == "tool"]
+
+    assert len(tool_messages) == 1
+    assert tool_messages[0] == {"role": "tool", "tool_call_id": "call_1", "content": "fixed model content"}
 
 
 @pytest.mark.asyncio
@@ -365,7 +393,7 @@ async def test_persist_compaction_appends_boundary_without_rewriting_messages(te
         {
             "id": "compact_1",
             "created_at": store.now_iso(),
-            "policy_version": "compact_boundary_v2",
+            "policy_version": "compact_boundary_v3",
             "source": {
                 "message_start_index": 0,
                 "message_end_index_exclusive": len(before),
@@ -387,9 +415,10 @@ async def test_persist_compaction_appends_boundary_without_rewriting_messages(te
 
     compacted_messages = await store.get_messages_slice()
     assert compacted_messages[0] == {"role": "system", "content": "sys"}
-    assert compacted_messages[1]["role"] == "assistant"
-    assert compacted_messages[1]["content"].startswith("Context compacted.")
-    assert "old question" in compacted_messages[1]["content"]
+    assert compacted_messages[1] == {"role": "user", "content": COMPACT_CONTINUATION_USER_CONTENT}
+    assert compacted_messages[2]["role"] == "assistant"
+    assert compacted_messages[2]["content"].startswith("Context compacted.")
+    assert "old question" in compacted_messages[2]["content"]
 
     await store.persist_message("user", "new question")
     first = await store.get_messages_slice()
@@ -397,6 +426,61 @@ async def test_persist_compaction_appends_boundary_without_rewriting_messages(te
 
     assert first == second
     assert first[-1] == {"role": "user", "content": "new question"}
+
+
+@pytest.mark.asyncio
+async def test_persist_compaction_projects_minimal_replacement_boundary(temp_session_dir):
+    store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
+    await store.initialize()
+    await store.persist_message("user", "old question")
+    await store.persist_message("assistant", "old answer")
+    await store.persist_message("user", "current question")
+    await store.persist_message("assistant", "", meta={"tool_calls": [{"id": "call_1", "name": "bash"}]})
+    await store.persist_tool_call(
+        call_id="call_1",
+        name="bash",
+        parsed_args={"command": "date"},
+        raw_args='{"command":"date"}',
+        ts_start=store.now_iso(),
+        ts_end=store.now_iso(),
+        result_payload=json.dumps({"ok": True, "tool": "bash", "data": "raw result"}),
+        model_content="tool model content",
+        model_content_format="tool_result_v1",
+        model_content_policy={"version": "tool_result_v1"},
+        artifact_ref=None,
+    )
+    await store.persist_message("tool", "", tool_call_id="call_1", tool_name="bash")
+    before = await store.load_messages()
+
+    await store.persist_compaction(
+        {
+            "id": "compact_minimal_boundary",
+            "created_at": store.now_iso(),
+            "policy_version": "compact_boundary_v3",
+            "source": {
+                "message_start_index": 0,
+                "message_end_index_exclusive": len(before),
+                "tool_call_ids": [],
+            },
+            "continuation_user_message": {
+                "role": "user",
+                "content": COMPACT_CONTINUATION_USER_CONTENT,
+            },
+            "handoff_message": {"role": "assistant", "content": "Context compacted."},
+        }
+    )
+    messages = await store.get_messages_slice()
+
+    assert (await store.load_messages())[: len(before)] == before
+    assert messages == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": COMPACT_CONTINUATION_USER_CONTENT},
+        {"role": "assistant", "content": "Context compacted."},
+    ]
+    assert {"role": "user", "content": "old question"} not in messages
+    assert {"role": "assistant", "content": "old answer"} not in messages
+    assert {"role": "user", "content": "current question"} not in messages
+    assert not any(message.get("role") == "tool" for message in messages)
 
 
 @pytest.mark.asyncio
@@ -482,7 +566,7 @@ async def test_latest_valid_compact_boundary_survives_newer_broken_boundary(temp
         {
             "id": "compact_1",
             "created_at": store.now_iso(),
-            "policy_version": "compact_boundary_v2",
+            "policy_version": "compact_boundary_v3",
             "source": {
                 "message_start_index": 0,
                 "message_end_index_exclusive": 1,
@@ -504,8 +588,9 @@ async def test_latest_valid_compact_boundary_survives_newer_broken_boundary(temp
     assert latest is not None
     assert latest["id"] == record["id"]
     assert messages[0] == {"role": "system", "content": "sys"}
-    assert messages[1]["role"] == "assistant"
-    assert messages[1]["content"].startswith("Context compacted.")
+    assert messages[1] == {"role": "user", "content": COMPACT_CONTINUATION_USER_CONTENT}
+    assert messages[2]["role"] == "assistant"
+    assert messages[2]["content"].startswith("Context compacted.")
     assert {"role": "user", "content": "old compacted question"} not in messages
     assert messages[-2:] == [
         {"role": "user", "content": "after valid compact"},
@@ -532,9 +617,11 @@ async def test_sampling_usage_and_auto_compact_window_meta(temp_session_dir):
     await store.update_auto_compact_window_from_usage(usage)
 
     latest = await store.get_latest_sampling_usage()
+    latest_assistant = await store.get_latest_assistant_sampling_usage()
     window = await store.get_auto_compact_window()
 
     assert latest["input_tokens"] == 100
+    assert latest_assistant["input_tokens"] == 100
     assert latest["cached_input_tokens"] == 40
     assert window["ordinal"] == 1
     assert window["prefill_input_tokens"] == 100
@@ -545,6 +632,56 @@ async def test_sampling_usage_and_auto_compact_window_meta(temp_session_dir):
 
     assert next_window["ordinal"] == 2
     assert next_window["prefill_input_tokens"] is None
+
+    await store.update_auto_compact_window_from_estimate(35)
+    estimated_window = await store.get_auto_compact_window()
+
+    assert estimated_window["ordinal"] == 2
+    assert estimated_window["prefill_input_tokens"] == 35
+    assert estimated_window["prefill_source"] == "estimate_after_compact"
+
+
+@pytest.mark.asyncio
+async def test_sampling_usage_keeps_latest_assistant_usage_when_compact_usage_arrives(temp_session_dir):
+    store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
+    await store.initialize()
+
+    assistant_usage = {
+        "sampling_kind": "assistant",
+        "input_tokens": 100,
+        "cached_input_tokens": 40,
+        "cache_hit_rate": 0.4,
+        "output_tokens": 25,
+        "total_tokens": 125,
+        "context_usage_percent": 0.1,
+        "effective_context_window_tokens": 1000,
+    }
+    compact_usage = {
+        "sampling_kind": "compact",
+        "input_tokens": 30,
+        "cached_input_tokens": 0,
+        "cache_hit_rate": 0,
+        "output_tokens": 10,
+        "total_tokens": 40,
+        "context_usage_percent": 0.03,
+        "effective_context_window_tokens": 1000,
+    }
+
+    await store.persist_sampling_usage(assistant_usage)
+    await store.update_auto_compact_window_from_usage(assistant_usage)
+    await store.persist_sampling_usage(compact_usage)
+    await store.update_auto_compact_window_from_usage(compact_usage)
+
+    latest = await store.get_latest_sampling_usage()
+    latest_assistant = await store.get_latest_assistant_sampling_usage()
+    window = await store.get_auto_compact_window()
+
+    assert latest["sampling_kind"] == "compact"
+    assert latest["input_tokens"] == 30
+    assert latest_assistant["sampling_kind"] == "assistant"
+    assert latest_assistant["input_tokens"] == 100
+    assert window["prefill_input_tokens"] == 100
+    assert window["prefill_source"] == "server"
 
 
 @pytest.mark.asyncio
@@ -655,6 +792,8 @@ def main() -> int:
         with tempfile.TemporaryDirectory() as tmp:
             await test_persist_tool_call_writes_model_content(tmp)
         with tempfile.TemporaryDirectory() as tmp:
+            await test_message_projector_deduplicates_tool_messages(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
             await test_get_messages_slice_recovers_missing_tool_message_from_record(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_get_messages_slice_matches_numeric_tool_ids_as_strings(tmp)
@@ -669,6 +808,8 @@ def main() -> int:
         with tempfile.TemporaryDirectory() as tmp:
             await test_persist_compaction_appends_boundary_without_rewriting_messages(tmp)
         with tempfile.TemporaryDirectory() as tmp:
+            await test_persist_compaction_projects_minimal_replacement_boundary(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
             await test_orphan_compaction_record_does_not_compact_context(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_unmatched_compact_boundary_does_not_truncate_context(tmp)
@@ -678,6 +819,8 @@ def main() -> int:
             await test_latest_valid_compact_boundary_survives_newer_broken_boundary(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_sampling_usage_and_auto_compact_window_meta(tmp)
+        with tempfile.TemporaryDirectory() as tmp:
+            await test_sampling_usage_keeps_latest_assistant_usage_when_compact_usage_arrives(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_auto_compact_window_ignores_invalid_usage_tokens(tmp)
         with tempfile.TemporaryDirectory() as tmp:

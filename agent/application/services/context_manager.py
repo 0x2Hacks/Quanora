@@ -74,12 +74,7 @@ class ContextManager:
 
         tool_messages = [dict(message) for message in final_messages if message.get("role") == "tool"]
         compact_threshold_tokens = budget.resolved_compact_threshold_tokens()
-        auto_compact_window = await self._get_auto_compact_window(session)
-        auto_compact_window_prefill_tokens = auto_compact_window.get("prefill_input_tokens")
-        auto_compact_status = budget.auto_compact_token_status(
-            final_estimate.estimated_input_tokens,
-            auto_compact_window_prefill_tokens,
-        )
+        auto_compact_status = await self._build_auto_compact_status(session, final_estimate)
         context_window_tokens = budget.resolved_context_window_tokens()
         effective_context_window_tokens = budget.resolved_effective_context_window_tokens()
         context_usage_percent = final_estimate.estimated_input_tokens / max(1, effective_context_window_tokens)
@@ -130,6 +125,49 @@ class ContextManager:
             except Exception:
                 return {}
         return {}
+
+    async def _build_auto_compact_status(self, session, final_estimate) -> dict:
+        budget = self._estimator.budget
+        window = await self._get_auto_compact_window(session)
+        prefill_tokens = window.get("prefill_input_tokens")
+        prefill_source = window.get("prefill_source")
+        active_tokens = final_estimate.estimated_input_tokens
+        token_source = "local_estimate"
+
+        if prefill_source != "estimate_after_compact":
+            assistant_usage = await self._get_latest_assistant_sampling_usage(session)
+            server_input_tokens = self._positive_int_or_none(assistant_usage.get("input_tokens"))
+            if server_input_tokens is not None:
+                active_tokens = server_input_tokens
+                token_source = "assistant_server_usage"
+
+        status = budget.auto_compact_token_status(active_tokens, prefill_tokens)
+        status.update(
+            {
+                "auto_compact_active_tokens": active_tokens,
+                "auto_compact_token_source": token_source,
+                "auto_compact_window_prefill_source": prefill_source,
+            }
+        )
+        return status
+
+    async def _get_latest_assistant_sampling_usage(self, session) -> dict:
+        get_usage = getattr(session, "get_latest_assistant_sampling_usage", None)
+        if callable(get_usage):
+            try:
+                usage = await get_usage()
+                if isinstance(usage, dict):
+                    return dict(usage)
+            except Exception:
+                return {}
+        return {}
+
+    def _positive_int_or_none(self, value) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
 
     def reduce_hard_limit(self, factor: float = 0.8) -> int:
         """Reduce the hard token limit by a factor and return the new value."""

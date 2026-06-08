@@ -407,14 +407,21 @@ class ChatCLI:
             cancel_source.dispose()
 
     async def _load_latest_usage_async(self) -> None:
-        get_usage = getattr(self._session, "get_latest_sampling_usage", None)
-        if not callable(get_usage):
-            return
-        try:
-            usage = await get_usage()
-        except Exception:
-            return
+        usage = await self._preferred_sampling_usage()
         self._latest_usage = dict(usage) if isinstance(usage, dict) else None
+
+    async def _preferred_sampling_usage(self) -> dict | None:
+        for name in ("get_latest_assistant_sampling_usage", "get_latest_sampling_usage"):
+            get_usage = getattr(self._session, name, None)
+            if not callable(get_usage):
+                continue
+            try:
+                usage = await get_usage()
+            except Exception:
+                continue
+            if isinstance(usage, dict):
+                return dict(usage)
+        return None
 
     def _shutdown_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         if loop.is_closed():

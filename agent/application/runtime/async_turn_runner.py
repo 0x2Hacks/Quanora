@@ -246,7 +246,7 @@ class AsyncTurnRunner:
         context = await self._build_context(session, active_skill_matches=None)
         stats = context.stats if isinstance(getattr(context, "stats", None), dict) else {}
         messages = context.messages if isinstance(getattr(context, "messages", None), list) else []
-        return await self._compaction_service.compact_async(
+        record = await self._compaction_service.compact_async(
             session=session,
             context_messages=messages,
             chat_client=self._chat_client,
@@ -255,6 +255,9 @@ class AsyncTurnRunner:
             context_stats=stats,
             cancellation_token=cancellation_token,
         )
+        context = await self._build_context(session, active_skill_matches=None)
+        await self._update_auto_compact_window_from_context_estimate(session, context)
+        return record
 
     async def _run_compact(
         self,
@@ -276,7 +279,12 @@ class AsyncTurnRunner:
             context_stats=context_stats,
             cancellation_token=cancellation_token,
         )
-        return await self._build_context(session, active_skill_matches=active_skill_matches)
+        context = await self._build_context(session, active_skill_matches=active_skill_matches)
+        await self._update_auto_compact_window_from_context_estimate(session, context)
+        context_messages = context.messages if isinstance(getattr(context, "messages", None), list) else []
+        if phase in {"mid_turn", "recovery"} and not self._has_valid_continuation_boundary(context_messages):
+            raise RuntimeError("Compact produced an invalid continuation boundary.")
+        return context
 
     async def _build_context(
         self,
@@ -297,6 +305,37 @@ class AsyncTurnRunner:
         update_window = getattr(session, "update_auto_compact_window_from_usage", None)
         if callable(update_window):
             await self._best_effort(update_window, usage)
+
+    async def _update_auto_compact_window_from_context_estimate(self, session: AsyncSessionStore, context) -> None:
+        stats = context.stats if isinstance(getattr(context, "stats", None), dict) else {}
+        tokens = self._positive_int_or_none(stats.get("estimated_input_tokens"))
+        if tokens is None:
+            return
+        update_window = getattr(session, "update_auto_compact_window_from_estimate", None)
+        if callable(update_window):
+            await self._best_effort(update_window, tokens)
+
+    def _has_valid_continuation_boundary(self, messages: list[dict]) -> bool:
+        roles = [message.get("role") for message in messages if isinstance(message, dict)]
+        if "user" not in roles:
+            return False
+        return not self._ends_with_incomplete_tool_call(messages)
+
+    def _ends_with_incomplete_tool_call(self, messages: list[dict]) -> bool:
+        for message in reversed(messages):
+            if not isinstance(message, dict):
+                continue
+            if message.get("role") == "assistant" and message.get("tool_calls"):
+                return True
+            return False
+        return False
+
+    def _positive_int_or_none(self, value) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
 
     async def _best_effort(self, operation, *args) -> None:
         try:

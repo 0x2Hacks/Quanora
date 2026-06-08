@@ -97,10 +97,18 @@ class AsyncSessionStore(Protocol):
         """Get the latest provider token usage sample."""
         ...
 
+    async def get_latest_assistant_sampling_usage(self) -> dict[str, Any] | None:
+        """Get the latest ordinary assistant sampling usage sample."""
+        ...
+
     async def get_auto_compact_window(self) -> dict[str, Any]:
         """Get current auto compact window metadata."""
         ...
 
     async def update_auto_compact_window_from_usage(self, usage: dict[str, Any]) -> None:
         """Seed the auto compact window baseline from provider usage."""
+        ...
+
+    async def update_auto_compact_window_from_estimate(self, tokens: int) -> None:
+        """Seed the auto compact window baseline from a post-compact estimate."""
         ...

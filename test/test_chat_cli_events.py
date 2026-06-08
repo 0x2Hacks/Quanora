@@ -147,6 +147,23 @@ def test_chat_cli_loads_latest_usage_from_session() -> None:
         raise AssertionError(f"Expected persisted usage to be loaded, got: {cli._latest_usage!r}")
 
 
+def test_chat_cli_prefers_assistant_usage_over_latest_request_usage() -> None:
+    import asyncio
+
+    class FakeSession:
+        async def get_latest_assistant_sampling_usage(self):
+            return {"sampling_kind": "assistant", "context_usage_percent": 0.5}
+
+        async def get_latest_sampling_usage(self):
+            return {"sampling_kind": "compact", "context_usage_percent": 0.1}
+
+    cli = ChatCLI(runtime=None, session=FakeSession())
+    asyncio.run(_load_latest_usage(cli))
+
+    if cli._latest_usage != {"sampling_kind": "assistant", "context_usage_percent": 0.5}:
+        raise AssertionError(f"Expected assistant usage to be loaded, got: {cli._latest_usage!r}")
+
+
 def test_chat_cli_token_event_updates_latest_usage() -> None:
     cli = ChatCLI(runtime=None, session=None)
     output = io.StringIO()
@@ -402,6 +419,7 @@ def main() -> int:
     test_chat_cli_tool_result_failed_uses_failed_status()
     test_chat_cli_banner_mentions_core_shortcuts()
     test_chat_cli_loads_latest_usage_from_session()
+    test_chat_cli_prefers_assistant_usage_over_latest_request_usage()
     test_chat_cli_token_event_updates_latest_usage()
     test_chat_cli_expands_recent_resume_messages_in_chronological_order()
     test_chat_cli_resume_history_notice_without_visible_messages()

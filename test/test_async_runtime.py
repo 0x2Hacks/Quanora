@@ -31,6 +31,7 @@ from agent.domain.events import (
 )
 from agent.application.runtime.cancellation import CancellationTokenSource
 from agent.application.services import ContextBudget, ContextEstimator, ContextManager
+from agent.domain.compaction import COMPACT_CONTINUATION_USER_CONTENT
 
 @pytest.mark.asyncio
 async def test_async_turn_runner_cancellation():
@@ -652,6 +653,7 @@ async def test_async_turn_runner_auto_compacts_before_sampling():
 
         def __init__(self):
             self.compactions = []
+            self.estimate_windows = []
 
         def now_iso(self):
             return "2026-05-08T00:00:00Z"
@@ -672,6 +674,9 @@ async def test_async_turn_runner_auto_compacts_before_sampling():
         async def persist_sampling_usage(self, usage):
             return None
 
+        async def update_auto_compact_window_from_estimate(self, tokens):
+            self.estimate_windows.append(tokens)
+
         async def persist_message(self, *args, **kwargs):
             return None
 
@@ -682,7 +687,11 @@ async def test_async_turn_runner_auto_compacts_before_sampling():
     )
     second_context = MagicMock(
         messages=[{"role": "assistant", "content": "LLM handoff"}],
-        stats={"context_window_tokens": 1000, "effective_context_window_tokens": 950},
+        stats={
+            "context_window_tokens": 1000,
+            "effective_context_window_tokens": 950,
+            "estimated_input_tokens": 42,
+        },
         decisions={},
     )
     mock_context = MagicMock()
@@ -711,7 +720,147 @@ async def test_async_turn_runner_auto_compacts_before_sampling():
     assert session.compactions[0]["reason"] == "auto"
     assert session.compactions[0]["phase"] == "pre_sampling"
     assert session.compactions[0]["handoff_message"]["content"] == "LLM handoff"
+    assert session.estimate_windows == [42]
     assert sum(isinstance(event, ContextBuiltEvent) for event in events) == 2
+
+
+@pytest.mark.asyncio
+async def test_async_turn_runner_mid_turn_compact_does_not_preserve_raw_tail():
+    class FakeChatClient:
+        def __init__(self):
+            self.prompt_messages = None
+
+        async def create(self, messages, tools=None, cancellation_token=None):
+            self.prompt_messages = messages
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="LLM handoff"))],
+                usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+            )
+
+    class FakeSession:
+        session_id = "session_1"
+
+        def __init__(self):
+            self.compactions = []
+            self.estimate_windows = []
+            self.raw_messages = [
+                {"role": "system", "content": "sys"},
+                {"role": "user", "content": "old question"},
+                {"role": "assistant", "content": "old answer"},
+                {"role": "user", "content": "current question"},
+                {"role": "assistant", "content": "", "meta": {"tool_calls": [{"id": "call_1", "name": "bash"}]}},
+                {"role": "tool", "tool_call_id": "call_1", "content": ""},
+            ]
+
+        def now_iso(self):
+            return "2026-05-08T00:00:00Z"
+
+        async def load_messages(self):
+            return [dict(message) for message in self.raw_messages]
+
+        async def get_tool_records(self, *args, **kwargs):
+            return [{"id": "call_1", "name": "bash", "raw_args": "{}", "model_content": "tool content"}]
+
+        async def get_latest_compaction(self):
+            return None
+
+        async def persist_compaction(self, record):
+            self.compactions.append(dict(record))
+            return dict(record)
+
+        async def persist_sampling_usage(self, usage):
+            return None
+
+        async def update_auto_compact_window_from_estimate(self, tokens):
+            self.estimate_windows.append(tokens)
+
+    post_compact_context = MagicMock(
+        messages=[
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": COMPACT_CONTINUATION_USER_CONTENT},
+            {"role": "assistant", "content": "LLM handoff"},
+        ],
+        stats={"estimated_input_tokens": 64},
+        decisions={},
+    )
+    mock_context = MagicMock()
+    mock_context.build_messages_async = AsyncMock(return_value=post_compact_context)
+    mock_context.select_active_skills_for_turn = None
+
+    chat_client = FakeChatClient()
+    session = FakeSession()
+    runner = AsyncTurnRunner(
+        chat_client=chat_client,
+        tool_processor=MagicMock(),
+        stream_parser=MagicMock(),
+        tool_schemas=[],
+        context_manager=mock_context,
+    )
+
+    context = await runner._run_compact(
+        session=session,
+        context_messages=[dict(message) for message in session.raw_messages],
+        context_stats={"context_window_tokens": 1000, "effective_context_window_tokens": 950},
+        reason="auto",
+        phase="mid_turn",
+    )
+
+    prompt_text = str(chat_client.prompt_messages)
+    record = session.compactions[0]
+    assert set(record["source"]) == {
+        "message_start_index",
+        "message_end_index_exclusive",
+        "tool_call_ids",
+        "history_digest",
+    }
+    assert record["source"]["message_start_index"] == 0
+    assert record["source"]["message_end_index_exclusive"] == len(session.raw_messages)
+    assert record["source"]["tool_call_ids"] == ["call_1"]
+    assert record["continuation_user_message"] == {
+        "role": "user",
+        "content": COMPACT_CONTINUATION_USER_CONTENT,
+    }
+    assert "current question" in prompt_text
+    assert context.messages[-2] == {"role": "user", "content": COMPACT_CONTINUATION_USER_CONTENT}
+    assert context.messages[-1] == {"role": "assistant", "content": "LLM handoff"}
+    assert {"role": "user", "content": "current question"} not in context.messages
+    assert not any(message.get("role") == "tool" for message in context.messages)
+    assert session.estimate_windows == [64]
+
+
+def test_compact_continuation_boundary_rejects_system_assistant_only():
+    runner = AsyncTurnRunner(
+        chat_client=MagicMock(),
+        tool_processor=MagicMock(),
+        stream_parser=MagicMock(),
+        tool_schemas=[],
+        context_manager=MagicMock(),
+    )
+
+    assert runner._has_valid_continuation_boundary(
+        [
+            {"role": "system", "content": "sys"},
+            {"role": "assistant", "content": "Context compacted."},
+        ]
+    ) is False
+
+
+def test_compact_continuation_boundary_accepts_user_assistant_handoff():
+    runner = AsyncTurnRunner(
+        chat_client=MagicMock(),
+        tool_processor=MagicMock(),
+        stream_parser=MagicMock(),
+        tool_schemas=[],
+        context_manager=MagicMock(),
+    )
+
+    assert runner._has_valid_continuation_boundary(
+        [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": COMPACT_CONTINUATION_USER_CONTENT},
+            {"role": "assistant", "content": "Context compacted."},
+        ]
+    ) is True
 
 
 @pytest.mark.asyncio
@@ -804,6 +953,9 @@ def main() -> int:
     asyncio.run(test_async_turn_runner_usage_tolerates_bad_context_stats())
     asyncio.run(test_async_turn_runner_retry_error_emits_visible_failure())
     asyncio.run(test_async_turn_runner_auto_compacts_before_sampling())
+    asyncio.run(test_async_turn_runner_mid_turn_compact_does_not_preserve_raw_tail())
+    test_compact_continuation_boundary_rejects_system_assistant_only()
+    test_compact_continuation_boundary_accepts_user_assistant_handoff()
     asyncio.run(test_context_length_recovery_hard_limit_is_turn_local())
     print("Async runtime tests passed.")
     return 0

@@ -462,6 +462,8 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                 latest = dict(usage or {})
                 latest["updated_at"] = self.now_iso()
                 self._session_meta["latest_sampling_usage"] = latest
+                if latest.get("sampling_kind") == "assistant":
+                    self._session_meta["latest_assistant_sampling_usage"] = dict(latest)
                 self._persist_meta_sync(latest["updated_at"])
 
             await asyncio.to_thread(_persist)
@@ -475,6 +477,15 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
 
         return await asyncio.to_thread(_get)
 
+    async def get_latest_assistant_sampling_usage(self) -> dict[str, Any] | None:
+        def _get():
+            if not isinstance(self._session_meta, dict):
+                return None
+            usage = self._session_meta.get("latest_assistant_sampling_usage")
+            return dict(usage) if isinstance(usage, dict) else None
+
+        return await asyncio.to_thread(_get)
+
     async def get_auto_compact_window(self) -> dict[str, Any]:
         return await asyncio.to_thread(self._auto_compact_window_sync)
 
@@ -482,6 +493,9 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
         async with self._write_lock:
             def _persist():
                 if not self._session_meta or not self._session_paths:
+                    return
+                sampling_kind = str((usage or {}).get("sampling_kind") or "assistant")
+                if sampling_kind != "assistant":
                     return
                 input_tokens = positive_int_or_none((usage or {}).get("input_tokens"))
                 if input_tokens is None:
@@ -491,6 +505,22 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                     return
                 window["prefill_input_tokens"] = input_tokens
                 window["prefill_source"] = "server"
+                self._session_meta["auto_compact_window"] = window
+                self._persist_meta_sync()
+
+            await asyncio.to_thread(_persist)
+
+    async def update_auto_compact_window_from_estimate(self, tokens: int) -> None:
+        async with self._write_lock:
+            def _persist():
+                if not self._session_meta or not self._session_paths:
+                    return
+                estimated_tokens = positive_int_or_none(tokens)
+                if estimated_tokens is None:
+                    return
+                window = self._auto_compact_window_sync()
+                window["prefill_input_tokens"] = estimated_tokens
+                window["prefill_source"] = "estimate_after_compact"
                 self._session_meta["auto_compact_window"] = window
                 self._persist_meta_sync()
 

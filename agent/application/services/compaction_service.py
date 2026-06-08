@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from agent.application.runtime.cancellation import CancellationToken
+from agent.domain.compaction import COMPACT_CONTINUATION_USER_CONTENT
 
 from .context_estimator import DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_EFFECTIVE_CONTEXT_WINDOW_PERCENT
 from .token_usage import normalize_sampling_usage
@@ -19,7 +20,7 @@ from .token_usage import normalize_sampling_usage
 class CompactionService:
     """Build compact handoff records with LLM-first and deterministic fallback paths."""
 
-    policy_version: str = "compact_boundary_v2"
+    policy_version: str = "compact_boundary_v3"
     max_excerpt_chars: int = 1200
     max_tool_lines: int = 20
     max_compact_prompt_chars: int = 60000
@@ -100,6 +101,13 @@ class CompactionService:
         tool_lines = self._render_tool_lines(tool_ids, tool_records or [])
         handoff = self._render_handoff(previous_handoff, source_messages, tool_lines)
 
+        source = {
+            "message_start_index": source_start,
+            "message_end_index_exclusive": source_end,
+            "tool_call_ids": tool_ids,
+            "history_digest": self._digest(source_messages, previous_compaction),
+        }
+
         return {
             "id": uuid.uuid4().hex,
             "created_at": created,
@@ -107,11 +115,10 @@ class CompactionService:
             "reason": reason,
             "phase": phase,
             "policy_version": self.policy_version,
-            "source": {
-                "message_start_index": source_start,
-                "message_end_index_exclusive": source_end,
-                "tool_call_ids": tool_ids,
-                "history_digest": self._digest(source_messages, previous_compaction),
+            "source": source,
+            "continuation_user_message": {
+                "role": "user",
+                "content": COMPACT_CONTINUATION_USER_CONTENT,
             },
             "handoff_message": {
                 "role": "assistant",
@@ -127,15 +134,19 @@ class CompactionService:
             "You are compacting a coding-agent conversation into a source-bound handoff. "
             "Do not invent facts. Preserve concrete user goals, completed work, pending work, "
             "files, commands, tests, tool results, constraints, risks, and next steps. "
-            "Write concise Markdown."
+            "The handoff will replace the full prior context, so include any in-progress "
+            "tool loop state and do not assume raw tool messages remain visible. Write concise Markdown."
         )
         user = (
             "Create a compact handoff for the following model-visible context. "
-            "The handoff will replace older context after a compact boundary.\n\n"
+            "The handoff will replace the full prior context after a compact boundary. "
+            "If a tool loop is in progress, summarize the tool call intent, tool result, "
+            "and required continuation.\n\n"
             "Required sections:\n"
             "- Current goal\n"
             "- Completed work\n"
             "- Pending work\n"
+            "- In-progress continuation state\n"
             "- Files, commands, and tests\n"
             "- Key tool results\n"
             "- User preferences and constraints\n"

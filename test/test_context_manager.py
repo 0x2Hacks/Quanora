@@ -23,6 +23,23 @@ class QueryOnlySession:
         return messages[slice(start, end)]
 
 
+class UsageSession(QueryOnlySession):
+    def __init__(self, messages, *, assistant_usage=None, auto_compact_window=None):
+        super().__init__(messages)
+        self._assistant_usage = assistant_usage
+        self._auto_compact_window = auto_compact_window or {
+            "ordinal": 1,
+            "prefill_input_tokens": None,
+            "prefill_source": None,
+        }
+
+    async def get_latest_assistant_sampling_usage(self):
+        return dict(self._assistant_usage) if isinstance(self._assistant_usage, dict) else None
+
+    async def get_auto_compact_window(self):
+        return dict(self._auto_compact_window)
+
+
 @pytest.mark.asyncio
 async def test_context_manager_builds_from_session_queries() -> None:
     session_messages = [
@@ -118,6 +135,132 @@ async def test_context_manager_build_is_stable_and_has_no_summary_side_effects()
 
 
 @pytest.mark.asyncio
+async def test_context_manager_uses_assistant_server_usage_for_auto_compact() -> None:
+    session = UsageSession(
+        [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "large local estimate " + ("x" * 2000)},
+        ],
+        assistant_usage={"sampling_kind": "assistant", "input_tokens": 50},
+    )
+    manager = ContextManager(
+        estimator=ContextEstimator(
+            ContextBudget(
+                hard_limit_tokens=5000,
+                context_window_tokens=1000,
+                effective_context_window_percent=100,
+                auto_compact_token_limit=100,
+            )
+        )
+    )
+
+    result = await manager.build_messages_async(session=session)
+
+    assert result.stats["auto_compact_token_source"] == "assistant_server_usage"
+    assert result.stats["auto_compact_active_tokens"] == 50
+    assert result.decisions["auto_compact_token_limit_reached"] is False
+
+
+@pytest.mark.asyncio
+async def test_context_manager_falls_back_to_estimate_without_server_usage() -> None:
+    session = QueryOnlySession(
+        [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "large local estimate " + ("x" * 2000)},
+        ]
+    )
+    manager = ContextManager(
+        estimator=ContextEstimator(
+            ContextBudget(
+                hard_limit_tokens=5000,
+                context_window_tokens=1000,
+                effective_context_window_percent=100,
+                auto_compact_token_limit=100,
+            )
+        )
+    )
+
+    result = await manager.build_messages_async(session=session)
+
+    assert result.stats["auto_compact_token_source"] == "local_estimate"
+    assert result.stats["auto_compact_active_tokens"] == result.stats["estimated_input_tokens"]
+    assert result.decisions["auto_compact_token_limit_reached"] is True
+
+
+@pytest.mark.asyncio
+async def test_context_manager_body_after_prefix_uses_assistant_usage_delta() -> None:
+    manager = ContextManager(
+        estimator=ContextEstimator(
+            ContextBudget(
+                hard_limit_tokens=5000,
+                context_window_tokens=5000,
+                effective_context_window_percent=100,
+                auto_compact_token_limit=200,
+                auto_compact_token_limit_scope="body_after_prefix",
+            )
+        )
+    )
+    messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hello"}]
+
+    under = await manager.build_messages_async(
+        session=UsageSession(
+            messages,
+            assistant_usage={"sampling_kind": "assistant", "input_tokens": 1100},
+            auto_compact_window={
+                "ordinal": 1,
+                "prefill_input_tokens": 950,
+                "prefill_source": "server",
+            },
+        )
+    )
+    reached = await manager.build_messages_async(
+        session=UsageSession(
+            messages,
+            assistant_usage={"sampling_kind": "assistant", "input_tokens": 1200},
+            auto_compact_window={
+                "ordinal": 1,
+                "prefill_input_tokens": 950,
+                "prefill_source": "server",
+            },
+        )
+    )
+
+    assert under.stats["auto_compact_scope_tokens"] == 150
+    assert under.decisions["auto_compact_token_limit_reached"] is False
+    assert reached.stats["auto_compact_scope_tokens"] == 250
+    assert reached.decisions["auto_compact_token_limit_reached"] is True
+
+
+@pytest.mark.asyncio
+async def test_context_manager_estimate_after_compact_baseline_ignores_stale_server_usage() -> None:
+    session = UsageSession(
+        [{"role": "system", "content": "sys"}, {"role": "user", "content": "small"}],
+        assistant_usage={"sampling_kind": "assistant", "input_tokens": 900},
+        auto_compact_window={
+            "ordinal": 2,
+            "prefill_input_tokens": 40,
+            "prefill_source": "estimate_after_compact",
+        },
+    )
+    manager = ContextManager(
+        estimator=ContextEstimator(
+            ContextBudget(
+                hard_limit_tokens=5000,
+                context_window_tokens=1000,
+                effective_context_window_percent=100,
+                auto_compact_token_limit=100,
+            )
+        )
+    )
+
+    result = await manager.build_messages_async(session=session)
+
+    assert result.stats["auto_compact_token_source"] == "local_estimate"
+    assert result.stats["auto_compact_active_tokens"] == result.stats["estimated_input_tokens"]
+    assert result.decisions["auto_compact_token_limit_reached"] is False
+
+
+@pytest.mark.asyncio
 async def test_context_manager_reports_plan_and_skill_error_types() -> None:
     class BrokenPlanProvider:
         def build_context(self):
@@ -175,6 +318,10 @@ def main() -> int:
         await test_context_manager_builds_from_session_queries()
         await test_context_manager_appends_pending_messages()
         await test_context_manager_build_is_stable_and_has_no_summary_side_effects()
+        await test_context_manager_uses_assistant_server_usage_for_auto_compact()
+        await test_context_manager_falls_back_to_estimate_without_server_usage()
+        await test_context_manager_body_after_prefix_uses_assistant_usage_delta()
+        await test_context_manager_estimate_after_compact_baseline_ignores_stale_server_usage()
         await test_context_manager_reports_plan_and_skill_error_types()
         await test_context_manager_new_tool_append_does_not_change_old_tool_content()
 

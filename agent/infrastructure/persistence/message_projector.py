@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent.domain.compaction import COMPACT_CONTINUATION_USER_CONTENT
+
 
 def project_messages(
     messages: list[dict[str, Any]],
@@ -26,6 +28,8 @@ def project_messages(
         role = message.get("role")
         if role == "tool":
             tool_call_id = message.get("tool_call_id")
+            if tool_call_id and str(tool_call_id) in emitted_tool_call_ids:
+                continue
             built_messages.append(
                 {
                     "role": "tool",
@@ -95,8 +99,7 @@ def apply_latest_compact_boundary(
         for message in messages[:boundary_index]
         if message.get("role") == "system"
     ]
-    handoff = compaction["handoff_message"]
-    projected.append({"role": handoff["role"], "content": handoff["content"]})
+    projected.extend(_compact_replacement_boundary(compaction))
     projected.extend(
         dict(message)
         for message in messages[boundary_index + 1 :]
@@ -108,6 +111,28 @@ def apply_latest_compact_boundary(
 def is_compact_boundary_message(message: dict[str, Any]) -> bool:
     meta = message.get("meta")
     return isinstance(meta, dict) and meta.get("kind") == "compact_boundary"
+
+
+def _compact_replacement_boundary(compaction: dict[str, Any]) -> list[dict[str, Any]]:
+    handoff = compaction["handoff_message"]
+    role = handoff["role"]
+    content = handoff["content"]
+    if role != "assistant":
+        return [{"role": role, "content": content}]
+
+    user = compaction.get("continuation_user_message")
+    if not _valid_message(user, {"user"}):
+        user = {"role": "user", "content": COMPACT_CONTINUATION_USER_CONTENT}
+    return [
+        {"role": "user", "content": user["content"]},
+        {"role": "assistant", "content": content},
+    ]
+
+
+def _valid_message(message: Any, allowed_roles: set[str]) -> bool:
+    if not isinstance(message, dict):
+        return False
+    return message.get("role") in allowed_roles and isinstance(message.get("content"), str)
 
 
 def _has_valid_handoff(record: dict[str, Any]) -> bool:

@@ -21,22 +21,15 @@ async def render_status(context: SlashCommandContext) -> str:
     git_status = _git_status_line()
     if git_status:
         lines.append(git_status)
+    assistant_usage = await _latest_assistant_sampling_usage(session)
     latest_usage = await _latest_sampling_usage(session)
-    if latest_usage:
-        effective_window = nonnegative_int(latest_usage.get("effective_context_window_tokens"))
-        input_tokens = nonnegative_int(latest_usage.get("input_tokens"))
-        cached_tokens = nonnegative_int(latest_usage.get("cached_input_tokens"))
-        output_tokens = nonnegative_int(latest_usage.get("output_tokens"))
-        limit = f" / {_format_count(effective_window)}" if effective_window > 0 else ""
-        lines.extend(
-            [
-                "",
-                "Last sampling:",
-                f"input: {_format_count(input_tokens)}{limit} ({_format_percent(latest_usage.get('context_usage_percent'))})",
-                f"cached: {_format_count(cached_tokens)} ({_format_percent(latest_usage.get('cache_hit_rate'))})",
-                f"output: {_format_count(output_tokens)}",
-            ]
-        )
+    if assistant_usage:
+        lines.extend(_usage_lines("Assistant sampling:", assistant_usage))
+        if latest_usage and latest_usage.get("sampling_kind") != "assistant":
+            label = f"Latest request ({latest_usage.get('sampling_kind') or 'unknown'}):"
+            lines.extend(_usage_lines(label, latest_usage))
+    elif latest_usage:
+        lines.extend(_usage_lines("Last sampling:", latest_usage))
     lines.append("```")
     return "\n".join(lines)
 
@@ -73,6 +66,32 @@ async def _latest_sampling_usage(session) -> dict | None:
         return dict(usage) if isinstance(usage, dict) else None
     except Exception:
         return None
+
+
+async def _latest_assistant_sampling_usage(session) -> dict | None:
+    get_usage = getattr(session, "get_latest_assistant_sampling_usage", None)
+    if not callable(get_usage):
+        return None
+    try:
+        usage = await get_usage()
+        return dict(usage) if isinstance(usage, dict) else None
+    except Exception:
+        return None
+
+
+def _usage_lines(label: str, usage: dict) -> list[str]:
+    effective_window = nonnegative_int(usage.get("effective_context_window_tokens"))
+    input_tokens = nonnegative_int(usage.get("input_tokens"))
+    cached_tokens = nonnegative_int(usage.get("cached_input_tokens"))
+    output_tokens = nonnegative_int(usage.get("output_tokens"))
+    limit = f" / {_format_count(effective_window)}" if effective_window > 0 else ""
+    return [
+        "",
+        label,
+        f"input: {_format_count(input_tokens)}{limit} ({_format_percent(usage.get('context_usage_percent'))})",
+        f"cached: {_format_count(cached_tokens)} ({_format_percent(usage.get('cache_hit_rate'))})",
+        f"output: {_format_count(output_tokens)}",
+    ]
 
 
 def _format_count(value: object) -> str:

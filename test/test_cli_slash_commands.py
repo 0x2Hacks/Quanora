@@ -305,6 +305,39 @@ async def test_status_shows_latest_sampling_usage() -> None:
 
 
 @pytest.mark.asyncio
+async def test_status_labels_assistant_and_compact_usage_separately() -> None:
+    class UsageSession(FakeSession):
+        async def get_latest_assistant_sampling_usage(self):
+            return {
+                "sampling_kind": "assistant",
+                "input_tokens": 121300,
+                "effective_context_window_tokens": 245480,
+                "context_usage_percent": 121300 / 245480,
+                "cached_input_tokens": 98700,
+                "cache_hit_rate": 98700 / 121300,
+                "output_tokens": 2100,
+            }
+
+        async def get_latest_sampling_usage(self):
+            return {
+                "sampling_kind": "compact",
+                "input_tokens": 37000,
+                "effective_context_window_tokens": 245480,
+                "context_usage_percent": 37000 / 245480,
+                "cached_input_tokens": 0,
+                "cache_hit_rate": 0,
+                "output_tokens": 900,
+            }
+
+    result = await SlashCommandRouter().execute("/status", _context(session=UsageSession()))
+
+    assert "Assistant sampling:" in result.text
+    assert "Latest request (compact):" in result.text
+    assert "input: 121.3k / 245.5k" in result.text
+    assert "input: 37.0k / 245.5k" in result.text
+
+
+@pytest.mark.asyncio
 async def test_status_tolerates_invalid_sampling_usage() -> None:
     class UsageSession(FakeSession):
         async def get_latest_sampling_usage(self):
@@ -648,6 +681,7 @@ def main() -> int:
     asyncio.run(test_unknown_command_returns_friendly_error())
     asyncio.run(test_status_shows_session_model_debug_and_message_count())
     asyncio.run(test_status_shows_latest_sampling_usage())
+    asyncio.run(test_status_labels_assistant_and_compact_usage_separately())
     asyncio.run(test_status_does_not_show_recent_tools())
     asyncio.run(test_model_rejects_invalid_set_args())
     asyncio.run(test_compact_calls_runtime_compact_context())
