@@ -122,6 +122,16 @@ class ToolCallStartedEvent(RuntimeEvent):
 
 
 @dataclass(slots=True)
+class UserQuestionRequestedEvent(RuntimeEvent):
+    """Fired when a tool call needs a direct user answer."""
+    type: Literal["user_question_requested"] = "user_question_requested"
+    tool_call_id: str = ""
+    question: str = ""
+    options: list[str] | None = None
+    recommended: str | None = None
+
+
+@dataclass(slots=True)
 class ToolProgressEvent(RuntimeEvent):
     """Fired when a tool produces incremental progress (e.g. streaming stdout)."""
     type: Literal["tool_progress"] = "tool_progress"

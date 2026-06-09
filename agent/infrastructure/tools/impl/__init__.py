@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 from .core import build_tool_schemas
 from .tools import (
+    ask_user_question,
     bash,
     bash_output,
     edit_file,
@@ -31,6 +32,7 @@ from .tools import (
 )
 
 TOOLS: dict[str, Callable] = {
+    "ask_user_question": ask_user_question,
     "read_file": read_file,
     "read_pdf": read_pdf,
     "write_file": write_file,
@@ -56,6 +58,14 @@ TOOLS: dict[str, Callable] = {
 }
 
 _TOOL_SCHEMA_META: dict[str, dict[str, Any]] = {
+    "ask_user_question": {
+        "description": "向用户提出一个必须由用户确认的问题。仅当偏好、范围、阻塞决策或无法从环境发现的信息确实需要用户回答时使用；不要询问可通过工具探索得到的问题。",
+        "param_descriptions": {
+            "question": "要向用户提出的单个明确问题",
+            "options": "可选答案列表，字符串数组；用户也可输入自由文本。",
+            "recommended": "可选推荐答案，应与 options 中的一项文本一致或为空。",
+        },
+    },
     "read_file": {
         "description": "读取文本文件内容，支持行号和范围读取。小文件可直接读取；大文件应先用 glob/grep 定位后通过 offset/limit 读取局部范围。",
         "param_descriptions": {

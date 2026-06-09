@@ -66,6 +66,12 @@ class AsyncTurnRunner:
         if hasattr(self._chat_client, "on_retry"):
             self._chat_client.on_retry = callback
 
+    def set_user_question_responder(self, responder) -> None:
+        """Set the callback used when ask_user_question needs a user answer."""
+        set_responder = getattr(self._tool_processor, "set_user_question_responder", None)
+        if callable(set_responder):
+            set_responder(responder)
+
     def set_model(self, model: str) -> bool:
         set_model = getattr(self._chat_client, "set_model", None)
         if not callable(set_model):

@@ -15,9 +15,11 @@ from .plan import (
     plan_update_step,
 )
 from .skill import skill_create
+from .user_question import ask_user_question
 from .web import fetch_web_page, search_web
 
 __all__ = [
+    "ask_user_question",
     "bash",
     "bash_output",
     "kill_shell",

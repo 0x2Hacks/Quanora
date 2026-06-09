@@ -19,6 +19,7 @@ from agent.domain.events import (
     ToolRequestedEvent,
     ToolProgressEvent,
     ToolResultEvent,
+    UserQuestionRequestedEvent,
     TurnStartedEvent,
     TurnCompletedEvent
 )
@@ -101,6 +102,27 @@ class TestRuntimeEvents(unittest.TestCase):
         self.assertTrue(isinstance(restored, SkillActivatedEvent))
         self.assertEqual(restored.skill_name, "demo")
         self.assertEqual(restored.reason, "explicit_dollar_name")
+
+    def test_user_question_requested_event_round_trip(self):
+        event = UserQuestionRequestedEvent(
+            ts="2026-05-19T00:00:00Z",
+            session_id="session_1",
+            turn_id="turn_1",
+            tool_call_id="call_question",
+            question="Which mode should I use?",
+            options=["fast", "thorough"],
+            recommended="thorough",
+        )
+
+        event_dict = event.to_dict()
+        self.assertEqual(event_dict["type"], "user_question_requested")
+        restored = RuntimeEvent.from_dict(event_dict)
+
+        self.assertTrue(isinstance(restored, UserQuestionRequestedEvent))
+        self.assertEqual(restored.tool_call_id, "call_question")
+        self.assertEqual(restored.question, "Which mode should I use?")
+        self.assertEqual(restored.options, ["fast", "thorough"])
+        self.assertEqual(restored.recommended, "thorough")
 
 
 if __name__ == "__main__":

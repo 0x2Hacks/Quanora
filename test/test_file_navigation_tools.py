@@ -168,6 +168,21 @@ def test_schema_includes_glob_and_grep_output_mode_enum() -> None:
         raise AssertionError(f"Expected grep output_mode enum, got: {output_mode}")
 
 
+def test_schema_includes_ask_user_question_with_only_question_required() -> None:
+    schemas = {item["function"]["name"]: item["function"] for item in TOOL_SCHEMAS}
+    schema = schemas.get("ask_user_question")
+    if not schema:
+        raise AssertionError("Expected ask_user_question tool schema.")
+    parameters = schema["parameters"]
+    properties = parameters["properties"]
+    if parameters.get("required") != ["question"]:
+        raise AssertionError(f"Expected only question to be required, got: {parameters.get('required')}")
+    if set(properties) != {"question", "options", "recommended"}:
+        raise AssertionError(f"Unexpected ask_user_question properties, got: {properties}")
+    if properties["options"].get("type") != "array" or properties["options"].get("items", {}).get("type") != "string":
+        raise AssertionError(f"Expected string-array options schema, got: {properties['options']}")
+
+
 def main() -> int:
     import tempfile
 
@@ -188,6 +203,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as temp_dir:
         test_list_files_recursive_applies_pattern(Path(temp_dir))
     test_schema_includes_glob_and_grep_output_mode_enum()
+    test_schema_includes_ask_user_question_with_only_question_required()
     print("File navigation tool tests passed.")
     return 0
 

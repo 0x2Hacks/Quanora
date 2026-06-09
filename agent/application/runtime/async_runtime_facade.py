@@ -35,6 +35,12 @@ class AsyncRuntimeFacade:
         """Set a callback invoked on LLM API retries: (attempt: int, exception: Exception) -> None."""
         self._turn_runner.set_retry_callback(callback)
 
+    def set_user_question_responder(self, responder) -> None:
+        """Set a callback invoked when ask_user_question needs a user answer."""
+        set_responder = getattr(self._turn_runner, "set_user_question_responder", None)
+        if callable(set_responder):
+            set_responder(responder)
+
     async def set_model(self, model: str) -> dict[str, bool]:
         """Switch the active chat model and persist the session metadata when supported."""
         await self.initialize()
