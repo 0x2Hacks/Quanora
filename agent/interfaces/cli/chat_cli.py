@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 
 from agent.application.runtime.cancellation import CancellationTokenSource
-from agent.domain.events import RuntimeEvent
+from agent.domain.events import RuntimeEvent, UserQuestionRequestedEvent
 from agent.version import __version__
 from agent.interfaces.cli.commands.completer import SlashCommandCompleter
 from agent.interfaces.cli.commands import SlashCommandContext, SlashCommandRouter
@@ -60,6 +60,12 @@ class ChatCLI:
         self._resume_session_id: str | None = None
         self._slash_router = SlashCommandRouter()
         self._slash_completer = SlashCommandCompleter(self._slash_router.command_infos())
+        self._install_user_question_responder()
+
+    def _install_user_question_responder(self) -> None:
+        set_responder = getattr(self._runtime, "set_user_question_responder", None)
+        if callable(set_responder):
+            set_responder(self._answer_user_question)
 
     def start(self) -> None:
         self._render_banner()
@@ -231,6 +237,41 @@ class ChatCLI:
         prefill = self._pending_input_prefill
         self._pending_input_prefill = ""
         return self._prompt_session.prompt(prompt_message(), default=prefill).strip()
+
+    async def _answer_user_question(self, event: UserQuestionRequestedEvent) -> str:
+        self._flush_assistant_for_status()
+        self._render_user_question(event)
+        prompt = PromptSession(history=InMemoryHistory())
+        answer = (await prompt.prompt_async("Answer > ")).strip()
+        return self._resolve_user_question_answer(answer, event.options)
+
+    def _read_user_question_answer(self, event: UserQuestionRequestedEvent) -> str:
+        self._flush_assistant_for_status()
+        self._render_user_question(event)
+        prompt = PromptSession(history=InMemoryHistory())
+        answer = prompt.prompt("Answer > ").strip()
+        return self._resolve_user_question_answer(answer, event.options)
+
+    def _render_user_question(self, event: UserQuestionRequestedEvent) -> None:
+        self._console.print()
+        self._console.print(event.question, style="bold cyan", highlight=False, markup=False)
+        options = event.options or []
+        if not options:
+            return
+        recommended = (event.recommended or "").strip()
+        for index, option in enumerate(options, start=1):
+            suffix = " (recommended)" if recommended and option == recommended else ""
+            self._console.print(f"{index}. {option}{suffix}", highlight=False, markup=False)
+
+    def _resolve_user_question_answer(self, answer: str, options: list[str] | None) -> str:
+        text = str(answer or "").strip()
+        if not text:
+            return ""
+        if options and text.isdecimal():
+            index = int(text)
+            if 1 <= index <= len(options):
+                return options[index - 1]
+        return text
 
     def _seed_input_history(self, messages: list[dict]) -> None:
         seen = set()

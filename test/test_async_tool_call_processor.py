@@ -13,7 +13,7 @@ import pytest
 from agent.application.runtime.async_tool_call_processor import AsyncToolCallProcessor
 from agent.application.runtime.cancellation import CancellationTokenSource
 from agent.domain import ParsedToolCall
-from agent.domain.events import ToolCallStartedEvent, ToolResultEvent
+from agent.domain.events import ToolCallStartedEvent, ToolResultEvent, UserQuestionRequestedEvent
 from agent.domain.tool_result import ToolExecutionResult
 
 
@@ -325,6 +325,134 @@ async def test_async_tool_processor_resets_empty_bash_output_count_on_real_outpu
         raise AssertionError(f"Expected all polls to execute after real output reset, got calls={executor.calls}")
     if any(event.status == "failed" for event in result_events):
         raise AssertionError(f"Did not expect guard failure after count reset, got: {result_events}")
+
+
+@pytest.mark.asyncio
+async def test_ask_user_question_with_responder_emits_question_and_persists_answer() -> None:
+    session = FakeSession()
+    seen_questions = []
+
+    async def responder(event: UserQuestionRequestedEvent) -> str:
+        seen_questions.append(event)
+        return "thorough"
+
+    processor = AsyncToolCallProcessor(
+        tool_executor=FakeToolExecutor(),
+        user_question_responder=responder,
+    )
+    call = ParsedToolCall(
+        call_id="call_question",
+        name="ask_user_question",
+        raw_args='{"question":"Which mode?","options":["fast","thorough"],"recommended":"thorough"}',
+    )
+
+    events = [event async for event in processor.execute(session=session, tool_calls=[call], turn_id="turn_q")]
+
+    if [type(event) for event in events] != [ToolCallStartedEvent, UserQuestionRequestedEvent, ToolResultEvent]:
+        raise AssertionError(f"Expected started/question/result events, got: {events}")
+    question_event = events[1]
+    if question_event.question != "Which mode?" or question_event.options != ["fast", "thorough"]:
+        raise AssertionError(f"Expected question event details, got: {question_event}")
+    if question_event.recommended != "thorough":
+        raise AssertionError(f"Expected recommended option, got: {question_event.recommended!r}")
+    if seen_questions != [question_event]:
+        raise AssertionError(f"Expected responder to receive question event, got: {seen_questions}")
+
+    result_event = events[-1]
+    payload = json.loads(result_event.result)
+    if result_event.status != "completed" or payload.get("data", {}).get("answer") != "thorough":
+        raise AssertionError(f"Expected completed answer payload, got: {result_event}")
+    if len(session.persisted_tool_calls) != 1 or len(session.persisted_messages) != 1:
+        raise AssertionError(
+            f"Expected one persisted tool call and tool message, got: {session.persisted_tool_calls}, "
+            f"{session.persisted_messages}"
+        )
+    persisted_args = session.persisted_tool_calls[0][0][2]
+    if persisted_args != {
+        "question": "Which mode?",
+        "options": ["fast", "thorough"],
+        "recommended": "thorough",
+    }:
+        raise AssertionError(f"Expected only model-provided args to persist, got: {persisted_args}")
+    message_args, message_kwargs = session.persisted_messages[0]
+    if message_args[0] != "tool" or message_kwargs.get("tool_call_id") != "call_question":
+        raise AssertionError(f"Expected tool message persistence, got: {session.persisted_messages}")
+
+
+@pytest.mark.asyncio
+async def test_ask_user_question_without_responder_emits_question_then_unsupported_failure() -> None:
+    session = FakeSession()
+    processor = AsyncToolCallProcessor(tool_executor=FakeToolExecutor())
+    call = ParsedToolCall(
+        call_id="call_question",
+        name="ask_user_question",
+        raw_args='{"question":"Which mode?"}',
+    )
+
+    events = [event async for event in processor.execute(session=session, tool_calls=[call])]
+
+    if [type(event) for event in events] != [ToolCallStartedEvent, UserQuestionRequestedEvent, ToolResultEvent]:
+        raise AssertionError(f"Expected started/question/result events, got: {events}")
+    result_event = events[-1]
+    payload = json.loads(result_event.result)
+    if result_event.status != "failed" or result_event.error_type != "UserQuestionUnsupported":
+        raise AssertionError(f"Expected unsupported failure event, got: {result_event}")
+    if payload.get("ok") is not False or payload.get("error_type") != "UserQuestionUnsupported":
+        raise AssertionError(f"Expected structured unsupported payload, got: {payload}")
+    if len(session.persisted_tool_calls) != 1 or len(session.persisted_messages) != 1:
+        raise AssertionError("Expected unsupported result to still persist as a tool result")
+
+
+@pytest.mark.asyncio
+async def test_ask_user_question_empty_answer_fails_without_fake_answer() -> None:
+    session = FakeSession()
+    processor = AsyncToolCallProcessor(
+        tool_executor=FakeToolExecutor(),
+        user_question_responder=lambda event: "  ",
+    )
+    call = ParsedToolCall(
+        call_id="call_question",
+        name="ask_user_question",
+        raw_args='{"question":"Which mode?"}',
+    )
+
+    events = [event async for event in processor.execute(session=session, tool_calls=[call])]
+
+    result_event = [event for event in events if isinstance(event, ToolResultEvent)][-1]
+    payload = json.loads(result_event.result)
+    if result_event.status != "failed" or result_event.error_type != "UserQuestionEmptyAnswer":
+        raise AssertionError(f"Expected empty-answer failure, got: {result_event}")
+    if "answer" in payload.get("data", {}):
+        raise AssertionError(f"Did not expect answer data in failure payload, got: {payload}")
+
+
+@pytest.mark.asyncio
+async def test_ask_user_question_interrupted_input_fails_without_cancelling_turn() -> None:
+    session = FakeSession()
+
+    def responder(event: UserQuestionRequestedEvent) -> str:
+        raise KeyboardInterrupt
+
+    processor = AsyncToolCallProcessor(
+        tool_executor=FakeToolExecutor(),
+        user_question_responder=responder,
+    )
+    call = ParsedToolCall(
+        call_id="call_question",
+        name="ask_user_question",
+        raw_args='{"question":"Continue?"}',
+    )
+
+    events = [event async for event in processor.execute(session=session, tool_calls=[call])]
+
+    result_event = [event for event in events if isinstance(event, ToolResultEvent)][-1]
+    payload = json.loads(result_event.result)
+    if result_event.status != "failed" or result_event.error_type != "KeyboardInterrupt":
+        raise AssertionError(f"Expected interrupted-input failure, got: {result_event}")
+    if payload.get("ok") is not False or payload.get("error_type") != "KeyboardInterrupt":
+        raise AssertionError(f"Expected structured interrupted-input payload, got: {payload}")
+    if len(session.persisted_tool_calls) != 1 or len(session.persisted_messages) != 1:
+        raise AssertionError("Expected interrupted input to persist as a failed tool result")
 
 
 def main() -> int:

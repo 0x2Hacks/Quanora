@@ -6,14 +6,23 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
-from typing import AsyncIterator
+from collections.abc import Awaitable, Callable
+from typing import AsyncIterator, Any
 
 from agent.application.ports.async_session_store import AsyncSessionStore
 from agent.domain import ParsedToolCall, looks_like_tool_payload, parse_tool_args, tool_error, tool_ok
-from agent.domain.events import RuntimeEvent, ToolCallStartedEvent, ToolResultEvent, event_meta
+from agent.domain.events import (
+    RuntimeEvent,
+    ToolCallStartedEvent,
+    ToolResultEvent,
+    UserQuestionRequestedEvent,
+    event_meta,
+)
 from agent.application.tool_executor import ToolExecutor
 from agent.application.runtime.cancellation import CancellationToken
 from agent.application.services.tool_result_normalizer import ToolResultNormalizer
+
+UserQuestionResponder = Callable[[UserQuestionRequestedEvent], str | Awaitable[str]]
 
 
 @dataclass(slots=True)
@@ -26,10 +35,20 @@ class _ToolCallOutcome:
 class AsyncToolCallProcessor:
     """Executes parsed tool calls and yields runtime events."""
 
-    def __init__(self, tool_executor: ToolExecutor, tool_result_normalizer: ToolResultNormalizer | None = None):
+    def __init__(
+        self,
+        tool_executor: ToolExecutor,
+        tool_result_normalizer: ToolResultNormalizer | None = None,
+        user_question_responder: UserQuestionResponder | None = None,
+    ):
         self._tool_executor = tool_executor
         self._tool_result_normalizer = tool_result_normalizer or ToolResultNormalizer()
+        self._user_question_responder = user_question_responder
         self._empty_bash_output_counts_by_turn: dict[str, dict[str, int]] = {}
+
+    def set_user_question_responder(self, responder: UserQuestionResponder | None) -> None:
+        """Set the callback used to collect answers for ask_user_question."""
+        self._user_question_responder = responder
 
     async def execute(
         self,
@@ -72,12 +91,22 @@ class AsyncToolCallProcessor:
                         tool_call_id=call.call_id,
                         tool_name=call.name,
                     )
-                    outcome = await self._run_tool_call(
-                        call=call,
-                        parsed_args=parsed_args,
-                        cancellation_token=cancellation_token,
-                        empty_bash_output_counts=empty_bash_output_counts,
-                    )
+                    if call.name == "ask_user_question":
+                        question_event = self._build_user_question_event(
+                            session=session,
+                            turn_id=turn_id,
+                            call=call,
+                            parsed_args=parsed_args,
+                        )
+                        yield question_event
+                        outcome = await self._run_user_question(question_event)
+                    else:
+                        outcome = await self._run_tool_call(
+                            call=call,
+                            parsed_args=parsed_args,
+                            cancellation_token=cancellation_token,
+                            empty_bash_output_counts=empty_bash_output_counts,
+                        )
 
             ts_end = session.now_iso()
             try:
@@ -155,6 +184,103 @@ class AsyncToolCallProcessor:
                 error_type=error_type,
                 result=tool_error(call.name, str(exc), error_type),
             )
+
+    def _build_user_question_event(
+        self,
+        *,
+        session: AsyncSessionStore,
+        turn_id: str,
+        call: ParsedToolCall,
+        parsed_args: dict,
+    ) -> UserQuestionRequestedEvent:
+        options = self._clean_user_question_options(parsed_args.get("options"))
+        recommended = self._clean_optional_text(parsed_args.get("recommended"))
+        if recommended and options and recommended not in options:
+            recommended = None
+        return UserQuestionRequestedEvent(
+            **event_meta(session, turn_id),
+            tool_call_id=call.call_id,
+            question=self._clean_required_text(parsed_args.get("question")),
+            options=options,
+            recommended=recommended,
+        )
+
+    async def _run_user_question(self, event: UserQuestionRequestedEvent) -> _ToolCallOutcome:
+        if not event.question:
+            return _ToolCallOutcome(
+                status="failed",
+                error_type="InvalidUserQuestion",
+                result=tool_error(
+                    "ask_user_question",
+                    "ask_user_question requires a non-empty question string.",
+                    "InvalidUserQuestion",
+                ),
+            )
+        if self._user_question_responder is None:
+            return _ToolCallOutcome(
+                status="failed",
+                error_type="UserQuestionUnsupported",
+                result=tool_error(
+                    "ask_user_question",
+                    "No user-question responder is available in this execution environment.",
+                    "UserQuestionUnsupported",
+                ),
+            )
+        try:
+            answer_value = self._user_question_responder(event)
+            if isinstance(answer_value, Awaitable):
+                answer_value = await answer_value
+        except (KeyboardInterrupt, EOFError) as exc:
+            return _ToolCallOutcome(
+                status="failed",
+                error_type=type(exc).__name__,
+                result=tool_error(
+                    "ask_user_question",
+                    "User question input was interrupted.",
+                    type(exc).__name__,
+                ),
+            )
+        except Exception as exc:
+            return _ToolCallOutcome(
+                status="failed",
+                error_type=type(exc).__name__,
+                result=tool_error("ask_user_question", str(exc), type(exc).__name__),
+            )
+
+        answer = str(answer_value or "").strip()
+        if not answer:
+            return _ToolCallOutcome(
+                status="failed",
+                error_type="UserQuestionEmptyAnswer",
+                result=tool_error(
+                    "ask_user_question",
+                    "User provided an empty answer.",
+                    "UserQuestionEmptyAnswer",
+                ),
+            )
+        return _ToolCallOutcome(
+            status="completed",
+            result=tool_ok("ask_user_question", {"answer": answer}),
+        )
+
+    def _clean_required_text(self, value: Any) -> str:
+        if not isinstance(value, str):
+            return ""
+        return value.strip()
+
+    def _clean_optional_text(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        text = self._clean_required_text(value)
+        return text or None
+
+    def _clean_user_question_options(self, value: Any) -> list[str] | None:
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            return None
+        cleaned = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+        return cleaned or None
 
     async def _persist_tool_result(
         self,

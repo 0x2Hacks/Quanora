@@ -12,7 +12,7 @@ os.chdir(PROJECT_ROOT)
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from agent.domain.events import TokenStatsUpdatedEvent, ToolResultEvent, TurnFailedEvent
+from agent.domain.events import TokenStatsUpdatedEvent, ToolResultEvent, TurnFailedEvent, UserQuestionRequestedEvent
 from agent.interfaces.cli.chat_cli import ChatCLI
 from agent.interfaces.cli.ui import GitPromptStatus
 
@@ -412,6 +412,81 @@ def test_chat_cli_uses_pending_input_prefill_once(monkeypatch) -> None:
         raise AssertionError("Expected pending prefill to be consumed")
     if captured["defaults"] != ["continue this prompt", ""]:
         raise AssertionError(f"Expected one-shot defaults, got: {captured['defaults']!r}")
+
+
+def test_chat_cli_installs_user_question_responder() -> None:
+    captured = {}
+
+    class FakeRuntime:
+        def set_user_question_responder(self, responder):
+            captured["responder"] = responder
+
+    cli = ChatCLI(runtime=FakeRuntime(), session=None)
+
+    if captured.get("responder") != cli._answer_user_question:
+        raise AssertionError(f"Expected CLI responder to be installed, got: {captured!r}")
+
+
+def test_chat_cli_user_question_resolves_numbered_option(monkeypatch) -> None:
+    output = io.StringIO()
+    captured = {}
+
+    class FakePromptSession:
+        def __init__(self, **kwargs):
+            captured["kwargs"] = kwargs
+
+        def prompt(self, message, **kwargs):
+            captured["message"] = message
+            return "1"
+
+    monkeypatch.setattr("agent.interfaces.cli.chat_cli.PromptSession", FakePromptSession)
+
+    cli = ChatCLI(runtime=None, session=None)
+    cli._console.file = output
+    answer = cli._read_user_question_answer(
+        UserQuestionRequestedEvent(
+            question="Which mode?",
+            options=["fast", "thorough"],
+            recommended="fast",
+        )
+    )
+
+    text = output.getvalue()
+    if answer != "fast":
+        raise AssertionError(f"Expected option 1 to resolve to first option, got: {answer!r}")
+    if "Which mode?" not in text or "1. fast (recommended)" not in text or "2. thorough" not in text:
+        raise AssertionError(f"Expected question UI with recommended option, got: {text!r}")
+    if captured.get("message") != "Answer > ":
+        raise AssertionError(f"Expected answer prompt label, got: {captured!r}")
+    if not isinstance(captured.get("kwargs", {}).get("history"), InMemoryHistory):
+        raise AssertionError(f"Expected responder prompt to have isolated history, got: {captured!r}")
+
+
+def test_chat_cli_user_question_keeps_free_text_and_empty_answers() -> None:
+    cli = ChatCLI(runtime=None, session=None)
+
+    if cli._resolve_user_question_answer("custom answer", ["fast", "thorough"]) != "custom answer":
+        raise AssertionError("Expected free text answer to be preserved")
+    if cli._resolve_user_question_answer("  ", ["fast", "thorough"]) != "":
+        raise AssertionError("Expected empty answer to remain empty for tool failure handling")
+
+
+def test_chat_cli_user_question_keyboard_interrupt_reaches_tool_processor(monkeypatch) -> None:
+    class FakePromptSession:
+        def __init__(self, **kwargs):
+            pass
+
+        def prompt(self, message, **kwargs):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr("agent.interfaces.cli.chat_cli.PromptSession", FakePromptSession)
+
+    cli = ChatCLI(runtime=None, session=None)
+    try:
+        cli._read_user_question_answer(UserQuestionRequestedEvent(question="Continue?"))
+    except KeyboardInterrupt:
+        return
+    raise AssertionError("Expected KeyboardInterrupt to propagate to processor for structured failure")
 
 
 def main() -> int:
