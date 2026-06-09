@@ -61,26 +61,105 @@ if __name__ == "__main__":
         from agent.infrastructure.persistence.session_files import SessionFiles
         from agent.infrastructure.persistence.session_index_repository import SessionIndexRepository
 
-        session_dir = args.session_dir or str(Config.QUANORA_HOME / ".quanora" / "sessions" / ("self-dev" if args.self_dev else "self-doc" if args.self_doc else "default"))
-        index_path = os.path.join(session_dir, "index.json")
-        repo = SessionIndexRepository(SessionFiles(), index_path)
-        index_data = repo.load_index()
-        sessions = index_data.get("sessions", [])
-        if not sessions:
+        # Scan ALL mode subdirs so sessions from any mode are visible
+        sessions_root = args.session_dir or str(Config.QUANORA_HOME / ".quanora" / "sessions")
+        all_sessions: list[dict] = []
+        mode_subdirs = ["default", "self-dev", "self-doc", "quant-research"]
+
+        for subdir in mode_subdirs:
+            candidate = os.path.join(sessions_root, subdir)
+            index_path = os.path.join(candidate, "index.json")
+            if os.path.exists(index_path):
+                repo = SessionIndexRepository(SessionFiles(), index_path)
+                index_data = repo.load_index()
+                for s in index_data.get("sessions", []):
+                    s["_mode"] = subdir
+                all_sessions.extend(index_data.get("sessions", []))
+
+        # Also check sessions_root itself (flat layout without mode subdir)
+        root_index = os.path.join(sessions_root, "index.json")
+        if os.path.exists(root_index) and not any(
+            os.path.exists(os.path.join(sessions_root, s, "index.json")) for s in mode_subdirs
+        ):
+            repo = SessionIndexRepository(SessionFiles(), root_index)
+            index_data = repo.load_index()
+            for s in index_data.get("sessions", []):
+                s["_mode"] = "default"
+            all_sessions.extend(index_data.get("sessions", []))
+
+        if not all_sessions:
             print("No sessions found.")
             sys.exit(0)
-        print(f"{'Session ID':<32} {'Title':<50} {'Project Dir'}")
-        print("-" * 120)
-        for s in sessions:
+
+        # Sort by created_at descending (newest first)
+        all_sessions.sort(key=lambda s: s.get("created_at", ""), reverse=True)
+
+        print(f"{'Session ID':<32} {'Mode':<16} {'Title':<44} {'Project Dir'}")
+        print("-" * 130)
+        for s in all_sessions:
             sid = s.get("id", "?")
-            title = s.get("title", "Untitled")[:48]
+            mode = s.get("_mode", "default")
+            title = s.get("title", "Untitled")[:42]
             pdir = s.get("project_dir", "")
-            print(f"{sid:<32} {title:<50} {pdir}")
+            print(f"{sid:<32} {mode:<16} {title:<44} {pdir}")
         print()
-        print(f"Total: {len(sessions)} sessions")
+        print(f"Total: {len(all_sessions)} sessions")
         print(f"To resume a session: python main.py --session <SESSION_ID>")
         sys.exit(0)
     
+
+    # Handle --session <ID> auto-resolution: if the user specifies a session
+    # ID without also specifying --session-dir, scan ALL mode subdirs to find
+    # it and auto-set the correct session_dir (and mode flags).
+    if args.session and args.session_dir is None:
+        import json as _json
+        _sessions_root = str(Config.QUANORA_HOME / ".quanora" / "sessions")
+        _mode_subdirs = ["default", "self-dev", "self-doc", "quant-research"]
+        _found = False
+        for _subdir in _mode_subdirs:
+            _idx = os.path.join(_sessions_root, _subdir, "index.json")
+            if os.path.exists(_idx):
+                try:
+                    with open(_idx) as _f:
+                        _data = _json.load(_f)
+                    for _s in _data.get("sessions", []):
+                        if _s.get("id") == args.session:
+                            args.session_dir = os.path.join(_sessions_root, _subdir)
+                            # Auto-set mode flags so workspace guard etc. match
+                            if _subdir == "self-dev":
+                                args.self_dev = True
+                            elif _subdir == "self-doc":
+                                args.self_doc = True
+                            elif _subdir == "quant-research":
+                                args.quant_research = True
+                            print(
+                                f"[resume] session {args.session} found in {_subdir} mode",
+                                file=sys.stderr,
+                            )
+                            _found = True
+                            break
+                except (OSError, _json.JSONDecodeError):
+                    pass
+            if _found:
+                break
+        if not _found:
+            # Also check flat layout (no mode subdir)
+            _root_idx = os.path.join(_sessions_root, "index.json")
+            if os.path.exists(_root_idx):
+                try:
+                    with open(_root_idx) as _f:
+                        _data = _json.load(_f)
+                    for _s in _data.get("sessions", []):
+                        if _s.get("id") == args.session:
+                            args.session_dir = _sessions_root
+                            print(
+                                f"[resume] session {args.session} found in default location",
+                                file=sys.stderr,
+                            )
+                            _found = True
+                            break
+                except (OSError, _json.JSONDecodeError):
+                    pass
 
     Config.validate()
     if args.allow_unsafe_bash:
