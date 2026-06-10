@@ -34,7 +34,7 @@ from .model import (
     validate_plan_status,
     validate_step_status,
 )
-from .store import append_event, load_plan, now_iso, persist_plan_update, plan_paths, write_json_atomic
+from .store import append_event, archive_completed_plan, load_plan, now_iso, persist_plan_update, plan_paths, write_json_atomic
 
 
 def create_plan(
@@ -49,9 +49,13 @@ def create_plan(
     plan_file, events_file, session_id = plan_paths()
     if plan_file.exists():
         current = load_json_object(plan_file)
-        if expected_version is None:
+        # If the existing plan is already completed/closed, archive it and proceed
+        if current.get("status") in ("completed", "closed"):
+            archive_completed_plan(plan_file, events_file)
+        elif expected_version is None:
             raise ValueError("Active plan already exists.")
-        assert_expected_version(current, expected_version)
+        else:
+            assert_expected_version(current, expected_version)
 
     normalized = [normalized_step(item, index) for index, item in enumerate(steps)]
     if not normalized:

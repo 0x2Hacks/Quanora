@@ -94,6 +94,45 @@
         "资金费率"
       ],
       "created_at": 1780716462.4910905
+    },
+    {
+      "id": "re_32e5c86281ef",
+      "project_id": "spec_xauusd_timeseries_signal_backtest_spec_md_backtest",
+      "strategy_name": "",
+      "strategy_category": "other",
+      "expression": "",
+      "parameters": {},
+      "instrument": "",
+      "universe": "",
+      "region": "",
+      "timeframe": "",
+      "date_range": "",
+      "market_regime": "",
+      "outcome": "insight",
+      "performance": {},
+      "what_worked": "将OS定义为只读验证区，仅做一票否决，策略选择完全基于IS指标",
+      "what_failed": "未明确约束前，AI会本能地以OS指标为优化目标，导致OS退化为第二个IS，整个验证体系崩塌",
+      "key_insight": "IS/OS铁律：OS仅用于验证IS优化效果的稳定性（一票否决），严禁将OS作为优化目标。任何基于OS指标调参、筛选、回溯修改均为信息泄露违规。AI在quant-research模式下会本能地试图改善OS指标，必须被约束为：IS是工作区，OS是只读区。",
+      "pitfalls": [
+        "对OS指标做参数优化",
+        "按OS指标排序/筛选策略",
+        "看到OS结果后回溯修改策略",
+        "用OS decay_ratio调整截断/中性化",
+        "反复切割OS观察后调整方向"
+      ],
+      "next_steps": [
+        "[\"每次回测迭代后执行is_os_discipline.md中的自检清单\",\"在walkforward.py中增加铁律docstring\"]"
+      ],
+      "source_session_id": "",
+      "source_turn_id": "",
+      "tags": [
+        "IS/OS",
+        "铁律",
+        "过拟合防护",
+        "walk-forward",
+        "数据泄露"
+      ],
+      "created_at": 1780971079.752478
     }
   ]
 }

@@ -91,6 +91,38 @@ def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def archive_completed_plan(plan_file: Path, events_file: Path) -> Path | None:
+    """Move a completed plan and its events into an archive subdirectory.
+
+    Returns the archive directory path, or None if nothing to archive.
+    """
+    if not plan_file.exists():
+        return None
+    archive_dir = plan_file.parent / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+
+    # Use a timestamp-based subdirectory to avoid collisions (microsecond precision)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    dest_dir = archive_dir / stamp
+    # Handle rare case of same-microsecond collision by appending a counter
+    counter = 0
+    while dest_dir.exists():
+        counter += 1
+        dest_dir = archive_dir / f"{stamp}_{counter}"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # Move plan.json
+    dest_plan = dest_dir / plan_file.name
+    os.replace(plan_file, dest_plan)
+
+    # Move events file if it exists
+    if events_file.exists():
+        dest_events = dest_dir / events_file.name
+        os.replace(events_file, dest_events)
+
+    return dest_dir
+
+
 def bump_version(plan: dict[str, Any]) -> tuple[int, int]:
     old = int(plan.get("version", 0))
     new = old + 1

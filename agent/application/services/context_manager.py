@@ -111,6 +111,49 @@ class ContextManager:
             dropped_count += 1
             if dropped_count > 50:
                 break
+
+        # ── Hard-limit enforcement: if rescue still over budget, force-truncate ──
+        if final_estimate.over_hard_limit:
+            logger.warning(
+                "Context still over hard limit after rescue (%d iterations, %d tokens > %d). "
+                "Force-truncating from the front of non-system messages.",
+                dropped_count,
+                final_estimate.estimated_input_tokens,
+                self._estimator.hard_limit_tokens,
+            )
+            # Remove all DROPPED placeholders first (they still consume tokens for role/metadata)
+            messages = [m for m in messages if m.get("content") != "[DROPPED FOR CONTEXT RESCUE]"]
+            final_messages = [m for m in final_messages if m.get("content") != "[DROPPED FOR CONTEXT RESCUE]"]
+            
+            # Then keep dropping the oldest non-system messages until under hard limit
+            safety_drops = 0
+            while final_estimate.over_hard_limit and len(final_messages) > 2 and safety_drops < 500:
+                # Find first non-system message and remove it
+                for i, msg in enumerate(messages):
+                    if msg.get("role") != "system":
+                        messages.pop(i)
+                        break
+                for i, msg in enumerate(final_messages):
+                    if msg.get("role") != "system":
+                        final_messages.pop(i)
+                        break
+                final_estimate = self._estimator.estimate_messages(final_messages)
+                safety_drops += 1
+            
+            if final_estimate.over_hard_limit:
+                logger.error(
+                    "Context STILL over hard limit after force-truncation (%d drops, %d tokens). "
+                    "Only system + last user message will be kept.",
+                    safety_drops,
+                    final_estimate.estimated_input_tokens,
+                )
+                # Last resort: keep only system + last user message
+                system_msgs = [m for m in final_messages if m.get("role") == "system"]
+                user_msgs = [m for m in final_messages if m.get("role") == "user"]
+                final_messages = system_msgs + (user_msgs[-1:] if user_msgs else [])
+                messages = [m for m in messages if m.get("role") == "system"] + \
+                           [m for m in messages if m.get("role") == "user"][-1:]
+                final_estimate = self._estimator.estimate_messages(final_messages)
                 
         system_message = next((dict(message) for message in final_messages if message.get("role") == "system"), None)
         non_system_messages = [dict(message) for message in final_messages if message.get("role") != "system"]
@@ -209,21 +252,38 @@ class ContextManager:
         return self._estimator.budget.hard_limit_tokens
 
     def rescue_context(self, internal_messages: list[dict], final_messages: list[dict]) -> tuple[list[dict], list[dict]]:
-        """Surgical Context Rescue: Drops the oldest cold/tool messages instead of blindly shrinking budgets."""
-        # Find oldest non-system message that isn't already dropped
-        target_idx = -1
+        """Surgical Context Rescue: Drops the oldest cold/tool messages instead of blindly shrinking budgets.
+        
+        v2: Batch-delete old messages (up to 5 per call) and merge consecutive DROPPED placeholders
+        to improve rescue efficiency.
+        """
+        DROP_MARKER = "[DROPPED FOR CONTEXT RESCUE]"
+        
+        # ── Phase 1: Mark up to 5 oldest non-system messages for dropping ──
+        drop_indices = []
         for i, msg in enumerate(final_messages):
-            if msg.get("role") != "system" and msg.get("content") != "[DROPPED FOR CONTEXT RESCUE]":
+            if msg.get("role") != "system" and msg.get("content") != DROP_MARKER:
                 # Do not drop the very last few hot messages
                 if i < len(final_messages) - 2:
-                    target_idx = i
-                    break
-                    
-        if target_idx != -1:
-            internal_messages[target_idx]["content"] = "[DROPPED FOR CONTEXT RESCUE]"
-            final_messages[target_idx]["content"] = "[DROPPED FOR CONTEXT RESCUE]"
-            
-        return internal_messages, final_messages
+                    drop_indices.append(i)
+                    if len(drop_indices) >= 5:
+                        break
+        
+        for idx in drop_indices:
+            internal_messages[idx]["content"] = DROP_MARKER
+            final_messages[idx]["content"] = DROP_MARKER
+        
+        # ── Phase 2: Merge consecutive DROPPED messages into one ──
+        def _merge_dropped(msg_list: list[dict]) -> list[dict]:
+            merged = []
+            for msg in msg_list:
+                if msg.get("content") == DROP_MARKER and merged and merged[-1].get("content") == DROP_MARKER:
+                    # Skip — already have a DROPPED placeholder in sequence
+                    continue
+                merged.append(msg)
+            return merged
+        
+        return _merge_dropped(internal_messages), _merge_dropped(final_messages)
 
     async def _apply_tool_context_policy_async(self, messages: list[dict], session, tool_char_budget: int | None = None) -> list[dict]:
         tool_call_ids = [message.get("tool_call_id") for message in messages if message.get("role") == "tool" and message.get("tool_call_id")]
