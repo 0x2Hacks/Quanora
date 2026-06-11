@@ -11,6 +11,7 @@ from tenacity import RetryError
 from agent.application.ports.async_session_store import AsyncSessionStore
 from agent.application.ports.async_chat_client import AsyncChatClient
 from agent.application.services import ContextManager
+from agent.application.services.context_manager import ContextBuildResult
 from agent.application.runtime.cancellation import CancellationToken
 from agent.domain.events import (
     RuntimeEvent,
@@ -94,6 +95,30 @@ class AsyncTurnRunner:
                         source=str(item.get("source") or ""),
                         path=str(item.get("path") or ""),
                     )
+                
+                # ── Hard-limit guard: refuse to send massively over-budget context ──
+                over_hard = bool(context_decisions.get("over_hard_limit"))
+                if over_hard:
+                    logger.warning(
+                        "Context is over hard limit (decisions=%s). Attempting emergency truncation.",
+                        {k: v for k, v in context_decisions.items() if k in ("over_hard_limit", "total_tokens")},
+                    )
+                    # Emergency: keep only system messages + last user message
+                    system_msgs = [m for m in context.messages if m.get("role") == "system"]
+                    non_system = [m for m in context.messages if m.get("role") != "system"]
+                    # Keep at most the last 3 non-system messages (user + assistant + tool result)
+                    truncated = system_msgs + non_system[-3:]
+                    if len(truncated) < len(context.messages):
+                        logger.warning(
+                            "Emergency truncation: %d → %d messages",
+                            len(context.messages), len(truncated),
+                        )
+                        context = ContextBuildResult(
+                            messages=truncated,
+                            stats={**context.stats, "emergency_truncated": True},
+                            decisions=context_decisions,
+                            snapshot=context.snapshot,
+                        )
                 
                 try:
                     # We always use stream=True for the async runner to provide real-time events
