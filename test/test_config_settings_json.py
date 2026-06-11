@@ -99,7 +99,7 @@ def test_config_get_async_client_uses_loaded_settings(tmp_path, monkeypatch):
     assert kwargs["api_key"] == "settings-key"
     assert kwargs["base_url"] == "https://example.com/v1"
     user_agent = kwargs["default_headers"]["User-Agent"]
-    assert user_agent.startswith("chainpeer/0.1.1 (")
+    assert user_agent.startswith("chainpeer/0.2.0 (")
     assert "; " in user_agent
     assert ") " in user_agent
 
