@@ -6,6 +6,7 @@ import {
   answerPromptText,
   answerPlaceholderText,
   cancelledText,
+  commandResultText,
   contextBuiltLine,
   errorLine,
   helpText,
@@ -62,9 +63,9 @@ test("prompt and turn status copy match the compact terminal UI", () => {
   assert.equal(promptPlaceholderText(), "Ask ChainPeer to do anything");
   assert.equal(answerPromptText(), "\n╭─ answer\n╰─ › ");
   assert.equal(answerPlaceholderText(), "Answer");
-  assert.equal(turnStartText(), "  Working... ctrl+c to interrupt, ctrl+c again to quit\n");
-  assert.equal(interruptText(), "  interrupt requested; ctrl+c again to quit");
-  assert.equal(cancelledText(), "  Interrupted. Session state preserved; resume with -c.");
+  assert.equal(turnStartText(), "• Working (ctrl+c to interrupt)\n");
+  assert.equal(interruptText(), "• Interrupt requested (ctrl+c again to quit)");
+  assert.equal(cancelledText(), "• Interrupted session state preserved; resume with -c");
 });
 
 test("promptText includes compact session status when available", () => {
@@ -94,11 +95,15 @@ test("helpText renders compact shortcuts and commands", () => {
 });
 
 test("unknownCommandText points to shortcuts help", () => {
-  assert.equal(unknownCommandText(), "  Unknown command. Type ? for shortcuts.");
+  assert.equal(unknownCommandText(), "• Unknown command type ? for shortcuts");
 });
 
 test("modelUsageText renders concrete model command usage", () => {
   assert.equal(modelUsageText(), "  Usage: /model set <model>");
+});
+
+test("commandResultText renders a compact success line", () => {
+  assert.equal(commandResultText("Model updated: glm-5.1"), "✓ Model updated: glm-5.1");
 });
 
 test("contextBuiltLine warns only when ChainPeer docs are truncated", () => {

@@ -39,7 +39,7 @@ export function answerPlaceholderText() {
 }
 
 export function turnStartText() {
-  return `${dim("  Working... ctrl+c to interrupt, ctrl+c again to quit")}\n`;
+  return `${cyan("•")} Working ${dim("(ctrl+c to interrupt)")}\n`;
 }
 
 export function turnCompletedLine(event, tools = { completed: 0, failed: 0 }) {
@@ -49,19 +49,19 @@ export function turnCompletedLine(event, tools = { completed: 0, failed: 0 }) {
 }
 
 export function interruptText() {
-  return `${dim("  interrupt requested; ctrl+c again to quit")}`;
+  return `${yellow("•")} Interrupt requested ${dim("(ctrl+c again to quit)")}`;
 }
 
 export function cancelledText() {
-  return dim("  Interrupted. Session state preserved; resume with -c.");
+  return `${yellow("•")} Interrupted ${dim("session state preserved; resume with -c")}`;
 }
 
 export function commandResultText(text) {
-  return `${dim("  ")}${text}`;
+  return `${green("✓")} ${text}`;
 }
 
 export function modelUsageText() {
-  return dim("  Usage: /model set <model>");
+  return `${dim("  Usage: /model set <model>")}`;
 }
 
 export function contextBuiltLine(event) {
@@ -76,7 +76,7 @@ export function contextBuiltLine(event) {
 }
 
 export function unknownCommandText() {
-  return dim("  Unknown command. Type ? for shortcuts.");
+  return `${yellow("•")} Unknown command ${dim("type ? for shortcuts")}`;
 }
 
 export function toolRequestedLine(event) {
