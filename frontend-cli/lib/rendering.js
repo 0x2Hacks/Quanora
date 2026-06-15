@@ -149,7 +149,7 @@ export function errorLine(error) {
 export function questionText(event = {}) {
   const options = Array.isArray(event.options) ? event.options : [];
   const lines = [
-    `${cyan("•")} Question ${dim("(answer required)")}`,
+    `${cyan("•")} Question ${dim("1/1")}`,
     `  ${clipSingleLine(event.question || "Input required", 76)}`,
   ];
   for (const [index, option] of options.entries()) {

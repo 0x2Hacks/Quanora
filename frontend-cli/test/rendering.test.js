@@ -283,7 +283,7 @@ test("status helpers render question, skill, and errors", () => {
   assert.equal(
     questionText({ question: "Pick one", options: ["A", "B"], recommended: "A" }),
     [
-      "• Question (answer required)",
+      "• Question 1/1",
       "  Pick one",
       "  › 1. A recommended",
       "    2. B",
@@ -293,7 +293,7 @@ test("status helpers render question, skill, and errors", () => {
   assert.equal(
     questionText({ question: "Explain" }),
     [
-      "• Question (answer required)",
+      "• Question 1/1",
       "  Explain",
       "  enter to submit answer · ctrl + c to interrupt",
     ].join("\n"),
