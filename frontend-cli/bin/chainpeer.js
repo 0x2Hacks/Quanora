@@ -21,6 +21,7 @@ import {
   startupText,
   toolRequestedLine,
   toolResultLine,
+  toolStartedLine,
   turnStartText,
   unknownCommandText,
 } from "../lib/rendering.js";
@@ -201,7 +202,7 @@ async function renderEvent(event) {
       if (event.tool_call_id && announcedTools.has(event.tool_call_id)) {
         return;
       }
-      console.log(`[tool] ${event.tool_name} started`);
+      console.log(toolStartedLine(event));
       return;
     case "tool_result":
       closeAssistant();

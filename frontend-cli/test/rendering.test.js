@@ -13,6 +13,7 @@ import {
   startupText,
   toolRequestedLine,
   toolResultLine,
+  toolStartedLine,
   turnStartText,
 } from "../lib/rendering.js";
 
@@ -45,6 +46,10 @@ test("toolRequestedLine shows bash command", () => {
     }),
     "• Running bash: date",
   );
+});
+
+test("toolStartedLine renders fallback running state", () => {
+  assert.equal(toolStartedLine({ tool_name: "bash" }), "• Running bash");
 });
 
 test("toolResultLine renders compact success state", () => {

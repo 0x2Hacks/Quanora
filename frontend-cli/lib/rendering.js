@@ -35,6 +35,10 @@ export function toolRequestedLine(event) {
   return detail ? `${cyan("•")} Running ${name}: ${dim(detail)}` : `${cyan("•")} Running ${name}`;
 }
 
+export function toolStartedLine(event) {
+  return `${cyan("•")} Running ${event.tool_name || "tool"}`;
+}
+
 export function toolResultLine(event) {
   const name = event.tool_name || "unknown";
   const duration = formatDuration(event.duration_ms);
