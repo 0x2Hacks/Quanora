@@ -191,7 +191,8 @@ test("toolRequestedLine clips long details", () => {
 test("toolStartedLine renders fallback running state", () => {
   assert.equal(toolStartedLine({ tool_name: "bash" }), "• Running command");
   assert.equal(toolStartedLine({ tool_name: "bash_output" }), "• Running output");
-  assert.equal(toolStartedLine({ tool_name: "web_search" }), "• Calling web_search");
+  assert.equal(toolStartedLine({ tool_name: "web_search" }), "• Calling web search");
+  assert.equal(toolStartedLine({ tool_name: "custom_tool" }), "• Calling custom tool");
 });
 
 test("toolResultLine renders compact success state", () => {
@@ -209,7 +210,7 @@ test("toolResultLine renders compact success state", () => {
       status: "completed",
       duration_ms: 20,
     }),
-    "✓ Called view_image in 20ms",
+    "✓ Called image in 20ms",
   );
 });
 

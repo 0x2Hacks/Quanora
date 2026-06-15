@@ -183,7 +183,15 @@ function toolLabel(name) {
   if (name === "bash_output") {
     return "output";
   }
-  return name || "tool";
+  const labels = {
+    apply_patch: "patch",
+    edit_file: "file edit",
+    read_file: "file read",
+    search_files: "file search",
+    view_image: "image",
+    web_search: "web search",
+  };
+  return labels[name] || humanToolName(name);
 }
 
 function toolActiveVerb(name) {
@@ -198,6 +206,10 @@ function completedToolText(name, label) {
     return `Read ${label}`;
   }
   return `Called ${label}`;
+}
+
+function humanToolName(name) {
+  return singleLine(name).replace(/[_-]+/g, " ") || "tool";
 }
 
 function parseJsonObject(value) {
