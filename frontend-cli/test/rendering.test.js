@@ -40,6 +40,14 @@ test("startupText includes resume preview when provided", () => {
   );
 });
 
+test("startupText clips long resume preview lines", () => {
+  const text = startupText({
+    resume_preview: `user: ${"x".repeat(120)}`,
+  });
+
+  assert.match(text, /\u21b3 user · x{69}\.\.\./);
+});
+
 test("startupText clips long cwd in the middle", () => {
   const cwd = `E:\\${"deep\\".repeat(20)}project`;
   const text = startupText({

@@ -249,9 +249,9 @@ function resumePreviewText(value) {
 function resumePreviewLine(line) {
   const message = line.match(/^(user|assistant):\s*(.*)$/i);
   if (message) {
-    return `${dim("  ↳")} ${message[1].toLowerCase()} · ${message[2]}`;
+    return `${dim("  ↳")} ${message[1].toLowerCase()} · ${clipSingleLine(message[2], 72)}`;
   }
-  return dim(`  ${line}`);
+  return dim(`  ${clipSingleLine(line, 78)}`);
 }
 
 function inputFooter() {
