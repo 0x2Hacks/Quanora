@@ -9,6 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from agent.infrastructure.config.settings_loader import (
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
+    DEFAULT_SETTINGS_TEMPLATE,
     build_default_user_agent,
     ensure_user_settings_template,
     load_settings,
@@ -39,6 +40,35 @@ def test_load_settings_reads_user_json(tmp_path, monkeypatch):
     assert settings.api_key == "secret-key"
     assert settings.base_url == "https://openai945.cn/"
     assert settings.reasoning_effort == "xhigh"
+
+
+def test_load_settings_ignores_legacy_internal_budget_fields(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(
+        json.dumps(
+            {
+                "model": "gpt-5.5",
+                "apiKey": "secret-key",
+                "baseUrl": "https://openai945.cn/",
+                "reasoningEffort": "xhigh",
+                "contextWindow": 128000,
+                "effectiveContextWindowPercent": 90,
+                "autoCompactTokenLimit": 100000,
+                "autoCompactTokenLimitScope": "body_after_prefix",
+                "autoCompactEnabled": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(path)
+
+    assert settings.model == "gpt-5.5"
+    assert not hasattr(settings, "context_window")
+    assert not hasattr(settings, "effective_context_window_percent")
+    assert not hasattr(settings, "auto_compact_token_limit")
+    assert not hasattr(settings, "auto_compact_token_limit_scope")
+    assert not hasattr(settings, "auto_compact_enabled")
 
 
 def test_load_settings_falls_back_to_env_when_file_missing(tmp_path, monkeypatch):
@@ -89,6 +119,7 @@ def test_ensure_user_settings_template_creates_neutral_template(tmp_path, monkey
 
     assert path == tmp_path / ".chainpeer" / "settings.json"
     data = json.loads(path.read_text(encoding="utf-8"))
+    assert set(data) == set(DEFAULT_SETTINGS_TEMPLATE) == {"model", "apiKey", "baseUrl", "reasoningEffort"}
     assert data["apiKey"] == ""
     assert data["baseUrl"] == ""
     assert data["reasoningEffort"] == "xhigh"
@@ -143,6 +174,7 @@ def test_save_settings_patch_creates_missing_settings_file(tmp_path):
 
     assert settings.settings_exists is True
     assert settings.model == "new-model"
+    assert set(data) == set(DEFAULT_SETTINGS_TEMPLATE)
     assert data["model"] == "new-model"
     assert "apiKey" in data
 
