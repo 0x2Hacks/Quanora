@@ -68,6 +68,16 @@ export function toolResultLine(event) {
   return `${green("✓")} ${name} completed in ${duration}`;
 }
 
+export function tokenStatsLine(event) {
+  const stats = event.stats && typeof event.stats === "object" ? event.stats : {};
+  const input = formatCount(stats.input_tokens);
+  const window = formatCount(stats.effective_context_window_tokens);
+  const context = formatPercent(stats.context_usage_percent);
+  const cache = formatPercent(stats.cache_hit_rate);
+  const output = formatCount(stats.output_tokens);
+  return `${cyan("•")} Context ${input}/${window} (${context}) · cache ${cache} · output ${output}`;
+}
+
 export function skillLine(event) {
   return `${cyan("•")} Using skill ${dim(event.skill_name || "unknown")}`;
 }
@@ -137,6 +147,25 @@ function formatDuration(durationMs) {
     return `${Math.trunc(value)}ms`;
   }
   return `${(value / 1000).toFixed(2)}s`;
+}
+
+function formatCount(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number) || number <= 0) {
+    return "0";
+  }
+  if (Math.abs(number) >= 1000) {
+    return `${(number / 1000).toFixed(1)}k`;
+  }
+  return String(Math.trunc(number));
+}
+
+function formatPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "0.0%";
+  }
+  return `${(number * 100).toFixed(1)}%`;
 }
 
 function statusLine(info) {

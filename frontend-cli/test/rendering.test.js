@@ -13,6 +13,7 @@ import {
   questionHeader,
   skillLine,
   startupText,
+  tokenStatsLine,
   toolRequestedLine,
   toolResultLine,
   toolStartedLine,
@@ -93,6 +94,21 @@ test("toolResultLine includes compact failure detail", () => {
       result: '{"ok":false,"error":"command timed out\\ntry again"}',
     }),
     "× bash failed in 50ms (Timeout): command timed out try again",
+  );
+});
+
+test("tokenStatsLine renders compact context status", () => {
+  assert.equal(
+    tokenStatsLine({
+      stats: {
+        input_tokens: 121300,
+        effective_context_window_tokens: 245480,
+        context_usage_percent: 121300 / 245480,
+        cache_hit_rate: 98700 / 121300,
+        output_tokens: 2100,
+      },
+    }),
+    "• Context 121.3k/245.5k (49.4%) · cache 81.4% · output 2.1k",
   );
 });
 

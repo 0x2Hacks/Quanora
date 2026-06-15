@@ -21,6 +21,7 @@ import {
   questionHeader,
   skillLine,
   startupText,
+  tokenStatsLine,
   toolRequestedLine,
   toolResultLine,
   toolStartedLine,
@@ -217,6 +218,10 @@ async function renderEvent(event) {
     case "tool_result":
       closeAssistant();
       console.log(toolResultLine(event));
+      return;
+    case "token_stats_updated":
+      closeAssistant();
+      console.log(tokenStatsLine(event));
       return;
     case "skill_activated":
       closeAssistant();
