@@ -83,6 +83,19 @@ test("toolResultLine renders compact success state", () => {
   );
 });
 
+test("toolResultLine includes compact failure detail", () => {
+  assert.equal(
+    toolResultLine({
+      tool_name: "bash",
+      status: "failed",
+      error_type: "Timeout",
+      duration_ms: 50,
+      result: '{"ok":false,"error":"command timed out\\ntry again"}',
+    }),
+    "× bash failed in 50ms (Timeout): command timed out try again",
+  );
+});
+
 test("status helpers render question, skill, and errors", () => {
   assert.equal(questionHeader("Pick one"), "? Pick one");
   assert.equal(optionLine("A", 0, "A"), "  1. A recommended");

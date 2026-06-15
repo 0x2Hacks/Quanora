@@ -62,7 +62,8 @@ export function toolResultLine(event) {
   const duration = formatDuration(event.duration_ms);
   if (event.status === "failed") {
     const suffix = event.error_type ? ` (${event.error_type})` : "";
-    return `${red("×")} ${name} failed in ${duration}${suffix}`;
+    const detail = toolErrorDetail(event.result);
+    return `${red("×")} ${name} failed in ${duration}${suffix}${detail ? `: ${detail}` : ""}`;
   }
   return `${green("✓")} ${name} completed in ${duration}`;
 }
@@ -108,6 +109,19 @@ function parseJsonObject(value) {
   } catch {
     return {};
   }
+}
+
+function toolErrorDetail(result) {
+  const payload = parseJsonObject(result);
+  return clipSingleLine(payload.error, 120);
+}
+
+function clipSingleLine(value, maxLength) {
+  const text = singleLine(value);
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 function singleLine(value) {
