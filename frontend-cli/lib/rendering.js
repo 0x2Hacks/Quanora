@@ -88,7 +88,8 @@ export function toolResultLine(event) {
   if (event.status === "failed") {
     const suffix = event.error_type ? ` (${event.error_type})` : "";
     const detail = toolErrorDetail(event.result);
-    return `${red("×")} ${name} failed in ${duration}${suffix}${detail ? `: ${detail}` : ""}`;
+    const line = `${red("×")} ${name} failed in ${duration}${suffix}`;
+    return detail ? `${line}\n${dim(`  └ ${detail}`)}` : line;
   }
   return `${green("✓")} ${name} completed in ${duration}`;
 }

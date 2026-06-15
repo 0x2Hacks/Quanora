@@ -165,7 +165,7 @@ test("toolResultLine includes compact failure detail", () => {
       duration_ms: 50,
       result: '{"ok":false,"error":"command timed out\\ntry again"}',
     }),
-    "× bash failed in 50ms (Timeout): command timed out try again",
+    "× bash failed in 50ms (Timeout)\n  └ command timed out try again",
   );
 });
 
