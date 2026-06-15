@@ -18,6 +18,7 @@ import {
   contextBuiltLine,
   errorLine,
   helpText,
+  inputHintText,
   interruptText,
   modelUsageText,
   optionLine,
@@ -367,9 +368,9 @@ function askLineWithHint(prompt, placeholder) {
 }
 
 function createInputHint(readline, prefix, placeholder) {
-  const emptyPrompt = `${prefix}${placeholder} `;
   let empty = true;
   let active = false;
+  let shown = false;
   const update = () => {
     if (!active) {
       return;
@@ -379,23 +380,41 @@ function createInputHint(readline, prefix, placeholder) {
       return;
     }
     empty = nextEmpty;
-    readline.setPrompt(empty ? emptyPrompt : prefix);
-    readline.prompt(true);
+    if (empty) {
+      showInputHint(readline, prefix, placeholder);
+    } else {
+      clearInputHint(readline, prefix);
+    }
   };
   const onKeypress = () => setImmediate(update);
   return {
     start() {
       active = true;
-      readline.setPrompt(emptyPrompt);
-      readline.prompt();
+      showInputHint(readline, prefix, placeholder);
       readline.input.on("keypress", onKeypress);
     },
     stop() {
       active = false;
+      if (shown) {
+        clearInputHint(readline, prefix);
+      }
       readline.input.off("keypress", onKeypress);
       readline.setPrompt(prefix);
     },
   };
+
+  function showInputHint(readline, prefix, placeholder) {
+    shown = true;
+    readline.setPrompt(prefix);
+    readline.prompt(true);
+    readline.output.write(inputHintText(placeholder));
+  }
+
+  function clearInputHint(readline, prefix) {
+    shown = false;
+    readline.setPrompt(prefix);
+    readline.prompt(true);
+  }
 }
 
 function splitPromptLine(prompt) {

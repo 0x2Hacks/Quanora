@@ -8,11 +8,11 @@ export function startupText(info = {}) {
 }
 
 export function promptText(info = {}, stats = {}) {
-  return inputPromptFrame("input", [promptStatusLine(info, stats), inputFooter()]);
+  return inputPromptFrame([promptStatusLine(info, stats), inputFooter()]);
 }
 
 export function promptPlaceholderText() {
-  return dim("Ask ChainPeer to do anything");
+  return "Ask ChainPeer to do anything";
 }
 
 export function helpText() {
@@ -23,11 +23,16 @@ export function helpText() {
 }
 
 export function answerPromptText() {
-  return inputPromptFrame("answer");
+  return inputPromptFrame();
 }
 
 export function answerPlaceholderText() {
-  return dim("Answer");
+  return "Answer";
+}
+
+export function inputHintText(placeholder) {
+  const text = singleLine(placeholder);
+  return text ? `${dim(text)}\x1b[${text.length}D` : "";
 }
 
 export function turnStartText() {
@@ -255,13 +260,12 @@ function resumePreviewLine(line) {
 
 function startupBannerText(info) {
   const modelLine = `${singleLine(info.model) || "unknown"} · session ${singleLine(info.session_id) || "unknown"}`;
-  const cwdPrefix = "◇───◇  ";
-  const cwd = middleClip(info.cwd || process.cwd(), STARTUP_BANNER_INNER_WIDTH - cwdPrefix.length - 1);
+  const cwd = middleClip(info.cwd || process.cwd(), STARTUP_BANNER_INNER_WIDTH - 2);
   return [
     startupBannerTop(),
-    startupBannerLine("  ◇    agent runtime"),
-    startupBannerLine(` ╱ ╲   ${modelLine}`),
-    startupBannerLine(` ${cwdPrefix}${cwd}`),
+    startupBannerLine("agent runtime"),
+    startupBannerLine(modelLine),
+    startupBannerLine(cwd),
     dim(`╰${"─".repeat(STARTUP_BANNER_WIDTH - 2)}╯`),
   ].join("\n");
 }
@@ -281,23 +285,19 @@ function startupBannerLine(text) {
 }
 
 function inputFooter() {
-  return dim("  ? shortcuts · ↑ history · /compact · /model set <model> · ctrl+c to exit");
+  return dim("  ? shortcuts · ↑ history · /compact · /model set <model>");
 }
 
-function inputPromptFrame(title, body = []) {
-  const lines = [`\n${dim(`╭─ ${title}`)}`];
-  for (const line of body) {
-    if (line) {
-      lines.push(line);
-    }
-  }
-  lines.push(`${dim("╰─")} ${bold("›")} `);
+function inputPromptFrame(body = []) {
+  const lines = [""];
+  lines.push(...body.filter(Boolean));
+  lines.push(`${bold("›")} `);
   return lines.join("\n");
 }
 
 function promptStatusLine(info, stats) {
   const parts = [singleLine(info.model), contextLeft(stats), middleClip(info.cwd, 56)].filter(Boolean);
-  return parts.length ? dim(`  ${parts.join(" · ")}`) : "";
+  return parts.length ? dim(`  ${clipSingleLine(parts.join(" · "), 78)}`) : "";
 }
 
 function contextLeft(stats) {

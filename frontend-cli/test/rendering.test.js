@@ -11,6 +11,7 @@ import {
   contextBuiltLine,
   errorLine,
   helpText,
+  inputHintText,
   interruptText,
   modelUsageText,
   optionLine,
@@ -40,9 +41,9 @@ test("startupText includes resume preview when provided", () => {
     }),
     [
       "╭─ ChainPeer ──────────────────────────────────────────────────────────────────╮",
-      bannerLine("  ◇    agent runtime"),
-      bannerLine(" ╱ ╲   m1 · session s1"),
-      bannerLine(" ◇───◇  E:\\project"),
+      bannerLine("agent runtime"),
+      bannerLine("m1 · session s1"),
+      bannerLine("E:\\project"),
       "╰──────────────────────────────────────────────────────────────────────────────╯",
       "",
       "  Resumed session s1",
@@ -69,8 +70,8 @@ test("startupText clips long cwd in the middle", () => {
   });
   const cwdLine = text.split("\n")[3].replace(/[│ ]/g, "");
 
-  assert.ok(cwdLine.length <= 68 + "◇───◇".length);
-  assert.ok(cwdLine.startsWith("◇───◇E:\\deep"));
+  assert.ok(cwdLine.length <= 74);
+  assert.ok(cwdLine.startsWith("E:\\deep"));
   assert.ok(cwdLine.endsWith("\\project"));
   assert.ok(cwdLine.includes("..."));
   assert.notEqual(cwdLine, cwd);
@@ -79,11 +80,12 @@ test("startupText clips long cwd in the middle", () => {
 test("prompt and turn status copy match the compact terminal UI", () => {
   assert.equal(
     promptText(),
-    "\n╭─ input\n  ? shortcuts · ↑ history · /compact · /model set <model> · ctrl+c to exit\n╰─ › ",
+    "\n  ? shortcuts · ↑ history · /compact · /model set <model>\n› ",
   );
   assert.equal(promptPlaceholderText(), "Ask ChainPeer to do anything");
-  assert.equal(answerPromptText(), "\n╭─ answer\n╰─ › ");
+  assert.equal(answerPromptText(), "\n› ");
   assert.equal(answerPlaceholderText(), "Answer");
+  assert.equal(inputHintText("Ask ChainPeer to do anything"), "Ask ChainPeer to do anything\x1b[28D");
   assert.equal(turnStartText(), "• Working (ctrl+c to interrupt)\n");
   assert.equal(interruptText(), "• Interrupt requested (ctrl+c again to quit)");
   assert.equal(cancelledText(), "• Interrupted session state preserved; resume with -c");
@@ -94,8 +96,21 @@ test("promptText includes compact session status when available", () => {
     promptText({ model: "glm-5.1", cwd: "E:\\code\\agent\\agent_base-ts-cli-process-split" }, {
       context_usage_percent: 0.125,
     }),
-    "\n╭─ input\n  glm-5.1 · 88% context left · E:\\code\\agent\\agent_base-ts-cli-process-split\n  ? shortcuts · ↑ history · /compact · /model set <model> · ctrl+c to exit\n╰─ › ",
+    "\n  glm-5.1 · 88% context left · E:\\code\\agent\\agent_base-ts-cli-process-split\n  ? shortcuts · ↑ history · /compact · /model set <model>\n› ",
   );
+});
+
+test("promptText clips long session status", () => {
+  const text = promptText({
+    model: "glm-5.1-preview-with-a-very-long-name",
+    cwd: `E:\\${"deep\\".repeat(20)}project`,
+  }, {
+    context_usage_percent: 0.25,
+  });
+  const statusLine = text.split("\n")[1];
+
+  assert.ok(statusLine.length <= 80);
+  assert.match(statusLine, /\.\.\.$/);
 });
 
 test("helpText renders compact shortcuts and commands", () => {
