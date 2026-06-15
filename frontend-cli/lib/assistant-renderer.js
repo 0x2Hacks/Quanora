@@ -96,13 +96,13 @@ function renderMarkdownishLine(line, color) {
 
   const quote = line.match(/^(\s*)>\s?(.*)$/);
   if (quote) {
-    return `${quote[1]}${green("│ ", color)}${renderInline(quote[2], color, "green")}`;
+    return `${quote[1]}${dim("│ ", color)}${renderInline(quote[2], color)}`;
   }
 
   const list = line.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/);
   if (list) {
     const marker = /^\d+\.$/.test(list[2]) ? list[2] : "•";
-    return `${list[1]}${yellow(`${marker} `, color)}${renderInline(list[3], color)}`;
+    return `${list[1]}${dim(`${marker} `, color)}${renderInline(list[3], color)}`;
   }
 
   return renderInline(line, color);
@@ -162,8 +162,6 @@ function styled(text, color, style) {
   const codes = {
     bold: "1",
     boldCyan: "1;36",
-    green: "32",
-    greenBold: "1;32",
     boldBold: "1",
   };
   const code = codes[style] || codes.bold;
@@ -176,12 +174,4 @@ function boldCyan(text, color) {
 
 function dim(text, color) {
   return color ? `\x1b[2m${text}\x1b[0m` : text;
-}
-
-function green(text, color) {
-  return styled(text, color, "green");
-}
-
-function yellow(text, color) {
-  return color ? `\x1b[1;33m${text}\x1b[0m` : text;
 }
