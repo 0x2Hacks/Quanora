@@ -28,7 +28,10 @@ test("startupText includes resume preview when provided", () => {
 });
 
 test("prompt and turn status copy match the compact terminal UI", () => {
-  assert.equal(promptText(), "\n› Ask ChainPeer to do anything\n");
+  assert.equal(
+    promptText(),
+    "\n› Ask ChainPeer to do anything\n  ↑ history · /compact · /model set <model> · ctrl+c to exit\n",
+  );
   assert.equal(turnStartText(), "  Working... ctrl+c to interrupt, ctrl+c again to quit\n");
   assert.equal(interruptText(), "  interrupt requested; ctrl+c again to quit");
   assert.equal(cancelledText(), "  Interrupted. Session state preserved; resume with -c.");

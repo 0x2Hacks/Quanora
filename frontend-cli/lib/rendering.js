@@ -6,7 +6,7 @@ export function startupText(info) {
 }
 
 export function promptText() {
-  return `\n${bold("›")} Ask ChainPeer to do anything\n`;
+  return `\n${bold("›")} Ask ChainPeer to do anything\n${inputFooter()}\n`;
 }
 
 export function turnStartText() {
@@ -106,6 +106,10 @@ function formatDuration(durationMs) {
 function statusLine(info) {
   const parts = [info.model || "unknown", process.cwd()];
   return dim(`  ${parts.join(" · ")} · ctrl+c to exit`);
+}
+
+function inputFooter() {
+  return dim("  ↑ history · /compact · /model set <model> · ctrl+c to exit");
 }
 
 function styled(text, code) {

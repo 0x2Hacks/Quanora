@@ -83,6 +83,8 @@ try {
   input = createInterface({
     input: process.stdin,
     output: process.stdout,
+    historySize: 100,
+    removeHistoryDuplicates: true,
   });
   input.on("SIGINT", handleSigint);
   console.log(startupText(info));
