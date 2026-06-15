@@ -25,7 +25,7 @@ export function helpText() {
     dim("    ?                 show shortcuts"),
     dim("    ↑/↓               history"),
     dim("  Exit"),
-    dim("    ctrl+c            interrupt or quit"),
+    dim("    ctrl + c          interrupt or quit"),
     dim("    /exit             quit ChainPeer"),
   ].join("\n");
 }
@@ -48,7 +48,7 @@ export function clearInputHintText() {
 }
 
 export function turnStartText() {
-  return `${cyan("•")} Working ${dim("(ctrl+c to interrupt)")}\n`;
+  return `${cyan("•")} Working ${dim("(ctrl + c to interrupt)")}\n`;
 }
 
 export function turnCompletedLine(event, tools = { completed: 0, failed: 0 }) {
@@ -58,7 +58,7 @@ export function turnCompletedLine(event, tools = { completed: 0, failed: 0 }) {
 }
 
 export function interruptText() {
-  return `${cyan("•")} Interrupt requested ${dim("(ctrl+c again to quit)")}`;
+  return `${cyan("•")} Interrupt requested ${dim("(ctrl + c again to quit)")}`;
 }
 
 export function cancelledText() {
@@ -357,12 +357,12 @@ function questionOptionLine(option, index, recommended) {
 
 function questionFooter(options) {
   return options.length
-    ? "  enter number or custom answer | ctrl+c interrupt"
-    : "  enter to submit answer | ctrl+c interrupt";
+    ? "  enter number or custom answer | ctrl + c interrupt"
+    : "  enter to submit answer | ctrl + c interrupt";
 }
 
 function inputFooter() {
-  return dim("  enter to send | ? shortcuts | ctrl+c quit");
+  return dim("  enter to send | ? shortcuts | ctrl + c quit");
 }
 
 function inputPromptFrame(body = []) {
