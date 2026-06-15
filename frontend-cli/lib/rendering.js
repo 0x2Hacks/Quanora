@@ -6,7 +6,11 @@ export function startupText(info) {
 }
 
 export function promptText() {
-  return `\n${bold("›")} Ask ChainPeer to do anything\n${inputFooter()}\n`;
+  return `\n${bold("›")} Ask ChainPeer to do anything\n${inputFooter()}\n${bold("›")} `;
+}
+
+export function answerPromptText() {
+  return `\n${bold("›")} Answer\n${bold("›")} `;
 }
 
 export function turnStartText() {
