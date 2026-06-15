@@ -17,12 +17,16 @@ export function promptPlaceholderText() {
 export function helpText() {
   return [
     `${cyan("•")} Help`,
-    dim("  ?                 show shortcuts"),
-    dim("  /compact          compact the conversation"),
-    dim("  /model set <name> set the model"),
-    dim("  /clear            clear the terminal"),
-    dim("  /exit             quit ChainPeer"),
-    dim("  ↑/↓ history · ctrl+c interrupt or exit"),
+    dim("  Commands"),
+    dim("    /compact          compact the conversation"),
+    dim("    /model set <name> set the model"),
+    dim("    /clear            clear the terminal"),
+    dim("  Navigation"),
+    dim("    ?                 show shortcuts"),
+    dim("    ↑/↓               history"),
+    dim("  Exit"),
+    dim("    ctrl+c            interrupt or quit"),
+    dim("    /exit             quit ChainPeer"),
   ].join("\n");
 }
 

@@ -117,12 +117,16 @@ test("helpText renders compact shortcuts and commands", () => {
     helpText(),
     [
       "• Help",
-      "  ?                 show shortcuts",
-      "  /compact          compact the conversation",
-      "  /model set <name> set the model",
-      "  /clear            clear the terminal",
-      "  /exit             quit ChainPeer",
-      "  ↑/↓ history · ctrl+c interrupt or exit",
+      "  Commands",
+      "    /compact          compact the conversation",
+      "    /model set <name> set the model",
+      "    /clear            clear the terminal",
+      "  Navigation",
+      "    ?                 show shortcuts",
+      "    ↑/↓               history",
+      "  Exit",
+      "    ctrl+c            interrupt or quit",
+      "    /exit             quit ChainPeer",
     ].join("\n"),
   );
 });
