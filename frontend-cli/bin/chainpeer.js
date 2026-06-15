@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { createInterface } from "node:readline";
+import { createInterface, emitKeypressEvents } from "node:readline";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,7 +46,9 @@ let interruptRequested = false;
 let input = null;
 let runtimeClosing = false;
 let runtimeKillTimer = null;
+let processExitTimer = null;
 let cancelActiveInput = null;
+let lastSigintAt = 0;
 const pending = new Map();
 const announcedTools = new Set();
 let sessionInfo = {};
@@ -88,8 +90,9 @@ runtime.on("exit", (code, signal) => {
   }
   pending.clear();
   process.exitCode = runtimeClosing ? 0 : code ?? 1;
-  if (input) {
-    input.close();
+  closeInput();
+  if (runtimeClosing) {
+    scheduleProcessExit(process.exitCode ?? 0, 0);
   }
 });
 
@@ -105,6 +108,9 @@ try {
     removeHistoryDuplicates: true,
   });
   input.on("SIGINT", handleSigint);
+  emitKeypressEvents(process.stdin, input);
+  process.stdin.on("keypress", handleKeypress);
+  process.stdin.on("data", handleStdinData);
   console.log(startupText(info));
   await promptLoop();
 } catch (error) {
@@ -118,8 +124,11 @@ try {
 }
 
 async function promptLoop() {
-  while (true) {
+  while (!runtimeClosing) {
     const text = (await ask(promptText(sessionInfo, latestStats), promptPlaceholderText())).trim();
+    if (runtimeClosing) {
+      return;
+    }
     if (!text) {
       continue;
     }
@@ -181,9 +190,19 @@ async function handleCommand(text) {
 
 function request(method, params = {}) {
   const id = nextId++;
-  runtime.stdin.write(JSON.stringify({ id, method, params }) + "\n");
   return new Promise((resolve, reject) => {
+    if (!runtime.stdin.writable || runtime.destroyed) {
+      reject(new Error("Runtime stdin is closed"));
+      return;
+    }
     pending.set(id, { resolve, reject });
+    runtime.stdin.write(JSON.stringify({ id, method, params }) + "\n", (error) => {
+      if (!error) {
+        return;
+      }
+      pending.delete(id);
+      reject(error);
+    });
   });
 }
 
@@ -199,7 +218,11 @@ function receive(line) {
     return;
   }
   if (message.kind === "event") {
-    void renderEvent(message.event);
+    void renderEvent(message.event).catch((error) => {
+      if (!runtimeClosing) {
+        console.error(error instanceof Error ? error.message : String(error));
+      }
+    });
   }
 }
 
@@ -217,6 +240,9 @@ function finishRequest(message) {
 }
 
 async function renderEvent(event) {
+  if (runtimeClosing) {
+    return;
+  }
   switch (event.type) {
     case "assistant_delta":
       assistantRenderer.append(event.text || "");
@@ -332,10 +358,24 @@ function ask(prompt, placeholder = "") {
 
 function askLine(prompt) {
   return new Promise((resolve, reject) => {
-    const onClose = () => reject(new Error("Input closed"));
-    input.once("close", onClose);
-    input.question(prompt, (answer) => {
+    const cleanup = () => {
       input.off("close", onClose);
+      if (cancelActiveInput === onCancel) {
+        cancelActiveInput = null;
+      }
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error("Input closed"));
+    };
+    const onCancel = () => {
+      cleanup();
+      resolve("");
+    };
+    input.once("close", onClose);
+    cancelActiveInput = onCancel;
+    input.question(prompt, (answer) => {
+      cleanup();
       resolve(answer);
     });
   });
@@ -346,8 +386,8 @@ function askLineWithHint(prompt, placeholder) {
   const hint = createInputHint(input, line.prefix, placeholder);
   process.stdout.write(line.leading);
   return new Promise((resolve, reject) => {
-    const cleanup = () => {
-      hint.stop();
+    const cleanup = (redraw = false) => {
+      hint.stop(redraw);
       input.off("line", onLine);
       input.off("close", onClose);
       if (cancelActiveInput === onCancel) {
@@ -355,7 +395,7 @@ function askLineWithHint(prompt, placeholder) {
       }
     };
     const onLine = (answer) => {
-      cleanup();
+      cleanup(true);
       resolve(answer);
     };
     const onClose = () => {
@@ -392,16 +432,22 @@ function createInputHint(readline, prefix, placeholder) {
       clearInputHint(readline, prefix);
     }
   };
-  const onKeypress = () => setImmediate(update);
+  const onKeypress = (text, key) => {
+    if (isCtrlC(key)) {
+      handleSigint();
+      return;
+    }
+    setImmediate(update);
+  };
   return {
     start() {
       active = true;
       showInputHint(readline, prefix, placeholder);
       readline.input.on("keypress", onKeypress);
     },
-    stop() {
+    stop(redraw = false) {
       active = false;
-      if (shown) {
+      if (shown && redraw) {
         clearInputHint(readline, prefix);
       }
       readline.input.off("keypress", onKeypress);
@@ -436,6 +482,9 @@ function splitPromptLine(prompt) {
 }
 
 function handleSigint() {
+  if (isDuplicateSigint()) {
+    return;
+  }
   const action = sigintAction({ activeTurn, interruptRequested, runtimeClosing });
   if (action === "interrupt") {
     interruptRequested = true;
@@ -446,11 +495,41 @@ function handleSigint() {
     return;
   }
   if (action === "shutdown") {
-    closeRuntime();
+    exitFromSignal();
   }
   if (action === "force-shutdown") {
-    forceCloseRuntime();
+    exitFromSignal();
   }
+}
+
+function handleKeypress(text, key) {
+  if (isCtrlC(key)) {
+    handleSigint();
+  }
+}
+
+function handleStdinData(chunk) {
+  if (Buffer.from(chunk).includes(3)) {
+    handleSigint();
+  }
+}
+
+function isCtrlC(key) {
+  return Boolean(key?.ctrl && key.name === "c");
+}
+
+function isDuplicateSigint() {
+  const now = Date.now();
+  if (now - lastSigintAt < 200) {
+    return true;
+  }
+  lastSigintAt = now;
+  return false;
+}
+
+function exitFromSignal() {
+  forceCloseRuntime();
+  scheduleProcessExit(0, 50);
 }
 
 function closeAssistant() {
@@ -468,20 +547,17 @@ function closeRuntime() {
     }
     scheduleRuntimeKill();
   }
-  if (input) {
-    input.close();
-  }
+  closeInput();
 }
 
 function forceCloseRuntime() {
   runtimeClosing = true;
   clearRuntimeKillTimer();
+  cancelActiveInput?.();
   if (!runtime.killed && runtime.exitCode === null) {
-    runtime.kill();
+    runtime.kill("SIGKILL");
   }
-  if (input) {
-    input.close();
-  }
+  closeInput();
 }
 
 async function shutdownRuntime() {
@@ -493,15 +569,13 @@ async function shutdownRuntime() {
   try {
     await request("shutdown");
   } catch {
-    runtime.kill();
+    runtime.kill("SIGKILL");
   } finally {
     clearRuntimeKillTimer();
     if (runtime.stdin.writable) {
       runtime.stdin.end();
     }
-    if (input) {
-      input.close();
-    }
+    closeInput();
   }
 }
 
@@ -509,7 +583,7 @@ function scheduleRuntimeKill() {
   clearRuntimeKillTimer();
   runtimeKillTimer = setTimeout(() => {
     if (!runtime.killed && runtime.exitCode === null) {
-      runtime.kill();
+      runtime.kill("SIGKILL");
     }
   }, 1500);
   runtimeKillTimer.unref?.();
@@ -521,4 +595,22 @@ function clearRuntimeKillTimer() {
   }
   clearTimeout(runtimeKillTimer);
   runtimeKillTimer = null;
+}
+
+function scheduleProcessExit(code, delayMs) {
+  if (processExitTimer) {
+    return;
+  }
+  process.exitCode = code;
+  processExitTimer = setTimeout(() => process.exit(code), delayMs);
+}
+
+function closeInput() {
+  cancelActiveInput?.();
+  process.stdin.off("keypress", handleKeypress);
+  process.stdin.off("data", handleStdinData);
+  if (input) {
+    input.close();
+  }
+  process.stdin.pause();
 }
