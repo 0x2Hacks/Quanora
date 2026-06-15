@@ -48,7 +48,7 @@ export function clearInputHintText() {
 }
 
 export function turnStartText() {
-  return `${cyan("•")} Working ${dim("· ctrl+c to interrupt")}\n`;
+  return `${cyan("•")} Working ${dim("(ctrl+c to interrupt)")}\n`;
 }
 
 export function turnCompletedLine(event, tools = { completed: 0, failed: 0 }) {
@@ -58,11 +58,11 @@ export function turnCompletedLine(event, tools = { completed: 0, failed: 0 }) {
 }
 
 export function interruptText() {
-  return `${yellow("•")} Interrupt requested ${dim("(ctrl+c again to quit)")}`;
+  return `${cyan("•")} Interrupt requested ${dim("(ctrl+c again to quit)")}`;
 }
 
 export function cancelledText() {
-  return `${yellow("•")} Interrupted ${dim("session state preserved; resume with -c")}`;
+  return `${cyan("•")} Interrupted ${dim("session state preserved; resume with -c")}`;
 }
 
 export function commandResultText(text, detail = "") {
@@ -72,7 +72,7 @@ export function commandResultText(text, detail = "") {
 }
 
 export function modelUsageText() {
-  return `${yellow("•")} Model command\n${dim("  └ /model set <name>")}`;
+  return `${cyan("•")} Model command\n${dim("  └ /model set <name>")}`;
 }
 
 export function contextBuiltLine(event) {
@@ -83,22 +83,24 @@ export function contextBuiltLine(event) {
   const scopes = Array.isArray(decisions.chainpeer_docs_truncated_scopes)
     ? decisions.chainpeer_docs_truncated_scopes.join(", ")
     : "unknown";
-  return `${yellow("•")} Context trimmed\n${dim(`  └ CHAINPEER.md: ${clipSingleLine(scopes, 96)}`)}`;
+  return `${cyan("•")} Context trimmed\n${dim(`  └ CHAINPEER.md: ${clipSingleLine(scopes, 96)}`)}`;
 }
 
 export function unknownCommandText() {
-  return `${yellow("•")} Unknown command\n${dim("  └ type ? for shortcuts")}`;
+  return `${cyan("•")} Unknown command\n${dim("  └ type ? for shortcuts")}`;
 }
 
 export function toolRequestedLine(event) {
   const name = event.tool_name || "unknown";
   const detail = toolDetail(name, parseJsonObject(event.args_preview));
   const label = toolLabel(name);
-  return detail ? `${cyan("•")} Running ${label}\n${dim(`  └ ${detail}`)}` : `${cyan("•")} Running ${label}`;
+  const line = `${cyan("•")} ${toolActiveVerb(name)} ${label}`;
+  return detail ? `${line}\n${dim(`  └ ${detail}`)}` : line;
 }
 
 export function toolStartedLine(event) {
-  return `${cyan("•")} Running ${toolLabel(event.tool_name || "tool")}`;
+  const name = event.tool_name || "tool";
+  return `${cyan("•")} ${toolActiveVerb(name)} ${toolLabel(name)}`;
 }
 
 export function toolResultLine(event) {
@@ -111,7 +113,7 @@ export function toolResultLine(event) {
     const line = `${red("×")} ${label} failed in ${duration}${suffix}`;
     return detail ? `${line}\n${dim(`  └ ${detail}`)}` : line;
   }
-  return `${green("✓")} ${label} completed in ${duration}`;
+  return `${green("✓")} ${completedToolText(name, label)} in ${duration}`;
 }
 
 export function toolProgressLine(event) {
@@ -175,6 +177,20 @@ function toolLabel(name) {
     return "output";
   }
   return name || "tool";
+}
+
+function toolActiveVerb(name) {
+  return name === "bash" || name === "bash_output" ? "Running" : "Calling";
+}
+
+function completedToolText(name, label) {
+  if (name === "bash") {
+    return `Ran ${label}`;
+  }
+  if (name === "bash_output") {
+    return `Read ${label}`;
+  }
+  return `Called ${label}`;
 }
 
 function parseJsonObject(value) {
@@ -386,10 +402,6 @@ function cyan(text) {
 
 function green(text) {
   return styled(text, "32");
-}
-
-function yellow(text) {
-  return styled(text, "33");
 }
 
 function red(text) {

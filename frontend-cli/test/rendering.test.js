@@ -85,7 +85,7 @@ test("prompt and turn status copy match the compact terminal UI", () => {
   assert.equal(answerPlaceholderText(), "Type your answer");
   assert.equal(inputHintText("Ask ChainPeer to do anything"), "\x1b[sAsk ChainPeer to do anything\x1b[u");
   assert.equal(clearInputHintText(), "\x1b[K");
-  assert.equal(turnStartText(), "• Working · ctrl+c to interrupt\n");
+  assert.equal(turnStartText(), "• Working (ctrl+c to interrupt)\n");
   assert.equal(interruptText(), "• Interrupt requested (ctrl+c again to quit)");
   assert.equal(cancelledText(), "• Interrupted session state preserved; resume with -c");
 });
@@ -190,6 +190,7 @@ test("toolRequestedLine clips long details", () => {
 test("toolStartedLine renders fallback running state", () => {
   assert.equal(toolStartedLine({ tool_name: "bash" }), "• Running command");
   assert.equal(toolStartedLine({ tool_name: "bash_output" }), "• Running output");
+  assert.equal(toolStartedLine({ tool_name: "web_search" }), "• Calling web_search");
 });
 
 test("toolResultLine renders compact success state", () => {
@@ -199,7 +200,7 @@ test("toolResultLine renders compact success state", () => {
       status: "completed",
       duration_ms: 1250,
     }),
-    "✓ command completed in 1.25s",
+    "✓ Ran command in 1.25s",
   );
   assert.equal(
     toolResultLine({
@@ -207,7 +208,7 @@ test("toolResultLine renders compact success state", () => {
       status: "completed",
       duration_ms: 20,
     }),
-    "✓ view_image completed in 20ms",
+    "✓ Called view_image in 20ms",
   );
 });
 
