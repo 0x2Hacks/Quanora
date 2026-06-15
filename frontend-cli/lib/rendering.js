@@ -1,5 +1,4 @@
 const STARTUP_BANNER_WIDTH = 80;
-const STARTUP_BANNER_INNER_WIDTH = STARTUP_BANNER_WIDTH - 4;
 
 export function startupText(info = {}) {
   const header = startupBannerText(info);
@@ -37,7 +36,7 @@ export function answerPlaceholderText() {
 
 export function inputHintText(placeholder) {
   const text = singleLine(placeholder);
-  return text ? `${dim(text)}\x1b[${text.length}D` : "";
+  return text ? `\x1b[s${dim(text)}\x1b[u` : "";
 }
 
 export function clearInputHintText() {
@@ -80,7 +79,7 @@ export function contextBuiltLine(event) {
   const scopes = Array.isArray(decisions.chainpeer_docs_truncated_scopes)
     ? decisions.chainpeer_docs_truncated_scopes.join(", ")
     : "unknown";
-  return `${yellow("•")} CHAINPEER.md truncated for context: ${scopes}`;
+  return `${yellow("•")} Context trimmed\n${dim(`  └ CHAINPEER.md: ${clipSingleLine(scopes, 96)}`)}`;
 }
 
 export function unknownCommandText() {
@@ -282,28 +281,23 @@ function resumePreviewLine(line) {
 
 function startupBannerText(info) {
   const modelLine = `${singleLine(info.model) || "unknown"} · session ${singleLine(info.session_id) || "unknown"}`;
-  const cwd = middleClip(info.cwd || process.cwd(), STARTUP_BANNER_INNER_WIDTH - 2);
+  const cwd = middleClip(info.cwd || process.cwd(), STARTUP_BANNER_WIDTH - 2);
   return [
-    startupBannerTop(),
+    bold("ChainPeer"),
+    dim("─".repeat(STARTUP_BANNER_WIDTH)),
     startupBannerLine("agent runtime"),
     startupBannerLine(modelLine),
     startupBannerLine(cwd),
-    dim(`╰${"─".repeat(STARTUP_BANNER_WIDTH - 2)}╯`),
   ].join("\n");
-}
-
-function startupBannerTop() {
-  const prefix = "╭─ ChainPeer ";
-  return dim(`${prefix}${"─".repeat(STARTUP_BANNER_WIDTH - prefix.length - 1)}╮`);
 }
 
 function startupBannerLine(text) {
   const clean = String(text || "").replace(/[\r\n\t]+/g, " ").trimEnd();
   const content =
-    clean.length <= STARTUP_BANNER_INNER_WIDTH
+    clean.length <= STARTUP_BANNER_WIDTH - 2
       ? clean
-      : `${clean.slice(0, Math.max(0, STARTUP_BANNER_INNER_WIDTH - 3))}...`;
-  return `${dim("│")} ${content.padEnd(STARTUP_BANNER_INNER_WIDTH)} ${dim("│")}`;
+      : `${clean.slice(0, Math.max(0, STARTUP_BANNER_WIDTH - 5))}...`;
+  return `  ${content}`;
 }
 
 function questionOptionLine(option, index, recommended) {
@@ -313,13 +307,17 @@ function questionOptionLine(option, index, recommended) {
 }
 
 function inputFooter() {
-  return dim("  ? shortcuts · ↑ history · /compact · /model set <model>");
+  return dim("  ? shortcuts · ↑/↓ history · /compact · ctrl+c interrupt/exit");
 }
 
 function inputPromptFrame(body = []) {
   const lines = [""];
-  lines.push(...body.filter(Boolean));
-  lines.push(`${bold("›")} `);
+  const content = body.filter(Boolean);
+  lines.push(...content);
+  if (content.length) {
+    lines.push("");
+  }
+  lines.push(`  ${bold("›")} `);
   return lines.join("\n");
 }
 
