@@ -124,10 +124,16 @@ export function toolProgressLine(event) {
 
 export function tokenStatsLine(event) {
   const stats = event.stats && typeof event.stats === "object" ? event.stats : {};
-  const context = contextRemaining(stats);
-  const cache = formatPercent(stats.cache_hit_rate);
-  const output = formatCount(stats.output_tokens);
-  return `${cyan("•")} Context ${context} · cache ${cache} · output ${output}`;
+  const parts = [`Context ${contextRemaining(stats)}`];
+  const cache = formatOptionalPercent(stats.cache_hit_rate);
+  if (cache) {
+    parts.push(`cache ${cache}`);
+  }
+  const output = formatOptionalCount(stats.output_tokens);
+  if (output) {
+    parts.push(`output ${output}`);
+  }
+  return `${cyan("•")} ${parts.join(" · ")}`;
 }
 
 export function skillLine(event) {
@@ -278,12 +284,28 @@ function formatCount(value) {
   return String(Math.trunc(number));
 }
 
+function formatOptionalCount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) {
+    return "";
+  }
+  return formatCount(number);
+}
+
 function formatPercent(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) {
     return "0.0%";
   }
   return `${(number * 100).toFixed(1)}%`;
+}
+
+function formatOptionalPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) {
+    return "";
+  }
+  return formatPercent(number);
 }
 
 function resumePreviewText(value) {

@@ -256,7 +256,17 @@ test("tokenStatsLine renders compact context status", () => {
         effective_context_window_tokens: 4000,
       },
     }),
-    "• Context 1.2k/4.0k · cache 0.0% · output 0",
+    "• Context 1.2k/4.0k",
+  );
+  assert.equal(
+    tokenStatsLine({
+      stats: {
+        context_usage_percent: 0.2,
+        cache_hit_rate: 0,
+        output_tokens: 0,
+      },
+    }),
+    "• Context 80% left · cache 0.0% · output 0",
   );
 });
 
