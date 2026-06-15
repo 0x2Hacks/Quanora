@@ -78,7 +78,7 @@ test("startupText clips long cwd in the middle", () => {
 test("prompt and turn status copy match the compact terminal UI", () => {
   assert.equal(
     promptText(),
-    "\n  enter to send | ? shortcuts | ctrl + c quit\n\n  › ",
+    "\n  ? for shortcuts · enter to send · ctrl + c to quit\n\n  › ",
   );
   assert.equal(promptPlaceholderText(), "Ask ChainPeer to do anything");
   assert.equal(answerPromptText(), "\n  › ");
@@ -95,7 +95,7 @@ test("promptText includes compact session status when available", () => {
     promptText({ model: "glm-5.1", cwd: "E:\\code\\agent\\agent_base-ts-cli-process-split" }, {
       context_usage_percent: 0.125,
     }),
-    "\n  glm-5.1 · 88% context left · E:\\code\\agent\\agent_base-ts-cli-process-split\n  enter to send | ? shortcuts | ctrl + c quit\n\n  › ",
+    "\n  glm-5.1 · 88% context left · E:\\code\\agent\\agent_base-ts-cli-process-split\n  ? for shortcuts · enter to send · ctrl + c to quit\n\n  › ",
   );
 });
 
@@ -122,10 +122,11 @@ test("helpText renders compact shortcuts and commands", () => {
       "    /model set <name> set the model",
       "    /clear            clear the terminal",
       "  Navigation",
-      "    ?                 show shortcuts",
+      "    enter             send message",
+      "    ?                 show this help",
       "    ↑/↓               history",
       "  Exit",
-      "    ctrl + c          interrupt or quit",
+      "    ctrl + c          interrupt turn or quit",
       "    /exit             quit ChainPeer",
     ].join("\n"),
   );
@@ -286,7 +287,7 @@ test("status helpers render question, skill, and errors", () => {
       "  Pick one",
       "  › 1. A recommended",
       "    2. B",
-      "  enter number or custom answer | ctrl + c interrupt",
+      "  enter number or custom answer · ctrl + c to interrupt",
     ].join("\n"),
   );
   assert.equal(
@@ -294,7 +295,7 @@ test("status helpers render question, skill, and errors", () => {
     [
       "• Question (answer required)",
       "  Explain",
-      "  enter to submit answer | ctrl + c interrupt",
+      "  enter to submit answer · ctrl + c to interrupt",
     ].join("\n"),
   );
   assert.match(questionText({ question: "q".repeat(120) }), /\n  q{73}\.\.\.\n/);

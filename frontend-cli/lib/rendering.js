@@ -22,10 +22,11 @@ export function helpText() {
     dim("    /model set <name> set the model"),
     dim("    /clear            clear the terminal"),
     dim("  Navigation"),
-    dim("    ?                 show shortcuts"),
+    dim("    enter             send message"),
+    dim("    ?                 show this help"),
     dim("    ↑/↓               history"),
     dim("  Exit"),
-    dim("    ctrl + c          interrupt or quit"),
+    dim("    ctrl + c          interrupt turn or quit"),
     dim("    /exit             quit ChainPeer"),
   ].join("\n");
 }
@@ -357,12 +358,12 @@ function questionOptionLine(option, index, recommended) {
 
 function questionFooter(options) {
   return options.length
-    ? "  enter number or custom answer | ctrl + c interrupt"
-    : "  enter to submit answer | ctrl + c interrupt";
+    ? "  enter number or custom answer · ctrl + c to interrupt"
+    : "  enter to submit answer · ctrl + c to interrupt";
 }
 
 function inputFooter() {
-  return dim("  enter to send | ? shortcuts | ctrl + c quit");
+  return dim("  ? for shortcuts · enter to send · ctrl + c to quit");
 }
 
 function inputPromptFrame(body = []) {
