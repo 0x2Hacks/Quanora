@@ -136,13 +136,13 @@ export function errorLine(error) {
 export function questionText(event = {}) {
   const options = Array.isArray(event.options) ? event.options : [];
   const lines = [
-    `${cyan("•")} Question · ${dim("answer required")}`,
+    `${cyan("•")} Question ${dim("(answer required)")}`,
     `  ${clipSingleLine(event.question || "Input required", 76)}`,
   ];
   for (const [index, option] of options.entries()) {
     lines.push(questionOptionLine(option, index, event.recommended));
   }
-  lines.push(dim(options.length ? "  Enter a number or type a custom answer" : "  Type an answer"));
+  lines.push(dim(questionFooter(options)));
   return lines.join("\n");
 }
 
@@ -304,6 +304,12 @@ function questionOptionLine(option, index, recommended) {
   const marker = option === recommended ? bold("›") : " ";
   const suffix = option === recommended ? dim(" recommended") : "";
   return `  ${marker} ${index + 1}. ${clipSingleLine(option, 70)}${suffix}`;
+}
+
+function questionFooter(options) {
+  return options.length
+    ? "  enter number or custom answer · ctrl+c interrupt"
+    : "  enter answer · ctrl+c interrupt";
 }
 
 function inputFooter() {

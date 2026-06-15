@@ -267,19 +267,19 @@ test("status helpers render question, skill, and errors", () => {
   assert.equal(
     questionText({ question: "Pick one", options: ["A", "B"], recommended: "A" }),
     [
-      "• Question · answer required",
+      "• Question (answer required)",
       "  Pick one",
       "  › 1. A recommended",
       "    2. B",
-      "  Enter a number or type a custom answer",
+      "  enter number or custom answer · ctrl+c interrupt",
     ].join("\n"),
   );
   assert.equal(
     questionText({ question: "Explain" }),
     [
-      "• Question · answer required",
+      "• Question (answer required)",
       "  Explain",
-      "  Type an answer",
+      "  enter answer · ctrl+c interrupt",
     ].join("\n"),
   );
   assert.match(questionText({ question: "q".repeat(120) }), /\n  q{73}\.\.\.\n/);
