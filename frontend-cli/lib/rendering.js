@@ -69,7 +69,7 @@ export function commandResultText(text, detail = "") {
 }
 
 export function modelUsageText() {
-  return `${dim("  Usage: /model set <model>")}`;
+  return `${yellow("•")} Model command\n${dim("  └ /model set <name>")}`;
 }
 
 export function contextBuiltLine(event) {
@@ -84,7 +84,7 @@ export function contextBuiltLine(event) {
 }
 
 export function unknownCommandText() {
-  return `${yellow("•")} Unknown command ${dim("type ? for shortcuts")}`;
+  return `${yellow("•")} Unknown command\n${dim("  └ type ? for shortcuts")}`;
 }
 
 export function toolRequestedLine(event) {

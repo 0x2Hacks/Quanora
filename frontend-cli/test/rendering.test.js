@@ -129,11 +129,11 @@ test("helpText renders compact shortcuts and commands", () => {
 });
 
 test("unknownCommandText points to shortcuts help", () => {
-  assert.equal(unknownCommandText(), "• Unknown command type ? for shortcuts");
+  assert.equal(unknownCommandText(), "• Unknown command\n  └ type ? for shortcuts");
 });
 
 test("modelUsageText renders concrete model command usage", () => {
-  assert.equal(modelUsageText(), "  Usage: /model set <model>");
+  assert.equal(modelUsageText(), "• Model command\n  └ /model set <name>");
 });
 
 test("commandResultText renders a compact success line", () => {
