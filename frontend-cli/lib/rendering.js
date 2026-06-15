@@ -17,8 +17,13 @@ export function promptPlaceholderText() {
 
 export function helpText() {
   return [
-    dim("  Shortcuts: ↑/↓ history · ctrl+c interrupt or exit"),
-    dim("  Commands: /compact · /model set <model> · /clear · /exit"),
+    `${cyan("•")} Help`,
+    dim("  ?                 show shortcuts"),
+    dim("  /compact          compact the conversation"),
+    dim("  /model set <name> set the model"),
+    dim("  /clear            clear the terminal"),
+    dim("  /exit             quit ChainPeer"),
+    dim("  ↑/↓ history · ctrl+c interrupt or exit"),
   ].join("\n");
 }
 
