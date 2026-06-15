@@ -11,3 +11,10 @@ test("sigintAction interrupts active turn first and shuts down on repeat", () =>
 test("sigintAction shuts down outside active turn", () => {
   assert.equal(sigintAction({ activeTurn: false, interruptRequested: false }), "shutdown");
 });
+
+test("sigintAction forces shutdown while runtime is already closing", () => {
+  assert.equal(
+    sigintAction({ activeTurn: false, interruptRequested: false, runtimeClosing: true }),
+    "force-shutdown",
+  );
+});

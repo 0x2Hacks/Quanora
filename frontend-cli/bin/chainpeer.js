@@ -45,6 +45,8 @@ let activeTurn = false;
 let interruptRequested = false;
 let input = null;
 let runtimeClosing = false;
+let runtimeKillTimer = null;
+let cancelActiveInput = null;
 const pending = new Map();
 const announcedTools = new Set();
 let sessionInfo = {};
@@ -80,11 +82,12 @@ runtime.stderr.on("data", (chunk) => {
 });
 
 runtime.on("exit", (code, signal) => {
+  clearRuntimeKillTimer();
   for (const { reject } of pending.values()) {
     reject(new Error(`Runtime exited with ${signal || code}`));
   }
   pending.clear();
-  process.exitCode = code ?? 1;
+  process.exitCode = runtimeClosing ? 0 : code ?? 1;
   if (input) {
     input.close();
   }
@@ -299,6 +302,9 @@ async function answerQuestion(event) {
   closeAssistant();
   console.log(questionText(event));
   const raw = (await ask(answerPromptText(), answerPlaceholderText())).trim();
+  if (interruptRequested || runtimeClosing) {
+    return;
+  }
   const answer = selectAnswer(raw, event.options || []);
   await request("user_question.respond", {
     tool_call_id: event.tool_call_id,
@@ -344,6 +350,9 @@ function askLineWithHint(prompt, placeholder) {
       hint.stop();
       input.off("line", onLine);
       input.off("close", onClose);
+      if (cancelActiveInput === onCancel) {
+        cancelActiveInput = null;
+      }
     };
     const onLine = (answer) => {
       cleanup();
@@ -353,8 +362,13 @@ function askLineWithHint(prompt, placeholder) {
       cleanup();
       reject(new Error("Input closed"));
     };
+    const onCancel = () => {
+      cleanup();
+      resolve("");
+    };
     input.once("line", onLine);
     input.once("close", onClose);
+    cancelActiveInput = onCancel;
     hint.start();
   });
 }
@@ -422,9 +436,10 @@ function splitPromptLine(prompt) {
 }
 
 function handleSigint() {
-  const action = sigintAction({ activeTurn, interruptRequested });
+  const action = sigintAction({ activeTurn, interruptRequested, runtimeClosing });
   if (action === "interrupt") {
     interruptRequested = true;
+    cancelActiveInput?.();
     closeAssistant();
     console.log(`\n${interruptText()}`);
     void request("turn.interrupt").catch(() => {});
@@ -447,8 +462,11 @@ function closeRuntime() {
     return;
   }
   runtimeClosing = true;
-  if (runtime.exitCode === null && !runtime.killed && runtime.stdin.writable) {
-    runtime.stdin.end(JSON.stringify({ id: nextId++, method: "shutdown", params: {} }) + "\n");
+  if (runtime.exitCode === null && !runtime.killed) {
+    if (runtime.stdin.writable) {
+      runtime.stdin.end(JSON.stringify({ id: nextId++, method: "shutdown", params: {} }) + "\n");
+    }
+    scheduleRuntimeKill();
   }
   if (input) {
     input.close();
@@ -456,10 +474,14 @@ function closeRuntime() {
 }
 
 function forceCloseRuntime() {
+  runtimeClosing = true;
+  clearRuntimeKillTimer();
   if (!runtime.killed && runtime.exitCode === null) {
     runtime.kill();
   }
-  closeRuntime();
+  if (input) {
+    input.close();
+  }
 }
 
 async function shutdownRuntime() {
@@ -467,11 +489,13 @@ async function shutdownRuntime() {
     return;
   }
   runtimeClosing = true;
+  scheduleRuntimeKill();
   try {
     await request("shutdown");
   } catch {
     runtime.kill();
   } finally {
+    clearRuntimeKillTimer();
     if (runtime.stdin.writable) {
       runtime.stdin.end();
     }
@@ -479,4 +503,22 @@ async function shutdownRuntime() {
       input.close();
     }
   }
+}
+
+function scheduleRuntimeKill() {
+  clearRuntimeKillTimer();
+  runtimeKillTimer = setTimeout(() => {
+    if (!runtime.killed && runtime.exitCode === null) {
+      runtime.kill();
+    }
+  }, 1500);
+  runtimeKillTimer.unref?.();
+}
+
+function clearRuntimeKillTimer() {
+  if (!runtimeKillTimer) {
+    return;
+  }
+  clearTimeout(runtimeKillTimer);
+  runtimeKillTimer = null;
 }
