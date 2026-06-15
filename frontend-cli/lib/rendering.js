@@ -49,6 +49,17 @@ export function commandResultText(text) {
   return `${dim("  ")}${text}`;
 }
 
+export function contextBuiltLine(event) {
+  const decisions = event.decisions && typeof event.decisions === "object" ? event.decisions : {};
+  if (!decisions.chainpeer_docs_truncated) {
+    return "";
+  }
+  const scopes = Array.isArray(decisions.chainpeer_docs_truncated_scopes)
+    ? decisions.chainpeer_docs_truncated_scopes.join(", ")
+    : "unknown";
+  return `${yellow("•")} CHAINPEER.md truncated for context: ${scopes}`;
+}
+
 export function unknownCommandText() {
   return dim("  Unknown command.");
 }
@@ -249,6 +260,10 @@ function cyan(text) {
 
 function green(text) {
   return styled(text, "32");
+}
+
+function yellow(text) {
+  return styled(text, "33");
 }
 
 function red(text) {

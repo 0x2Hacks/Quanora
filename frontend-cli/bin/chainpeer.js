@@ -13,6 +13,7 @@ import {
   answerPromptText,
   cancelledText,
   commandResultText,
+  contextBuiltLine,
   errorLine,
   helpText,
   interruptText,
@@ -205,6 +206,14 @@ async function renderEvent(event) {
     case "assistant_delta":
       assistantRenderer.append(event.text || "");
       return;
+    case "context_built": {
+      const line = contextBuiltLine(event);
+      if (line) {
+        closeAssistant();
+        console.log(line);
+      }
+      return;
+    }
     case "tool_requested":
       closeAssistant();
       if (event.tool_call_id) {

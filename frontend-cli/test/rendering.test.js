@@ -5,6 +5,7 @@ import { AssistantRenderer } from "../lib/assistant-renderer.js";
 import {
   answerPromptText,
   cancelledText,
+  contextBuiltLine,
   errorLine,
   helpText,
   interruptText,
@@ -58,6 +59,19 @@ test("helpText renders compact shortcuts and commands", () => {
       "  /clear",
       "  /exit",
     ].join("\n"),
+  );
+});
+
+test("contextBuiltLine warns only when ChainPeer docs are truncated", () => {
+  assert.equal(contextBuiltLine({ decisions: {} }), "");
+  assert.equal(
+    contextBuiltLine({
+      decisions: {
+        chainpeer_docs_truncated: true,
+        chainpeer_docs_truncated_scopes: ["user", "project"],
+      },
+    }),
+    "• CHAINPEER.md truncated for context: user, project",
   );
 });
 
