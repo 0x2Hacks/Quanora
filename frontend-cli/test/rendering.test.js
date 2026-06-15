@@ -157,7 +157,7 @@ test("toolRequestedLine shows bash command", () => {
       tool_name: "bash",
       args_preview: '{"command":"date"}',
     }),
-    "• Running bash\n  └ date",
+    "• Running command\n  └ date",
   );
 });
 
@@ -172,7 +172,8 @@ test("toolRequestedLine clips long details", () => {
 });
 
 test("toolStartedLine renders fallback running state", () => {
-  assert.equal(toolStartedLine({ tool_name: "bash" }), "• Running bash");
+  assert.equal(toolStartedLine({ tool_name: "bash" }), "• Running command");
+  assert.equal(toolStartedLine({ tool_name: "bash_output" }), "• Running output");
 });
 
 test("toolResultLine renders compact success state", () => {
@@ -182,7 +183,15 @@ test("toolResultLine renders compact success state", () => {
       status: "completed",
       duration_ms: 1250,
     }),
-    "✓ bash completed in 1.25s",
+    "✓ command completed in 1.25s",
+  );
+  assert.equal(
+    toolResultLine({
+      tool_name: "view_image",
+      status: "completed",
+      duration_ms: 20,
+    }),
+    "✓ view_image completed in 20ms",
   );
 });
 
@@ -195,7 +204,7 @@ test("toolResultLine includes compact failure detail", () => {
       duration_ms: 50,
       result: '{"ok":false,"error":"command timed out\\ntry again"}',
     }),
-    "× bash failed in 50ms (Timeout)\n  └ command timed out try again",
+    "× command failed in 50ms (Timeout)\n  └ command timed out try again",
   );
 });
 
@@ -205,7 +214,7 @@ test("toolProgressLine renders compact progress messages", () => {
       tool_name: "bash",
       payload: { message: "waiting\nfor output" },
     }),
-    "• bash\n  └ waiting for output",
+    "• command\n  └ waiting for output",
   );
   assert.equal(toolProgressLine({ tool_name: "bash", payload: { stdout: "ignored" } }), "");
 });

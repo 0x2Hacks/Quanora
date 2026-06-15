@@ -84,29 +84,31 @@ export function unknownCommandText() {
 export function toolRequestedLine(event) {
   const name = event.tool_name || "unknown";
   const detail = toolDetail(name, parseJsonObject(event.args_preview));
-  return detail ? `${cyan("•")} Running ${name}\n${dim(`  └ ${detail}`)}` : `${cyan("•")} Running ${name}`;
+  const label = toolLabel(name);
+  return detail ? `${cyan("•")} Running ${label}\n${dim(`  └ ${detail}`)}` : `${cyan("•")} Running ${label}`;
 }
 
 export function toolStartedLine(event) {
-  return `${cyan("•")} Running ${event.tool_name || "tool"}`;
+  return `${cyan("•")} Running ${toolLabel(event.tool_name || "tool")}`;
 }
 
 export function toolResultLine(event) {
   const name = event.tool_name || "unknown";
+  const label = toolLabel(name);
   const duration = formatDuration(event.duration_ms);
   if (event.status === "failed") {
     const suffix = event.error_type ? ` (${event.error_type})` : "";
     const detail = toolErrorDetail(event.result);
-    const line = `${red("×")} ${name} failed in ${duration}${suffix}`;
+    const line = `${red("×")} ${label} failed in ${duration}${suffix}`;
     return detail ? `${line}\n${dim(`  └ ${detail}`)}` : line;
   }
-  return `${green("✓")} ${name} completed in ${duration}`;
+  return `${green("✓")} ${label} completed in ${duration}`;
 }
 
 export function toolProgressLine(event) {
   const name = event.tool_name || "tool";
   const message = progressMessage(event.payload);
-  return message ? `${cyan("•")} ${name}\n${dim(`  └ ${message}`)}` : "";
+  return message ? `${cyan("•")} ${toolLabel(name)}\n${dim(`  └ ${message}`)}` : "";
 }
 
 export function tokenStatsLine(event) {
@@ -154,6 +156,16 @@ function toolDetail(name, args) {
     }
   }
   return "";
+}
+
+function toolLabel(name) {
+  if (name === "bash") {
+    return "command";
+  }
+  if (name === "bash_output") {
+    return "output";
+  }
+  return name || "tool";
 }
 
 function parseJsonObject(value) {
