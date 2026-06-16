@@ -56,7 +56,6 @@ let runtimeClosing = false;
 let runtimeKillTimer = null;
 let processExitTimer = null;
 let cancelActiveInput = null;
-let handlingSigint = false;
 const pending = new Map();
 const announcedTools = new Set();
 let sessionInfo = {};
@@ -115,10 +114,12 @@ try {
     historySize: 100,
     removeHistoryDuplicates: true,
   });
-  input.on("SIGINT", handleSigint);
-  emitKeypressEvents(process.stdin, input);
-  process.stdin.on("keypress", handleKeypress);
-  process.stdin.on("data", handleStdinData);
+  if (process.stdin.isTTY) {
+    emitKeypressEvents(process.stdin, input);
+    process.stdin.on("keypress", handleKeypress);
+  } else {
+    process.stdin.on("data", handleStdinData);
+  }
   resumeInput();
   console.log(startupText(info));
   await promptLoop();
@@ -368,15 +369,17 @@ function ask(prompt, placeholder = "") {
 
 function askLine(prompt) {
   return new Promise((resolve, reject) => {
-    const cleanup = () => {
+    const cleanup = (resume = true) => {
       input.off("close", onClose);
       if (cancelActiveInput === onCancel) {
         cancelActiveInput = null;
       }
-      resumeInput();
+      if (resume) {
+        resumeInput();
+      }
     };
     const onClose = () => {
-      cleanup();
+      cleanup(false);
       reject(new Error("Input closed"));
     };
     const onCancel = () => {
@@ -397,21 +400,23 @@ function askLineWithHint(prompt, placeholder) {
   const hint = createInputHint(input, line.prefix, placeholder);
   process.stdout.write(line.leading);
   return new Promise((resolve, reject) => {
-    const cleanup = (redraw = false) => {
+    const cleanup = ({ redraw = false, resume = true } = {}) => {
       hint.stop(redraw);
       input.off("line", onLine);
       input.off("close", onClose);
       if (cancelActiveInput === onCancel) {
         cancelActiveInput = null;
       }
-      resumeInput();
+      if (resume) {
+        resumeInput();
+      }
     };
     const onLine = (answer) => {
-      cleanup(true);
+      cleanup({ redraw: true });
       resolve(answer);
     };
     const onClose = () => {
-      cleanup();
+      cleanup({ resume: false });
       reject(new Error("Input closed"));
     };
     const onCancel = () => {
@@ -490,14 +495,6 @@ function splitPromptLine(prompt) {
 }
 
 function handleSigint() {
-  if (handlingSigint) {
-    return;
-  }
-  handlingSigint = true;
-  setImmediate(() => {
-    handlingSigint = false;
-  });
-
   const action = sigintAction({ activeTurn, interruptRequested, runtimeClosing });
   if (action === "interrupt") {
     interruptTurn();
@@ -644,7 +641,6 @@ function closeInput() {
   if (input) {
     const current = input;
     input = null;
-    current.off("SIGINT", handleSigint);
     try {
       current.close();
     } catch {
