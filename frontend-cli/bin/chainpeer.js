@@ -22,6 +22,7 @@ import {
   promptPlaceholderText,
   promptText,
   questionText,
+  queuedInputText,
   slashMenuText,
   skillLine,
   startupText,
@@ -197,7 +198,7 @@ async function runSlashCommand(text) {
 
 function submitTurn(text, extra = {}) {
   if (activeTurn || queuedTurns > 0) {
-    logOutput("\n• Queued next message");
+    logOutput(queuedInputText());
   }
   queuedTurns += 1;
   const task = turnQueue.then(

@@ -77,7 +77,11 @@ export function slashMenuText(items, selectedIndex = 0) {
 }
 
 export function turnStartText() {
-  return `${cyan("•")} Working ${dim("(ctrl + c to interrupt)")}\n`;
+  return `${cyan("•")} Working ${dim("(ctrl + c to interrupt)")}`;
+}
+
+export function queuedInputText() {
+  return `${cyan("•")} Queued follow-up input`;
 }
 
 export function turnCompletedLine(event, tools = { completed: 0, failed: 0 }) {
