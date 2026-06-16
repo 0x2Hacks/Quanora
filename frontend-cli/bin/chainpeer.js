@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { AssistantRenderer } from "../lib/assistant-renderer.js";
 import { buildRuntimeEnv } from "../lib/runtime-env.js";
+import { createInputHistory } from "../lib/input-history.js";
 import { isInputClosed } from "../lib/input-errors.js";
 import { sigintAction } from "../lib/interrupt-state.js";
 import { createSlashMenuState } from "../lib/slash-menu-state.js";
@@ -70,6 +71,7 @@ let redrawActiveInput = null;
 let suspendActiveInput = null;
 const promptResumeWaiters = [];
 const assistantRenderer = new AssistantRenderer((text) => writeOutput(text));
+const inputHistory = createInputHistory();
 let runtimeStdoutBuffer = "";
 
 const runtime = spawn(
@@ -545,12 +547,26 @@ function askTtyPrompt(prompt, placeholder) {
       if (key.name === "return" || key.name === "enter") {
         const command = menuState.selectedCommand();
         const answer = command ? `/${command.name}` : menuState.input();
+        inputHistory.add(answer);
         cleanup();
         process.stdout.write(answer ? `${line.prefix}${answer}\n` : "\n");
         resolve(answer);
         return;
       }
+      if (!menuState.matches().length && key.name === "up") {
+        menuState.setInput(inputHistory.previous(menuState.input()));
+        renderPrompt();
+        return;
+      }
+      if (!menuState.matches().length && key.name === "down") {
+        menuState.setInput(inputHistory.next(menuState.input()));
+        renderPrompt();
+        return;
+      }
       if (menuState.handleKey(chunk, key)) {
+        if (key.name !== "up" && key.name !== "down") {
+          inputHistory.reset();
+        }
         renderPrompt();
       }
     };
