@@ -65,14 +65,15 @@ export function slashMenuText(items, selectedIndex = 0) {
   if (!visible.length) {
     return "";
   }
-  const lines = visible.map((item, index) => {
+  const lines = [dim("  / commands")];
+  for (const [index, item] of visible.entries()) {
     const active = index === selectedIndex;
     const marker = active ? cyan("›") : dim(" ");
     const name = active ? bold(`/${item.name}`) : `/${item.name}`;
     const description = dim(clipSingleLine(item.description, 46));
-    return `  ${marker} ${padRight(name, 14)} ${description}`;
-  });
-  lines.push(dim("  enter accept · ↑/↓ choose · esc close"));
+    lines.push(`${dim("  │")} ${marker} ${padRight(name, 14)} ${description}`);
+  }
+  lines.push(dim("  └ enter accept · ↑/↓ choose · esc close"));
   return `${lines.join("\n")}\n`;
 }
 
