@@ -39,6 +39,14 @@ import {
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "..", "..");
 const python = process.env.CHAINPEER_PYTHON || "python";
+const runtimeBootstrap = [
+  "import os, runpy, sys",
+  `repo = os.path.abspath(${JSON.stringify(repoRoot)})`,
+  "cwd = os.path.abspath(os.getcwd())",
+  "blocked = {os.path.normcase(repo), os.path.normcase(cwd)}",
+  "sys.path = [repo] + [p for p in sys.path if p and os.path.normcase(os.path.abspath(p)) not in blocked]",
+  "runpy.run_module('agent.interfaces.runtime_server.stdio', run_name='__main__')",
+].join("; ");
 
 let nextId = 1;
 let activeTurn = false;
@@ -59,7 +67,7 @@ let runtimeStdoutBuffer = "";
 
 const runtime = spawn(
   python,
-  ["-m", "agent.interfaces.runtime_server.stdio", ...process.argv.slice(2)],
+  ["-c", runtimeBootstrap, ...process.argv.slice(2)],
   {
     cwd: process.cwd(),
     env: buildRuntimeEnv(repoRoot),
