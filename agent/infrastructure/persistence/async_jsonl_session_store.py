@@ -21,7 +21,6 @@ from agent.infrastructure.persistence.session_meta import (
     default_auto_compact_window,
     new_session_meta,
     normalize_auto_compact_window,
-    positive_int_or_none,
     sync_session_counts,
 )
 from agent.infrastructure.paths import (
@@ -498,51 +497,11 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
 
         return await asyncio.to_thread(_get)
 
-    async def get_auto_compact_window(self) -> dict[str, Any]:
-        return await asyncio.to_thread(self._auto_compact_window_sync)
-
     async def get_compact_generation(self) -> int:
         def _get():
             return int(self._auto_compact_window_sync().get("ordinal") or 1)
 
         return await asyncio.to_thread(_get)
-
-    async def update_auto_compact_window_from_usage(self, usage: dict[str, Any]) -> None:
-        async with self._write_lock:
-            def _persist():
-                if not self._session_meta or not self._session_paths:
-                    return
-                sampling_kind = str((usage or {}).get("sampling_kind") or "assistant")
-                if sampling_kind != "assistant":
-                    return
-                input_tokens = positive_int_or_none((usage or {}).get("input_tokens"))
-                if input_tokens is None:
-                    return
-                window = self._auto_compact_window_sync()
-                if window.get("prefill_source") == "server":
-                    return
-                window["prefill_input_tokens"] = input_tokens
-                window["prefill_source"] = "server"
-                self._session_meta["auto_compact_window"] = window
-                self._persist_meta_sync()
-
-            await asyncio.to_thread(_persist)
-
-    async def update_auto_compact_window_from_estimate(self, tokens: int) -> None:
-        async with self._write_lock:
-            def _persist():
-                if not self._session_meta or not self._session_paths:
-                    return
-                estimated_tokens = positive_int_or_none(tokens)
-                if estimated_tokens is None:
-                    return
-                window = self._auto_compact_window_sync()
-                window["prefill_input_tokens"] = estimated_tokens
-                window["prefill_source"] = "estimate_after_compact"
-                self._session_meta["auto_compact_window"] = window
-                self._persist_meta_sync()
-
-            await asyncio.to_thread(_persist)
 
     async def persist_compaction(self, compaction: dict[str, Any]) -> dict[str, Any]:
         async with self._write_lock:
@@ -573,8 +532,6 @@ class AsyncJsonlSessionStore(AsyncSessionStore):
                     }
                     self._session_meta["auto_compact_window"] = {
                         "ordinal": int(self._auto_compact_window_sync().get("ordinal") or 1) + 1,
-                        "prefill_input_tokens": None,
-                        "prefill_source": None,
                     }
                     self._session_meta.pop("latest_assistant_sampling_usage", None)
                 self._persist_meta_sync()

@@ -8,73 +8,58 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from agent.application.services import ContextBudget, ContextEstimator
+from agent.application.services.context_estimator import (
+    DEFAULT_AUTO_COMPACT_TOKEN_LIMIT_PERCENT,
+    DEFAULT_CONTEXT_WINDOW_TOKENS,
+)
+
+DEFAULT_AUTO_COMPACT_TOKEN_LIMIT = (
+    DEFAULT_CONTEXT_WINDOW_TOKENS * DEFAULT_AUTO_COMPACT_TOKEN_LIMIT_PERCENT // 100
+)
 
 
 def test_context_budget_codex_defaults() -> None:
     budget = ContextBudget.default()
 
-    if budget.resolved_context_window_tokens() != 258400:
+    if budget.resolved_context_window_tokens() != DEFAULT_CONTEXT_WINDOW_TOKENS:
         raise AssertionError(f"Unexpected context window: {budget.to_dict()}")
-    if budget.resolved_effective_context_window_tokens() != 245480:
-        raise AssertionError(f"Unexpected effective window: {budget.to_dict()}")
-    if budget.resolved_auto_compact_token_limit() != 232560:
+    if budget.resolved_auto_compact_token_limit_percent() != DEFAULT_AUTO_COMPACT_TOKEN_LIMIT_PERCENT:
+        raise AssertionError(f"Unexpected auto compact percent: {budget.to_dict()}")
+    if budget.resolved_auto_compact_token_limit() != DEFAULT_AUTO_COMPACT_TOKEN_LIMIT:
         raise AssertionError(f"Unexpected auto compact limit: {budget.to_dict()}")
 
 
-def test_context_budget_total_scope_status() -> None:
-    budget = ContextBudget(context_window_tokens=1000, effective_context_window_percent=95)
+def test_context_budget_default_percent_threshold() -> None:
+    budget = ContextBudget(context_window_tokens=1000)
 
-    under = budget.auto_compact_token_status(899)
-    reached = budget.auto_compact_token_status(900)
-
-    if under["auto_compact_token_limit_reached"] is not False:
-        raise AssertionError(f"Expected under threshold, got: {under}")
-    if reached["auto_compact_token_limit_reached"] is not True:
-        raise AssertionError(f"Expected threshold reached, got: {reached}")
+    if budget.resolved_auto_compact_token_limit() != 900:
+        raise AssertionError(f"Expected 90% threshold, got: {budget.to_dict()}")
 
 
-def test_context_budget_body_after_prefix_status() -> None:
-    budget = ContextBudget(
-        context_window_tokens=2000,
-        auto_compact_token_limit=200,
-        auto_compact_token_limit_scope="body_after_prefix",
-    )
+def test_context_budget_custom_percent() -> None:
+    budget = ContextBudget(context_window_tokens=2000, auto_compact_token_limit_percent=75)
 
-    under = budget.auto_compact_token_status(1100, prefill_input_tokens=950)
-    reached = budget.auto_compact_token_status(1200, prefill_input_tokens=950)
-    full_window = budget.auto_compact_token_status(1900, prefill_input_tokens=None)
-
-    if under["auto_compact_token_limit_reached"] is not False:
-        raise AssertionError(f"Expected body scope under threshold, got: {under}")
-    if reached["auto_compact_token_limit_reached"] is not True:
-        raise AssertionError(f"Expected body scope reached, got: {reached}")
-    if full_window["auto_compact_token_limit_reached"] is not True:
-        raise AssertionError(f"Expected effective window reached, got: {full_window}")
+    if budget.resolved_auto_compact_token_limit_percent() != 75:
+        raise AssertionError(f"Expected custom percent, got: {budget.to_dict()}")
+    if budget.resolved_auto_compact_token_limit() != 1500:
+        raise AssertionError(f"Expected percent-derived threshold, got: {budget.to_dict()}")
 
 
 def test_context_budget_tolerates_invalid_numeric_config() -> None:
     budget = ContextBudget(
         hard_limit_tokens="bad",
-        compact_threshold_tokens="also bad",
         context_window_tokens="invalid",
-        effective_context_window_percent=0,
-        auto_compact_token_limit="nope",
+        auto_compact_token_limit_percent="nope",
     )
 
-    if budget.resolved_context_window_tokens() != 258400:
+    if budget.resolved_context_window_tokens() != DEFAULT_CONTEXT_WINDOW_TOKENS:
         raise AssertionError(f"Expected default context window, got: {budget.to_dict()}")
-    if budget.resolved_effective_context_window_percent() != 95:
-        raise AssertionError(f"Expected default effective percent, got: {budget.to_dict()}")
-    if budget.resolved_auto_compact_token_limit() != 232560:
+    if budget.resolved_auto_compact_token_limit_percent() != DEFAULT_AUTO_COMPACT_TOKEN_LIMIT_PERCENT:
+        raise AssertionError(f"Expected default auto compact percent, got: {budget.to_dict()}")
+    if budget.resolved_auto_compact_token_limit() != DEFAULT_AUTO_COMPACT_TOKEN_LIMIT:
         raise AssertionError(f"Expected default auto compact limit, got: {budget.to_dict()}")
-    if budget.resolved_compact_threshold_tokens() != 232560:
-        raise AssertionError(f"Expected fallback compact threshold, got: {budget.to_dict()}")
-    if budget.resolved_hard_limit_tokens() != 245480:
+    if budget.resolved_hard_limit_tokens() != DEFAULT_CONTEXT_WINDOW_TOKENS:
         raise AssertionError(f"Expected fallback hard limit, got: {budget.to_dict()}")
-
-    status = budget.auto_compact_token_status("bad", prefill_input_tokens="bad")
-    if status["auto_compact_scope_tokens"] != 0:
-        raise AssertionError(f"Expected invalid estimated tokens to resolve to zero, got: {status}")
 
 
 def test_context_estimator_counts_chars_and_tokens() -> None:
@@ -119,8 +104,8 @@ def test_context_estimator_limit_flags() -> None:
 
 def main() -> int:
     test_context_budget_codex_defaults()
-    test_context_budget_total_scope_status()
-    test_context_budget_body_after_prefix_status()
+    test_context_budget_default_percent_threshold()
+    test_context_budget_custom_percent()
     test_context_budget_tolerates_invalid_numeric_config()
     test_context_estimator_counts_chars_and_tokens()
     test_context_estimator_limit_flags()

@@ -135,14 +135,15 @@ class AsyncTurnRunner:
                         path=str(item.get("path") or ""),
                     )
 
-                if context_decisions.get("auto_compact_token_limit_reached"):
+                compact_required = bool(context_decisions.get("compact_required"))
+                if context_decisions.get("auto_compact_token_limit_reached") or compact_required:
                     context = await self._run_compact(
                         session=session,
                         context_messages=context_messages,
                         context_stats=context_stats,
                         reason="auto",
                         phase="mid_turn",
-                        phase_detail="before_first_sampling" if sampling_index == 0 else None,
+                        phase_detail=self._compact_phase_detail(sampling_index, compact_required),
                         active_skill_matches=turn_active_skill_matches,
                         transient_system_messages=transient_system_messages,
                         cancellation_token=cancellation_token,
@@ -283,7 +284,6 @@ class AsyncTurnRunner:
             cancellation_token=cancellation_token,
         )
         context = await self._build_context(session, active_skill_matches=None)
-        await self._update_auto_compact_window_from_context_estimate(session, context)
         self._validate_compact_context(context)
         return record
 
@@ -315,7 +315,6 @@ class AsyncTurnRunner:
             active_skill_matches=active_skill_matches,
             transient_system_messages=transient_system_messages,
         )
-        await self._update_auto_compact_window_from_context_estimate(session, context)
         self._validate_compact_context(context)
         return context
 
@@ -337,18 +336,6 @@ class AsyncTurnRunner:
         persist_usage = getattr(session, "persist_sampling_usage", None)
         if callable(persist_usage):
             await self._best_effort(persist_usage, usage)
-        update_window = getattr(session, "update_auto_compact_window_from_usage", None)
-        if callable(update_window):
-            await self._best_effort(update_window, usage)
-
-    async def _update_auto_compact_window_from_context_estimate(self, session: AsyncSessionStore, context) -> None:
-        stats = context.stats if isinstance(getattr(context, "stats", None), dict) else {}
-        tokens = self._positive_int_or_none(stats.get("estimated_input_tokens"))
-        if tokens is None:
-            return
-        update_window = getattr(session, "update_auto_compact_window_from_estimate", None)
-        if callable(update_window):
-            await self._best_effort(update_window, tokens)
 
     def _validate_compact_context(self, context) -> None:
         messages = context.messages if isinstance(getattr(context, "messages", None), list) else []
@@ -359,18 +346,18 @@ class AsyncTurnRunner:
     def _has_valid_continuation_boundary(self, messages: list[dict]) -> bool:
         return validate_model_message_boundary(messages).ok
 
-    def _positive_int_or_none(self, value) -> int | None:
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            return None
-        return parsed if parsed > 0 else None
-
     async def _best_effort(self, operation, *args) -> None:
         try:
             await operation(*args)
         except Exception:
             pass
+
+    def _compact_phase_detail(self, sampling_index: int, compact_required: bool) -> str | None:
+        if compact_required:
+            return "hard_limit"
+        if sampling_index == 0:
+            return "before_first_sampling"
+        return None
 
     def _snapshot_context_hard_limit(self):
         snapshot = getattr(self._context_manager, "snapshot_hard_limit", None)

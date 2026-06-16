@@ -173,8 +173,8 @@ def test_token_stats_updated_output() -> None:
         TokenStatsUpdatedEvent(
             stats={
                 "input_tokens": 121300,
-                "effective_context_window_tokens": 245480,
-                "context_usage_percent": 121300 / 245480,
+                "context_window_tokens": 258400,
+                "context_usage_percent": 121300 / 258400,
                 "cached_input_tokens": 98700,
                 "cache_hit_rate": 98700 / 121300,
                 "output_tokens": 2100,
@@ -183,7 +183,7 @@ def test_token_stats_updated_output() -> None:
     )
 
     text = output.getvalue()
-    if "Tokens: input 121.3k / 245.5k" not in text:
+    if "Tokens: input 121.3k / 258.4k" not in text:
         raise AssertionError(f"Expected input token line, got: {text!r}")
     if "cached 98.7k (81.4%)" not in text:
         raise AssertionError(f"Expected cache hit line, got: {text!r}")
@@ -196,7 +196,7 @@ def test_token_stats_tolerates_invalid_numeric_values() -> None:
         TokenStatsUpdatedEvent(
             stats={
                 "input_tokens": "bad",
-                "effective_context_window_tokens": object(),
+                "context_window_tokens": object(),
                 "cached_input_tokens": -1,
                 "output_tokens": None,
                 "context_usage_percent": "bad",

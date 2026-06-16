@@ -6,27 +6,17 @@ from typing import Any
 
 
 def default_auto_compact_window() -> dict[str, Any]:
-    return {
-        "ordinal": 1,
-        "prefill_input_tokens": None,
-        "prefill_source": None,
-    }
+    return {"ordinal": 1}
 
 
 def normalize_auto_compact_window(window: Any) -> dict[str, Any]:
     normalized = default_auto_compact_window()
     if isinstance(window, dict):
-        normalized.update(window)
+        normalized["ordinal"] = window.get("ordinal", normalized["ordinal"])
     try:
         normalized["ordinal"] = max(1, int(normalized.get("ordinal") or 1))
     except (TypeError, ValueError):
         normalized["ordinal"] = 1
-    prefill = normalized.get("prefill_input_tokens")
-    if prefill is not None:
-        try:
-            normalized["prefill_input_tokens"] = max(0, int(prefill))
-        except (TypeError, ValueError):
-            normalized["prefill_input_tokens"] = None
     return normalized
 
 

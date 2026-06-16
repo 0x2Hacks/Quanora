@@ -52,9 +52,7 @@ def test_load_settings_ignores_legacy_internal_budget_fields(tmp_path):
                 "baseUrl": "https://openai945.cn/",
                 "reasoningEffort": "xhigh",
                 "contextWindow": 128000,
-                "effectiveContextWindowPercent": 90,
-                "autoCompactTokenLimit": 100000,
-                "autoCompactTokenLimitScope": "body_after_prefix",
+                "autoCompactTokenLimitPercent": 90,
                 "autoCompactEnabled": False,
             }
         ),
@@ -65,9 +63,7 @@ def test_load_settings_ignores_legacy_internal_budget_fields(tmp_path):
 
     assert settings.model == "gpt-5.5"
     assert not hasattr(settings, "context_window")
-    assert not hasattr(settings, "effective_context_window_percent")
-    assert not hasattr(settings, "auto_compact_token_limit")
-    assert not hasattr(settings, "auto_compact_token_limit_scope")
+    assert not hasattr(settings, "auto_compact_token_limit_percent")
     assert not hasattr(settings, "auto_compact_enabled")
 
 

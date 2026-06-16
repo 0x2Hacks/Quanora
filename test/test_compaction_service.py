@@ -111,7 +111,7 @@ async def test_compaction_service_falls_back_when_llm_compact_fails() -> None:
             chat_client=FailingClient(),
             reason="auto",
             phase="mid_turn",
-            context_stats={"context_window_tokens": 1000, "effective_context_window_tokens": 950},
+            context_stats={"context_window_tokens": 1000},
         )
 
     assert record["strategy"] == "deterministic_fallback"
@@ -145,7 +145,7 @@ async def test_compaction_service_keeps_llm_handoff_when_usage_persist_fails() -
             chat_client=SuccessfulClient(),
             reason="manual",
             phase="manual",
-            context_stats={"context_window_tokens": 1000, "effective_context_window_tokens": 900},
+            context_stats={"context_window_tokens": 1000},
         )
 
     assert record["strategy"] == "llm_inline"
@@ -173,13 +173,13 @@ async def test_compaction_service_keeps_llm_handoff_with_bad_context_stats() -> 
             chat_client=SuccessfulClient(),
             reason="auto",
             phase="mid_turn",
-            context_stats={"context_window_tokens": "bad", "effective_context_window_tokens": 0},
+            context_stats={"context_window_tokens": "bad"},
         )
 
     assert record["strategy"] == "llm_inline"
     assert record["handoff_message"]["content"] == "LLM compact handoff"
     assert record["usage"]["input_tokens"] == 100
-    assert record["usage"]["effective_context_window_tokens"] > 0
+    assert record["usage"]["context_window_tokens"] > 0
     assert "fallback_error" not in record
 
 

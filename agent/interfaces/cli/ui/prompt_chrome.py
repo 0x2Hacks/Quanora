@@ -125,7 +125,7 @@ def _usage_summary(usage: dict[str, object] | None) -> str:
         items.append(f"ctx {context}")
     else:
         input_tokens = _number(usage.get("input_tokens"))
-        window = _number(usage.get("effective_context_window_tokens"))
+        window = _number(usage.get("context_window_tokens"))
         if input_tokens is not None and window:
             items.append(f"ctx {_format_count(input_tokens)}/{_format_count(window)}")
         elif input_tokens is not None:

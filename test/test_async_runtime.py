@@ -31,6 +31,7 @@ from agent.domain.events import (
 )
 from agent.application.runtime.cancellation import CancellationTokenSource
 from agent.application.services import ContextBudget, ContextEstimator, ContextManager
+from agent.application.services.context_estimator import DEFAULT_CONTEXT_WINDOW_TOKENS
 from agent.domain.compaction import COMPACT_CONTINUATION_USER_CONTENT
 
 @pytest.mark.asyncio
@@ -521,8 +522,7 @@ async def test_async_turn_runner_emits_and_persists_sampling_usage():
         return_value=MagicMock(
             messages=[],
             stats={
-                "context_window_tokens": 258400,
-                "effective_context_window_tokens": 245480,
+                "context_window_tokens": DEFAULT_CONTEXT_WINDOW_TOKENS,
                 "estimated_input_tokens": 180,
                 "estimated_chars": 720,
                 "message_count": 3,
@@ -538,7 +538,6 @@ async def test_async_turn_runner_emits_and_persists_sampling_usage():
 
         def __init__(self):
             self.usages = []
-            self.window_updates = []
 
         def now_iso(self):
             return "2026-05-08T00:00:00Z"
@@ -548,9 +547,6 @@ async def test_async_turn_runner_emits_and_persists_sampling_usage():
 
         async def persist_sampling_usage(self, usage):
             self.usages.append(dict(usage))
-
-        async def update_auto_compact_window_from_usage(self, usage):
-            self.window_updates.append(dict(usage))
 
     session = FakeSession()
     runner = AsyncTurnRunner(
@@ -567,14 +563,13 @@ async def test_async_turn_runner_emits_and_persists_sampling_usage():
     assert token_event.stats["input_tokens"] == 100
     assert token_event.stats["cached_input_tokens"] == 40
     assert token_event.stats["cache_hit_rate"] == 0.4
-    assert token_event.stats["context_usage_percent"] == 100 / 245480
+    assert token_event.stats["context_usage_percent"] == 100 / DEFAULT_CONTEXT_WINDOW_TOKENS
     assert token_event.stats["anchor"]["local_estimated_input_tokens"] == 180
     assert token_event.stats["anchor"]["local_estimated_chars"] == 720
     assert token_event.stats["anchor"]["context_message_count"] == 3
     assert token_event.stats["anchor"]["compact_generation"] == 2
     assert session.usages[-1]["output_tokens"] == 25
     assert session.usages[-1]["anchor"]["local_estimated_input_tokens"] == 180
-    assert session.window_updates[-1]["input_tokens"] == 100
 
 
 @pytest.mark.asyncio
@@ -590,7 +585,7 @@ async def test_async_turn_runner_usage_persistence_failure_does_not_fail_turn():
     mock_context.build_messages_async = AsyncMock(
         return_value=MagicMock(
             messages=[],
-            stats={"context_window_tokens": 1000, "effective_context_window_tokens": 900},
+            stats={"context_window_tokens": 1000},
             decisions={},
         )
     )
@@ -610,9 +605,6 @@ async def test_async_turn_runner_usage_persistence_failure_does_not_fail_turn():
 
         async def persist_sampling_usage(self, usage):
             raise OSError("meta write failed")
-
-        async def update_auto_compact_window_from_usage(self, usage):
-            raise OSError("window write failed")
 
     session = FakeSession()
     runner = AsyncTurnRunner(
@@ -645,7 +637,7 @@ async def test_async_turn_runner_usage_tolerates_bad_context_stats():
     mock_context.build_messages_async = AsyncMock(
         return_value=MagicMock(
             messages=[],
-            stats={"context_window_tokens": "bad", "effective_context_window_tokens": 0},
+            stats={"context_window_tokens": "bad"},
             decisions={},
         )
     )
@@ -666,9 +658,6 @@ async def test_async_turn_runner_usage_tolerates_bad_context_stats():
         async def persist_sampling_usage(self, usage):
             self.usages.append(dict(usage))
 
-        async def update_auto_compact_window_from_usage(self, usage):
-            return None
-
     session = FakeSession()
     runner = AsyncTurnRunner(
         chat_client=mock_client,
@@ -682,8 +671,7 @@ async def test_async_turn_runner_usage_tolerates_bad_context_stats():
 
     token_event = next(event for event in events if isinstance(event, TokenStatsUpdatedEvent))
     assert token_event.stats["input_tokens"] == 12
-    assert token_event.stats["effective_context_window_tokens"] == 245480
-    assert session.usages[-1]["context_window_tokens"] == 258400
+    assert session.usages[-1]["context_window_tokens"] == DEFAULT_CONTEXT_WINDOW_TOKENS
     assert any(isinstance(event, AssistantMessageCompletedEvent) for event in events)
     assert not any(isinstance(event, TurnFailedEvent) for event in events)
 
@@ -749,7 +737,6 @@ async def test_async_turn_runner_auto_compacts_before_sampling():
 
         def __init__(self):
             self.compactions = []
-            self.estimate_windows = []
 
         def now_iso(self):
             return "2026-05-08T00:00:00Z"
@@ -770,15 +757,12 @@ async def test_async_turn_runner_auto_compacts_before_sampling():
         async def persist_sampling_usage(self, usage):
             return None
 
-        async def update_auto_compact_window_from_estimate(self, tokens):
-            self.estimate_windows.append(tokens)
-
         async def persist_message(self, *args, **kwargs):
             return None
 
     first_context = MagicMock(
         messages=[{"role": "user", "content": "hello"}],
-        stats={"context_window_tokens": 1000, "effective_context_window_tokens": 950},
+        stats={"context_window_tokens": 1000},
         decisions={"auto_compact_token_limit_reached": True},
     )
     second_context = MagicMock(
@@ -788,7 +772,6 @@ async def test_async_turn_runner_auto_compacts_before_sampling():
         ],
         stats={
             "context_window_tokens": 1000,
-            "effective_context_window_tokens": 950,
             "estimated_input_tokens": 42,
         },
         decisions={},
@@ -820,7 +803,97 @@ async def test_async_turn_runner_auto_compacts_before_sampling():
     assert session.compactions[0]["phase"] == "mid_turn"
     assert session.compactions[0]["diagnostics"]["auto_compact_phase_detail"] == "before_first_sampling"
     assert session.compactions[0]["handoff_message"]["content"] == "LLM handoff"
-    assert session.estimate_windows == [42]
+    assert sum(isinstance(event, ContextBuiltEvent) for event in events) == 2
+
+
+@pytest.mark.asyncio
+async def test_async_turn_runner_compacts_when_hard_limit_is_required():
+    class EmptyStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    class FakeChatClient:
+        def __init__(self):
+            self.created = 0
+            self.streamed = 0
+
+        async def create(self, messages, tools=None, cancellation_token=None):
+            self.created += 1
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content="LLM handoff"))],
+            )
+
+        def stream(self, *args, **kwargs):
+            self.streamed += 1
+            return EmptyStream()
+
+    class FakeSession:
+        session_id = "session_1"
+
+        def __init__(self):
+            self.compactions = []
+
+        def now_iso(self):
+            return "2026-05-08T00:00:00Z"
+
+        async def load_messages(self):
+            return [{"role": "user", "content": "hello"}]
+
+        async def get_tool_records(self, *args, **kwargs):
+            return []
+
+        async def get_latest_compaction(self):
+            return None
+
+        async def persist_compaction(self, record):
+            self.compactions.append(dict(record))
+            return dict(record)
+
+        async def persist_sampling_usage(self, usage):
+            return None
+
+        async def persist_message(self, *args, **kwargs):
+            return None
+
+    first_context = MagicMock(
+        messages=[{"role": "user", "content": "hello"}],
+        stats={"context_window_tokens": 1000},
+        decisions={"compact_required": True, "auto_compact_token_limit_reached": False},
+    )
+    second_context = MagicMock(
+        messages=[
+            {"role": "user", "content": COMPACT_CONTINUATION_USER_CONTENT},
+            {"role": "assistant", "content": "LLM handoff"},
+        ],
+        stats={},
+        decisions={},
+    )
+    mock_context = MagicMock()
+    mock_context.build_messages_async = AsyncMock(side_effect=[first_context, second_context])
+    mock_context.select_active_skills_for_turn = None
+
+    mock_parser = MagicMock()
+    mock_parser.consume_async_stream = AsyncMock(return_value=("", [], None))
+
+    chat_client = FakeChatClient()
+    session = FakeSession()
+    runner = AsyncTurnRunner(
+        chat_client=chat_client,
+        tool_processor=MagicMock(),
+        stream_parser=mock_parser,
+        tool_schemas=[],
+        context_manager=mock_context,
+    )
+
+    events = [event async for event in runner.run_turn(session)]
+
+    assert chat_client.created == 1
+    assert chat_client.streamed == 1
+    assert len(session.compactions) == 1
+    assert session.compactions[0]["diagnostics"]["auto_compact_phase_detail"] == "hard_limit"
     assert sum(isinstance(event, ContextBuiltEvent) for event in events) == 2
 
 
@@ -842,7 +915,6 @@ async def test_async_turn_runner_mid_turn_compact_does_not_preserve_raw_tail():
 
         def __init__(self):
             self.compactions = []
-            self.estimate_windows = []
             self.raw_messages = [
                 {"role": "system", "content": "sys"},
                 {"role": "user", "content": "old question"},
@@ -871,9 +943,6 @@ async def test_async_turn_runner_mid_turn_compact_does_not_preserve_raw_tail():
         async def persist_sampling_usage(self, usage):
             return None
 
-        async def update_auto_compact_window_from_estimate(self, tokens):
-            self.estimate_windows.append(tokens)
-
     post_compact_context = MagicMock(
         messages=[
             {"role": "system", "content": "sys"},
@@ -900,7 +969,7 @@ async def test_async_turn_runner_mid_turn_compact_does_not_preserve_raw_tail():
     context = await runner._run_compact(
         session=session,
         context_messages=[dict(message) for message in session.raw_messages],
-        context_stats={"context_window_tokens": 1000, "effective_context_window_tokens": 950},
+        context_stats={"context_window_tokens": 1000},
         reason="auto",
         phase="mid_turn",
     )
@@ -925,7 +994,6 @@ async def test_async_turn_runner_mid_turn_compact_does_not_preserve_raw_tail():
     assert context.messages[-1] == {"role": "assistant", "content": "LLM handoff"}
     assert {"role": "user", "content": "current question"} not in context.messages
     assert not any(message.get("role") == "tool" for message in context.messages)
-    assert session.estimate_windows == [64]
 
 
 def test_compact_continuation_boundary_rejects_system_assistant_only():
@@ -1137,6 +1205,7 @@ def main() -> int:
     asyncio.run(test_async_turn_runner_usage_tolerates_bad_context_stats())
     asyncio.run(test_async_turn_runner_retry_error_emits_visible_failure())
     asyncio.run(test_async_turn_runner_auto_compacts_before_sampling())
+    asyncio.run(test_async_turn_runner_compacts_when_hard_limit_is_required())
     asyncio.run(test_async_turn_runner_mid_turn_compact_does_not_preserve_raw_tail())
     test_compact_continuation_boundary_rejects_system_assistant_only()
     test_compact_continuation_boundary_accepts_user_assistant_handoff()
