@@ -250,7 +250,7 @@ test("toolRequestedLine shows bash command", () => {
       tool_name: "bash",
       args_preview: '{"command":"date"}',
     }),
-    "• Running command\n  └ date",
+    "• Tool · Running command\n  └ date",
   );
 });
 
@@ -265,10 +265,10 @@ test("toolRequestedLine clips long details", () => {
 });
 
 test("toolStartedLine renders fallback running state", () => {
-  assert.equal(toolStartedLine({ tool_name: "bash" }), "• Running command");
-  assert.equal(toolStartedLine({ tool_name: "bash_output" }), "• Running output");
-  assert.equal(toolStartedLine({ tool_name: "web_search" }), "• Calling web search");
-  assert.equal(toolStartedLine({ tool_name: "custom_tool" }), "• Calling custom tool");
+  assert.equal(toolStartedLine({ tool_name: "bash" }), "• Tool · Running command");
+  assert.equal(toolStartedLine({ tool_name: "bash_output" }), "• Tool · Running output");
+  assert.equal(toolStartedLine({ tool_name: "web_search" }), "• Tool · Calling web search");
+  assert.equal(toolStartedLine({ tool_name: "custom_tool" }), "• Tool · Calling custom tool");
 });
 
 test("toolResultLine renders compact success state", () => {
@@ -278,7 +278,7 @@ test("toolResultLine renders compact success state", () => {
       status: "completed",
       duration_ms: 1250,
     }),
-    "✓ Ran command in 1.25s",
+    "✓ Tool · Ran command in 1.25s",
   );
   assert.equal(
     toolResultLine({
@@ -286,7 +286,7 @@ test("toolResultLine renders compact success state", () => {
       status: "completed",
       duration_ms: 20,
     }),
-    "✓ Called image in 20ms",
+    "✓ Tool · Called image in 20ms",
   );
 });
 
@@ -299,7 +299,7 @@ test("toolResultLine includes compact failure detail", () => {
       duration_ms: 50,
       result: '{"ok":false,"error":"command timed out\\ntry again"}',
     }),
-    "× command failed in 50ms (Timeout)\n  └ command timed out try again",
+    "× Tool · command failed in 50ms (Timeout)\n  └ command timed out try again",
   );
 });
 
@@ -309,7 +309,7 @@ test("toolProgressLine renders compact progress messages", () => {
       tool_name: "bash",
       payload: { message: "waiting\nfor output" },
     }),
-    "• command\n  └ waiting for output",
+    "• Tool · command\n  └ waiting for output",
   );
   assert.equal(toolProgressLine({ tool_name: "bash", payload: { stdout: "ignored" } }), "");
 });
