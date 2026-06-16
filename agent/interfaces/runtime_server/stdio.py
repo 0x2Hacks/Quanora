@@ -15,6 +15,7 @@ from agent.bootstrap import build_basic_agent_dependencies
 from agent.domain.events import UserQuestionRequestedEvent
 from agent.infrastructure.config import Config
 from agent.infrastructure.paths import validate_session_id
+from agent.interfaces.cli.commands import SlashCommandContext, SlashCommandRouter
 from agent.interfaces.cli.ui.resume_preview import render_resume_preview
 
 
@@ -41,9 +42,11 @@ def configure_stdio_server_signals() -> None:
 
 
 class StdioRuntimeServer:
-    def __init__(self, runtime, session):
+    def __init__(self, runtime, session, debug: bool = False):
         self._runtime = runtime
         self._session = session
+        self._debug = debug
+        self._slash_router = SlashCommandRouter()
         self._writer = JsonlWriter()
         self._requests: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self._pending_answers: dict[str, asyncio.Future[str]] = {}
@@ -85,6 +88,8 @@ class StdioRuntimeServer:
                 await self._compact(request)
             elif method == "model.set":
                 await self._set_model(request)
+            elif method == "slash.execute":
+                await self._execute_slash(request)
             else:
                 await self._respond_error(request, f"Unknown method: {method}", "MethodNotFound")
         except Exception as exc:
@@ -98,8 +103,20 @@ class StdioRuntimeServer:
                 "session_id": getattr(self._session, "session_id", None),
                 "model": getattr(self._session, "model", None),
                 "resume_preview": await self._resume_preview(),
+                "slash_commands": self._slash_command_infos(),
             },
         )
+
+    def _slash_command_infos(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": info.name,
+                "description": info.description,
+                "usage": info.usage,
+                "aliases": list(info.aliases),
+            }
+            for info in self._slash_router.command_infos()
+        ]
 
     async def _resume_preview(self) -> str:
         get_messages = getattr(self._session, "get_messages_slice", None)
@@ -114,11 +131,18 @@ class StdioRuntimeServer:
         if not query:
             await self._respond_error(request, "turn.start requires input.", "InvalidRequest")
             return
+        transient_system_messages = params.get("transient_system_messages")
+        if not isinstance(transient_system_messages, list):
+            transient_system_messages = None
 
         cancel_source = CancellationTokenSource()
         self._current_cancel = cancel_source
         try:
-            async for event in self._runtime.run_turn(query=query, cancellation_token=cancel_source.token):
+            async for event in self._runtime.run_turn(
+                query=query,
+                cancellation_token=cancel_source.token,
+                transient_system_messages=transient_system_messages,
+            ):
                 await self._send_event(event.to_dict())
             await self._respond(request, {"ok": True})
         finally:
@@ -138,6 +162,34 @@ class StdioRuntimeServer:
         Config.set_model(model)
         result = await self._runtime.set_model(model)
         await self._respond(request, result)
+
+    async def _execute_slash(self, request: dict[str, Any]) -> None:
+        params = request.get("params") if isinstance(request.get("params"), dict) else {}
+        raw_input = str(params.get("input") or "")
+        cancel_source = CancellationTokenSource()
+        try:
+            result = await self._slash_router.execute(
+                raw_input,
+                SlashCommandContext(
+                    runtime=self._runtime,
+                    session=self._session,
+                    debug=self._debug,
+                    cancellation_token=cancel_source.token,
+                ),
+            )
+            await self._respond(
+                request,
+                {
+                    "text": result.text,
+                    "should_exit": result.should_exit,
+                    "clear_screen": result.clear_screen,
+                    "input_prefill": result.input_prefill,
+                    "run_turn_input": result.run_turn_input,
+                    "transient_system_messages": result.transient_system_messages,
+                },
+            )
+        finally:
+            cancel_source.dispose()
 
     async def _read_stdin(self) -> None:
         while True:
@@ -249,7 +301,7 @@ async def async_main(argv: list[str] | None = None) -> int:
         session_id=args.session,
         resume_latest=args.resume_latest,
     )
-    server = StdioRuntimeServer(dependencies["runtime"], dependencies["session"])
+    server = StdioRuntimeServer(dependencies["runtime"], dependencies["session"], debug=args.debug)
     return await server.run()
 
 

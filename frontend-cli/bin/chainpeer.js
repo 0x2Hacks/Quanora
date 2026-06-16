@@ -9,21 +9,20 @@ import { AssistantRenderer } from "../lib/assistant-renderer.js";
 import { buildRuntimeEnv } from "../lib/runtime-env.js";
 import { isInputClosed } from "../lib/input-errors.js";
 import { sigintAction } from "../lib/interrupt-state.js";
+import { createSlashMenuState } from "../lib/slash-menu-state.js";
 import {
   answerPromptText,
   answerPlaceholderText,
   cancelledText,
-  clearInputHintText,
-  commandResultText,
   contextBuiltLine,
   errorLine,
   helpText,
   inputHintText,
   interruptText,
-  modelUsageText,
   promptPlaceholderText,
   promptText,
   questionText,
+  slashMenuText,
   skillLine,
   startupText,
   tokenStatsLine,
@@ -33,7 +32,6 @@ import {
   toolStartedLine,
   turnCompletedLine,
   turnStartText,
-  unknownCommandText,
 } from "../lib/rendering.js";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
@@ -52,6 +50,7 @@ let nextId = 1;
 let activeTurn = false;
 let interruptRequested = false;
 let input = null;
+let inputActive = false;
 let runtimeClosing = false;
 let runtimeKillTimer = null;
 let processExitTimer = null;
@@ -60,8 +59,16 @@ const pending = new Map();
 const announcedTools = new Set();
 let sessionInfo = {};
 let latestStats = {};
+let slashCommands = [];
 let turnTools = { completed: 0, failed: 0 };
-const assistantRenderer = new AssistantRenderer((text) => process.stdout.write(text));
+let promptPaused = false;
+let pendingInputPrefill = "";
+let queuedTurns = 0;
+let turnQueue = Promise.resolve();
+let redrawActiveInput = null;
+let suspendActiveInput = null;
+const promptResumeWaiters = [];
+const assistantRenderer = new AssistantRenderer((text) => writeOutput(text));
 let runtimeStdoutBuffer = "";
 
 const runtime = spawn(
@@ -108,20 +115,21 @@ process.on("SIGINT", handleSigint);
 try {
   const info = await request("initialize");
   sessionInfo = { cwd: process.cwd(), ...(info || {}) };
-  input = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    historySize: 100,
-    removeHistoryDuplicates: true,
-  });
+  slashCommands = normalizeSlashCommands(info?.slash_commands);
   if (process.stdin.isTTY) {
-    emitKeypressEvents(process.stdin, input);
+    emitKeypressEvents(process.stdin);
     process.stdin.on("keypress", handleKeypress);
   } else {
+    input = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+      historySize: 100,
+      removeHistoryDuplicates: true,
+    });
     process.stdin.on("data", handleStdinData);
   }
   resumeInput();
-  console.log(startupText(info));
+  logOutput(startupText(info));
   await promptLoop();
 } catch (error) {
   closeAssistant();
@@ -135,6 +143,10 @@ try {
 
 async function promptLoop() {
   while (!runtimeClosing) {
+    await waitForPromptResume();
+    if (runtimeClosing) {
+      return;
+    }
     const text = (await ask(promptText(sessionInfo, latestStats), promptPlaceholderText())).trim();
     if (runtimeClosing) {
       return;
@@ -145,58 +157,76 @@ async function promptLoop() {
     if (await handleCommand(text)) {
       continue;
     }
-    activeTurn = true;
-    resetTurnTools();
-    console.log(turnStartText());
-    resumeInput();
-    try {
-      await request("turn.start", { input: text });
-    } finally {
-      activeTurn = false;
-      interruptRequested = false;
-      closeAssistant();
-    }
+    submitTurn(text);
   }
 }
 
 async function handleCommand(text) {
   if (text === "?") {
-    console.log(helpText());
+    logOutput(helpText());
     return true;
   }
   if (!text.startsWith("/")) {
     return false;
   }
-  const [command, ...args] = text.slice(1).split(/\s+/);
-  if (command === "help" || command === "?") {
-    console.log(helpText());
-    return true;
+  await runSlashCommand(text);
+  return true;
+}
+
+async function runSlashCommand(text) {
+  const result = await request("slash.execute", { input: text });
+  if (result.clear_screen) {
+    withSuspendedPrompt(() => console.clear());
   }
-  if (command === "exit" || command === "quit") {
+  if (result.text) {
+    logOutput(result.text);
+  }
+  if (result.input_prefill) {
+    pendingInputPrefill = result.input_prefill;
+  }
+  if (result.run_turn_input) {
+    submitTurn(result.run_turn_input, {
+      transient_system_messages: result.transient_system_messages,
+    });
+  }
+  if (result.should_exit) {
     await shutdownRuntime();
     process.exit(0);
   }
-  if (command === "clear") {
-    console.clear();
-    return true;
+}
+
+function submitTurn(text, extra = {}) {
+  if (activeTurn || queuedTurns > 0) {
+    logOutput("\n• Queued next message");
   }
-  if (command === "compact") {
-    const result = await request("compact");
-    console.log(commandResultText("Compact complete", `id ${result.id || "unknown"}`));
-    return true;
+  queuedTurns += 1;
+  const task = turnQueue.then(
+    () => runQueuedTurn(text, extra),
+    () => runQueuedTurn(text, extra),
+  );
+  turnQueue = task.catch((error) => {
+    if (!runtimeClosing) {
+      console.error(error instanceof Error ? error.message : String(error));
+    }
+  });
+}
+
+async function runQueuedTurn(text, extra = {}) {
+  queuedTurns = Math.max(0, queuedTurns - 1);
+  if (runtimeClosing) {
+    return;
   }
-  if (command === "model" && args[0] === "set" && args[1]) {
-    await request("model.set", { model: args[1] });
-    sessionInfo = { ...sessionInfo, model: args[1] };
-    console.log(commandResultText(`Model updated: ${args[1]}`));
-    return true;
+  activeTurn = true;
+  resetTurnTools();
+  logOutput(turnStartText());
+  resumeInput();
+  try {
+    await request("turn.start", { input: text, ...extra });
+  } finally {
+    activeTurn = false;
+    interruptRequested = false;
+    closeAssistant();
   }
-  if (command === "model") {
-    console.log(modelUsageText());
-    return true;
-  }
-  console.log(unknownCommandText());
-  return true;
 }
 
 function request(method, params = {}) {
@@ -215,6 +245,33 @@ function request(method, params = {}) {
       reject(error);
     });
   });
+}
+
+function logOutput(text) {
+  withSuspendedPrompt(() => {
+    process.stdout.write(`${text}\n`);
+  });
+}
+
+function writeOutput(text) {
+  withSuspendedPrompt(() => {
+    process.stdout.write(text);
+  });
+}
+
+function withSuspendedPrompt(action) {
+  const shouldRedraw =
+    inputActive && process.stdout.isTTY && !runtimeClosing && suspendActiveInput && redrawActiveInput;
+  if (shouldRedraw) {
+    suspendActiveInput();
+  }
+  try {
+    action();
+  } finally {
+    if (shouldRedraw) {
+      redrawActiveInput();
+    }
+  }
 }
 
 function receive(line) {
@@ -262,7 +319,7 @@ async function renderEvent(event) {
       const line = contextBuiltLine(event);
       if (line) {
         closeAssistant();
-        console.log(line);
+        logOutput(line);
       }
       return;
     }
@@ -271,51 +328,51 @@ async function renderEvent(event) {
       if (event.tool_call_id) {
         announcedTools.add(event.tool_call_id);
       }
-      console.log(toolRequestedLine(event));
+      logOutput(toolRequestedLine(event));
       return;
     case "tool_call_started":
       closeAssistant();
       if (event.tool_call_id && announcedTools.has(event.tool_call_id)) {
         return;
       }
-      console.log(toolStartedLine(event));
+      logOutput(toolStartedLine(event));
       return;
     case "tool_result":
       closeAssistant();
       recordToolResult(event);
-      console.log(toolResultLine(event));
+      logOutput(toolResultLine(event));
       return;
     case "tool_progress": {
       closeAssistant();
       const line = toolProgressLine(event);
       if (line) {
-        console.log(line);
+        logOutput(line);
       }
       return;
     }
     case "token_stats_updated":
       closeAssistant();
       latestStats = event.stats && typeof event.stats === "object" ? event.stats : {};
-      console.log(tokenStatsLine(event));
+      logOutput(tokenStatsLine(event));
       return;
     case "skill_activated":
       closeAssistant();
-      console.log(skillLine(event));
+      logOutput(skillLine(event));
       return;
     case "user_question_requested":
       await answerQuestion(event);
       return;
     case "turn_failed":
       closeAssistant();
-      console.log(errorLine(event.error));
+      logOutput(errorLine(event.error));
       return;
     case "turn_cancelled":
       closeAssistant();
-      console.log(cancelledText());
+      logOutput(cancelledText());
       return;
     case "turn_completed":
       closeAssistant();
-      console.log(turnCompletedLine(event, turnTools));
+      logOutput(turnCompletedLine(event, turnTools));
       resetTurnTools();
       return;
     default:
@@ -336,17 +393,22 @@ function resetTurnTools() {
 }
 
 async function answerQuestion(event) {
+  pausePrompt();
   closeAssistant();
-  console.log(questionText(event));
-  const raw = (await ask(answerPromptText(), answerPlaceholderText())).trim();
-  if (interruptRequested || runtimeClosing) {
-    return;
+  logOutput(questionText(event));
+  try {
+    const raw = (await ask(answerPromptText(), answerPlaceholderText())).trim();
+    if (interruptRequested || runtimeClosing) {
+      return;
+    }
+    const answer = selectAnswer(raw, event.options || []);
+    await request("user_question.respond", {
+      tool_call_id: event.tool_call_id,
+      answer,
+    });
+  } finally {
+    resumePrompt();
   }
-  const answer = selectAnswer(raw, event.options || []);
-  await request("user_question.respond", {
-    tool_call_id: event.tool_call_id,
-    answer,
-  });
 }
 
 function selectAnswer(raw, options) {
@@ -358,18 +420,22 @@ function selectAnswer(raw, options) {
 }
 
 function ask(prompt, placeholder = "") {
-  if (!input) {
-    return Promise.reject(new Error("Input is not available"));
-  }
-  if (!placeholder || !process.stdout.isTTY) {
+  if (!process.stdout.isTTY) {
+    if (!input) {
+      return Promise.reject(new Error("Input is not available"));
+    }
     return askLine(prompt);
   }
-  return askLineWithHint(prompt, placeholder);
+  if (!placeholder || placeholder === answerPlaceholderText()) {
+    return askTtyLine(prompt);
+  }
+  return askTtyPrompt(prompt, placeholder);
 }
 
 function askLine(prompt) {
   return new Promise((resolve, reject) => {
     const cleanup = (resume = true) => {
+      inputActive = false;
       input.off("close", onClose);
       if (cancelActiveInput === onCancel) {
         cancelActiveInput = null;
@@ -388,99 +454,216 @@ function askLine(prompt) {
     };
     input.once("close", onClose);
     cancelActiveInput = onCancel;
+    inputActive = true;
     input.question(prompt, (answer) => {
       cleanup();
       resolve(answer);
     });
+    applyInputPrefill();
   });
 }
 
-function askLineWithHint(prompt, placeholder) {
-  const line = splitPromptLine(prompt);
-  const hint = createInputHint(input, line.prefix, placeholder);
-  process.stdout.write(line.leading);
-  return new Promise((resolve, reject) => {
-    const cleanup = ({ redraw = false, resume = true } = {}) => {
-      hint.stop(redraw);
-      input.off("line", onLine);
-      input.off("close", onClose);
+function askTtyLine(prompt) {
+  process.stdout.write(prompt);
+  return new Promise((resolve) => {
+    let text = "";
+    const cleanup = () => {
+      inputActive = false;
+      redrawActiveInput = null;
+      suspendActiveInput = null;
+      process.stdin.off("keypress", onKeypress);
       if (cancelActiveInput === onCancel) {
         cancelActiveInput = null;
       }
-      if (resume) {
-        resumeInput();
+      resumeInput();
+    };
+    const onKeypress = (chunk, key = {}) => {
+      if (isCtrlC(key)) {
+        return;
       }
-    };
-    const onLine = (answer) => {
-      cleanup({ redraw: true });
-      resolve(answer);
-    };
-    const onClose = () => {
-      cleanup({ resume: false });
-      reject(new Error("Input closed"));
+      if (key.name === "return" || key.name === "enter") {
+        cleanup();
+        process.stdout.write("\n");
+        resolve(text);
+        return;
+      }
+      if (key.name === "backspace") {
+        text = text.slice(0, -1);
+        render();
+        return;
+      }
+      if (chunk && !key.ctrl && !key.meta && String(chunk) >= " ") {
+        text += String(chunk);
+        render();
+      }
     };
     const onCancel = () => {
       cleanup();
       resolve("");
     };
-    input.once("line", onLine);
-    input.once("close", onClose);
+    const render = () => {
+      process.stdout.write("\r\x1b[K");
+      process.stdout.write(`${prompt}${text}`);
+    };
     cancelActiveInput = onCancel;
-    hint.start();
+    inputActive = true;
+    redrawActiveInput = (prefill = text) => {
+      text = String(prefill || "");
+      render();
+    };
+    suspendActiveInput = () => process.stdout.write("\r\x1b[K");
+    process.stdin.on("keypress", onKeypress);
+    render();
+    applyInputPrefill();
   });
 }
 
-function createInputHint(readline, prefix, placeholder) {
-  let empty = true;
-  let active = false;
-  let shown = false;
-  const update = () => {
-    if (!active) {
-      return;
-    }
-    const nextEmpty = !readline.line;
-    if (nextEmpty === empty) {
-      return;
-    }
-    empty = nextEmpty;
-    if (empty) {
-      showInputHint(readline, prefix, placeholder);
-    } else {
-      clearInputHint(readline, prefix);
-    }
-  };
-  const onKeypress = () => {
-    setImmediate(update);
-  };
-  return {
-    start() {
-      active = true;
-      showInputHint(readline, prefix, placeholder);
-      readline.input.on("keypress", onKeypress);
-    },
-    stop(redraw = false) {
-      active = false;
-      if (shown && redraw) {
-        clearInputHint(readline, prefix);
+function askTtyPrompt(prompt, placeholder) {
+  const line = splitPromptLine(prompt);
+  process.stdout.write(line.leading);
+  return new Promise((resolve) => {
+    const menuState = createSlashMenuState(slashCommands);
+    let menuRows = 0;
+    menuState.setInput(pendingInputPrefill);
+    pendingInputPrefill = "";
+    const cleanup = () => {
+      inputActive = false;
+      process.stdin.off("keypress", onKeypress);
+      clearMenu();
+      if (cancelActiveInput === onCancel) {
+        cancelActiveInput = null;
       }
-      readline.input.off("keypress", onKeypress);
-      readline.setPrompt(prefix);
-    },
-  };
+      redrawActiveInput = null;
+      suspendActiveInput = null;
+      resumeInput();
+    };
+    const onKeypress = (chunk, key = {}) => {
+      if (isCtrlC(key)) {
+        return;
+      }
+      if (key.name === "return" || key.name === "enter") {
+        const command = menuState.selectedCommand();
+        const answer = command ? `/${command.name}` : menuState.input();
+        cleanup();
+        process.stdout.write("\n");
+        resolve(answer);
+        return;
+      }
+      if (menuState.handleKey(chunk, key)) {
+        renderInput();
+      }
+    };
+    const onCancel = () => {
+      cleanup();
+      resolve("");
+    };
+    process.stdin.resume();
+    process.stdin.on("keypress", onKeypress);
+    cancelActiveInput = onCancel;
+    inputActive = true;
+    redrawActiveInput = (prefill = menuState.input()) => {
+      menuState.setInput(prefill);
+      renderInput();
+    };
+    suspendActiveInput = clearInputBlock;
+    renderInput();
 
-  function showInputHint(readline, prefix, placeholder) {
-    shown = true;
-    readline.setPrompt(prefix);
-    readline.prompt(true);
-    readline.output.write(inputHintText(placeholder));
-  }
+    function renderInput() {
+      clearMenu();
+      writeInputLine();
+      writeMenu();
+      writeInputLine();
+    }
 
-  function clearInputHint(readline, prefix) {
-    shown = false;
-    readline.output.write(clearInputHintText());
-    readline.setPrompt(prefix);
-    readline.prompt(true);
+    function clearMenu() {
+      if (!menuRows) {
+        return;
+      }
+      process.stdout.write("\x1b[1B\r\x1b[J\x1b[1A\r");
+      menuRows = 0;
+    }
+
+    function clearInputBlock() {
+      clearMenu();
+      process.stdout.write("\r\x1b[K");
+    }
+
+    function writeInputLine() {
+      process.stdout.write("\r\x1b[K");
+      process.stdout.write(line.prefix);
+      process.stdout.write(menuState.input() || inputHintText(placeholder));
+    }
+
+    function writeMenu() {
+      const menu = slashMenuText(menuState.matches(), menuState.selectedIndex()).trimEnd();
+      if (!menu) {
+        return;
+      }
+      menuRows = menu.split("\n").length;
+      process.stdout.write(`\r\n${menu}\x1b[${menuRows}A`);
+    }
+  });
+}
+
+function normalizeSlashCommands(commands) {
+  if (!Array.isArray(commands)) {
+    return [];
   }
+  const items = [];
+  for (const command of commands) {
+    const name = singleWord(command?.name);
+    if (!name) {
+      continue;
+    }
+    const description = String(command.description || "").trim();
+    items.push({ name, description });
+    for (const alias of command.aliases || []) {
+      const aliasName = singleWord(alias);
+      if (aliasName) {
+        items.push({ name: aliasName, description: `alias for /${name}` });
+      }
+    }
+  }
+  return items.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function singleWord(value) {
+  const text = String(value || "").trim().toLowerCase();
+  return text && !/\s/.test(text) ? text : "";
+}
+
+function pausePrompt() {
+  promptPaused = true;
+  cancelInput();
+}
+
+function resumePrompt() {
+  promptPaused = false;
+  while (promptResumeWaiters.length) {
+    promptResumeWaiters.shift()();
+  }
+}
+
+function waitForPromptResume() {
+  if (!promptPaused) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    promptResumeWaiters.push(resolve);
+  });
+}
+
+function applyInputPrefill() {
+  if (!pendingInputPrefill) {
+    return;
+  }
+  const text = pendingInputPrefill;
+  pendingInputPrefill = "";
+  if (redrawActiveInput) {
+    redrawActiveInput(text);
+    return;
+  }
+  input.write(text);
 }
 
 function splitPromptLine(prompt) {
@@ -507,7 +690,7 @@ function interruptTurn() {
   interruptRequested = true;
   cancelInput();
   closeAssistant();
-  console.log(`\n${interruptText()}`);
+  logOutput(`\n${interruptText()}`);
   void request("turn.interrupt").catch(() => {});
 }
 

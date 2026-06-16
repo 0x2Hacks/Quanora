@@ -18,6 +18,7 @@ import {
   promptPlaceholderText,
   questionText,
   skillLine,
+  slashMenuText,
   startupText,
   tokenStatsLine,
   toolProgressLine,
@@ -118,16 +119,42 @@ test("helpText renders compact shortcuts and commands", () => {
     [
       "• Help",
       "  Commands",
+      "    /status           show session status",
+      "    /sessions         list recent sessions",
+      "    /skill            list skills",
+      "    /init             draft CHAINPEER.md",
+      "    /plan             show active plan",
       "    /compact          compact the conversation",
       "    /model set <name> set the model",
+      "    /draft            show saved input draft",
+      "    /doctor           run setup diagnostics",
+      "    /config           show config guidance",
+      "    /login            show login guidance",
       "    /clear            clear the terminal",
+      "    /exit             quit ChainPeer",
       "  Navigation",
       "    enter             send message",
+      "    /                 show commands",
       "    ?                 show this help",
       "    ↑/↓               history",
+      "    ↑/↓ on / menu     choose command",
       "  Exit",
       "    ctrl + c          interrupt turn or quit",
-      "    /exit             quit ChainPeer",
+    ].join("\n"),
+  );
+});
+
+test("slashMenuText renders selectable command menu", () => {
+  assert.equal(
+    slashMenuText([
+      { name: "help", description: "Show commands" },
+      { name: "status", description: "Show session status" },
+    ], 1),
+    [
+      "    /help          Show commands",
+      "  › /status        Show session status",
+      "  enter accept · ↑/↓ choose · esc close",
+      "",
     ].join("\n"),
   );
 });

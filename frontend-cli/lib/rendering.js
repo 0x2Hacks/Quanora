@@ -18,16 +18,27 @@ export function helpText() {
   return [
     `${cyan("•")} Help`,
     dim("  Commands"),
+    dim("    /status           show session status"),
+    dim("    /sessions         list recent sessions"),
+    dim("    /skill            list skills"),
+    dim("    /init             draft CHAINPEER.md"),
+    dim("    /plan             show active plan"),
     dim("    /compact          compact the conversation"),
     dim("    /model set <name> set the model"),
+    dim("    /draft            show saved input draft"),
+    dim("    /doctor           run setup diagnostics"),
+    dim("    /config           show config guidance"),
+    dim("    /login            show login guidance"),
     dim("    /clear            clear the terminal"),
+    dim("    /exit             quit ChainPeer"),
     dim("  Navigation"),
     dim("    enter             send message"),
+    dim("    /                 show commands"),
     dim("    ?                 show this help"),
     dim("    ↑/↓               history"),
+    dim("    ↑/↓ on / menu     choose command"),
     dim("  Exit"),
     dim("    ctrl + c          interrupt turn or quit"),
-    dim("    /exit             quit ChainPeer"),
   ].join("\n");
 }
 
@@ -46,6 +57,22 @@ export function inputHintText(placeholder) {
 
 export function clearInputHintText() {
   return "\x1b[K";
+}
+
+export function slashMenuText(items, selectedIndex = 0) {
+  const visible = Array.isArray(items) ? items.slice(0, 8) : [];
+  if (!visible.length) {
+    return "";
+  }
+  const lines = visible.map((item, index) => {
+    const active = index === selectedIndex;
+    const marker = active ? cyan("›") : dim(" ");
+    const name = active ? bold(`/${item.name}`) : `/${item.name}`;
+    const description = dim(clipSingleLine(item.description, 46));
+    return `  ${marker} ${padRight(name, 14)} ${description}`;
+  });
+  lines.push(dim("  enter accept · ↑/↓ choose · esc close"));
+  return `${lines.join("\n")}\n`;
 }
 
 export function turnStartText() {

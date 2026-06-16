@@ -25,6 +25,16 @@ class _Runtime:
     async def initialize(self):
         return None
 
+    async def compact_context(self, reason="manual", cancellation_token=None):
+        return {
+            "id": "compact-1",
+            "source": {
+                "message_start_index": 1,
+                "message_end_index_exclusive": 3,
+                "tool_call_ids": ["tool-1"],
+            },
+        }
+
 
 class _Session:
     session_id = "s1"
@@ -77,6 +87,21 @@ def test_initialize_response_includes_resume_preview_when_history_exists(capsys)
     assert result["model"] == "m1"
     assert "Resumed session s1" in result["resume_preview"]
     assert "- user: hello" in result["resume_preview"]
+    assert any(command["name"] == "status" for command in result["slash_commands"])
+
+
+def test_slash_execute_reuses_cli_router(capsys):
+    async def run():
+        server = StdioRuntimeServer(_Runtime(), _Session())
+        await server._execute_slash({"id": 8, "method": "slash.execute", "params": {"input": "/compact"}})
+
+    asyncio.run(run())
+
+    message = json.loads(capsys.readouterr().out)
+    result = message["result"]
+    assert result["should_exit"] is False
+    assert result["clear_screen"] is False
+    assert result["text"].startswith("Compact complete.")
 
 
 class _TextStream:
