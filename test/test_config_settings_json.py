@@ -40,9 +40,7 @@ def test_config_reload_reads_settings_json(tmp_path, monkeypatch):
                 "baseUrl": "https://openai945.cn/",
                 "reasoningEffort": "xhigh",
                 "contextWindow": 128000,
-                "effectiveContextWindowPercent": 90,
-                "autoCompactTokenLimit": 100000,
-                "autoCompactTokenLimitScope": "body_after_prefix",
+                "autoCompactTokenLimitPercent": 90,
                 "autoCompactEnabled": False,
             }
         ),
@@ -68,9 +66,7 @@ def test_config_does_not_expose_internal_budget_settings(tmp_path, monkeypatch):
                 "model": "gpt-5.5",
                 "apiKey": "settings-key",
                 "contextWindow": 128000,
-                "effectiveContextWindowPercent": 90,
-                "autoCompactTokenLimit": 100000,
-                "autoCompactTokenLimitScope": "body_after_prefix",
+                "autoCompactTokenLimitPercent": 90,
                 "autoCompactEnabled": False,
             }
         ),
@@ -81,9 +77,7 @@ def test_config_does_not_expose_internal_budget_settings(tmp_path, monkeypatch):
     Config.reload()
 
     assert not hasattr(Config, "CONTEXT_WINDOW_TOKENS")
-    assert not hasattr(Config, "EFFECTIVE_CONTEXT_WINDOW_PERCENT")
-    assert not hasattr(Config, "AUTO_COMPACT_TOKEN_LIMIT")
-    assert not hasattr(Config, "AUTO_COMPACT_TOKEN_LIMIT_SCOPE")
+    assert not hasattr(Config, "AUTO_COMPACT_TOKEN_LIMIT_PERCENT")
     assert not hasattr(Config, "AUTO_COMPACT_ENABLED")
 
 

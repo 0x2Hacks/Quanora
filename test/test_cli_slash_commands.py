@@ -291,8 +291,8 @@ async def test_status_shows_latest_sampling_usage() -> None:
         async def get_latest_sampling_usage(self):
             return {
                 "input_tokens": 121300,
-                "effective_context_window_tokens": 245480,
-                "context_usage_percent": 121300 / 245480,
+                "context_window_tokens": 258400,
+                "context_usage_percent": 121300 / 258400,
                 "cached_input_tokens": 98700,
                 "cache_hit_rate": 98700 / 121300,
                 "output_tokens": 2100,
@@ -301,7 +301,7 @@ async def test_status_shows_latest_sampling_usage() -> None:
     result = await SlashCommandRouter().execute("/status", _context(session=UsageSession()))
 
     assert "Last sampling:" in result.text
-    assert "input: 121.3k / 245.5k" in result.text
+    assert "input: 121.3k / 258.4k" in result.text
     assert "cached: 98.7k (81.4%)" in result.text
 
 
@@ -312,8 +312,8 @@ async def test_status_labels_assistant_and_compact_usage_separately() -> None:
             return {
                 "sampling_kind": "assistant",
                 "input_tokens": 121300,
-                "effective_context_window_tokens": 245480,
-                "context_usage_percent": 121300 / 245480,
+                "context_window_tokens": 258400,
+                "context_usage_percent": 121300 / 258400,
                 "cached_input_tokens": 98700,
                 "cache_hit_rate": 98700 / 121300,
                 "output_tokens": 2100,
@@ -323,8 +323,8 @@ async def test_status_labels_assistant_and_compact_usage_separately() -> None:
             return {
                 "sampling_kind": "compact",
                 "input_tokens": 37000,
-                "effective_context_window_tokens": 245480,
-                "context_usage_percent": 37000 / 245480,
+                "context_window_tokens": 258400,
+                "context_usage_percent": 37000 / 258400,
                 "cached_input_tokens": 0,
                 "cache_hit_rate": 0,
                 "output_tokens": 900,
@@ -334,8 +334,8 @@ async def test_status_labels_assistant_and_compact_usage_separately() -> None:
 
     assert "Assistant sampling:" in result.text
     assert "Latest request (compact):" in result.text
-    assert "input: 121.3k / 245.5k" in result.text
-    assert "input: 37.0k / 245.5k" in result.text
+    assert "input: 121.3k / 258.4k" in result.text
+    assert "input: 37.0k / 258.4k" in result.text
 
 
 @pytest.mark.asyncio
@@ -344,7 +344,7 @@ async def test_status_tolerates_invalid_sampling_usage() -> None:
         async def get_latest_sampling_usage(self):
             return {
                 "input_tokens": "bad",
-                "effective_context_window_tokens": object(),
+                "context_window_tokens": object(),
                 "context_usage_percent": "bad",
                 "cached_input_tokens": -5,
                 "cache_hit_rate": None,

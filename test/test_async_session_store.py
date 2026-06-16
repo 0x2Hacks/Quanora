@@ -667,7 +667,7 @@ async def test_latest_valid_compact_boundary_survives_newer_broken_boundary(temp
 
 
 @pytest.mark.asyncio
-async def test_sampling_usage_and_auto_compact_window_meta(temp_session_dir):
+async def test_sampling_usage_and_compact_generation_meta(temp_session_dir):
     store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
     await store.initialize()
 
@@ -679,7 +679,7 @@ async def test_sampling_usage_and_auto_compact_window_meta(temp_session_dir):
         "output_tokens": 25,
         "total_tokens": 125,
         "context_usage_percent": 0.1,
-        "effective_context_window_tokens": 1000,
+        "context_window_tokens": 1000,
         "anchor": {
             "local_estimated_input_tokens": 130,
             "local_estimated_chars": 520,
@@ -688,35 +688,20 @@ async def test_sampling_usage_and_auto_compact_window_meta(temp_session_dir):
         },
     }
     await store.persist_sampling_usage(usage)
-    await store.update_auto_compact_window_from_usage(usage)
 
     latest = await store.get_latest_sampling_usage()
     latest_assistant = await store.get_latest_assistant_sampling_usage()
-    window = await store.get_auto_compact_window()
 
     assert latest["input_tokens"] == 100
     assert latest_assistant["input_tokens"] == 100
     assert latest_assistant["anchor"]["local_estimated_input_tokens"] == 130
     assert latest["cached_input_tokens"] == 40
-    assert window["ordinal"] == 1
-    assert window["prefill_input_tokens"] == 100
-    assert window["prefill_source"] == "server"
     assert await store.get_compact_generation() == 1
 
     await store.persist_compaction({"handoff_message": {"role": "assistant", "content": "handoff"}})
-    next_window = await store.get_auto_compact_window()
 
-    assert next_window["ordinal"] == 2
-    assert next_window["prefill_input_tokens"] is None
     assert await store.get_compact_generation() == 2
     assert await store.get_latest_assistant_sampling_usage() is None
-
-    await store.update_auto_compact_window_from_estimate(35)
-    estimated_window = await store.get_auto_compact_window()
-
-    assert estimated_window["ordinal"] == 2
-    assert estimated_window["prefill_input_tokens"] == 35
-    assert estimated_window["prefill_source"] == "estimate_after_compact"
 
 
 @pytest.mark.asyncio
@@ -732,7 +717,7 @@ async def test_sampling_usage_keeps_latest_assistant_usage_when_compact_usage_ar
         "output_tokens": 25,
         "total_tokens": 125,
         "context_usage_percent": 0.1,
-        "effective_context_window_tokens": 1000,
+        "context_window_tokens": 1000,
         "anchor": {
             "local_estimated_input_tokens": 130,
             "local_estimated_chars": 520,
@@ -748,37 +733,19 @@ async def test_sampling_usage_keeps_latest_assistant_usage_when_compact_usage_ar
         "output_tokens": 10,
         "total_tokens": 40,
         "context_usage_percent": 0.03,
-        "effective_context_window_tokens": 1000,
+        "context_window_tokens": 1000,
     }
 
     await store.persist_sampling_usage(assistant_usage)
-    await store.update_auto_compact_window_from_usage(assistant_usage)
     await store.persist_sampling_usage(compact_usage)
-    await store.update_auto_compact_window_from_usage(compact_usage)
 
     latest = await store.get_latest_sampling_usage()
     latest_assistant = await store.get_latest_assistant_sampling_usage()
-    window = await store.get_auto_compact_window()
 
     assert latest["sampling_kind"] == "compact"
     assert latest["input_tokens"] == 30
     assert latest_assistant["sampling_kind"] == "assistant"
     assert latest_assistant["input_tokens"] == 100
-    assert window["prefill_input_tokens"] == 100
-    assert window["prefill_source"] == "server"
-
-
-@pytest.mark.asyncio
-async def test_auto_compact_window_ignores_invalid_usage_tokens(temp_session_dir):
-    store = AsyncJsonlSessionStore(session_dir=temp_session_dir, system_prompt="sys")
-    await store.initialize()
-
-    await store.update_auto_compact_window_from_usage({"input_tokens": "bad"})
-
-    window = await store.get_auto_compact_window()
-    assert window["ordinal"] == 1
-    assert window["prefill_input_tokens"] is None
-    assert window["prefill_source"] is None
 
 
 @pytest.mark.asyncio
@@ -855,18 +822,14 @@ async def test_resume_normalizes_auto_compact_window_meta(temp_session_dir):
     session_base = Path(temp_session_dir) / store.session_id
     meta_path = session_base / "meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    meta["auto_compact_window"] = {"ordinal": "bad", "prefill_input_tokens": "also bad"}
+    meta["auto_compact_window"] = {"ordinal": "bad"}
     meta_path.write_text(json.dumps(meta), encoding="utf-8")
 
     resumed = AsyncJsonlSessionStore(session_dir=temp_session_dir, session_id=store.session_id)
     await resumed.initialize()
 
     repaired = json.loads(meta_path.read_text(encoding="utf-8"))
-    assert repaired["auto_compact_window"] == {
-        "ordinal": 1,
-        "prefill_input_tokens": None,
-        "prefill_source": None,
-    }
+    assert repaired["auto_compact_window"] == {"ordinal": 1}
 
 
 def main() -> int:
@@ -902,11 +865,9 @@ def main() -> int:
         with tempfile.TemporaryDirectory() as tmp:
             await test_latest_valid_compact_boundary_survives_newer_broken_boundary(tmp)
         with tempfile.TemporaryDirectory() as tmp:
-            await test_sampling_usage_and_auto_compact_window_meta(tmp)
+            await test_sampling_usage_and_compact_generation_meta(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_sampling_usage_keeps_latest_assistant_usage_when_compact_usage_arrives(tmp)
-        with tempfile.TemporaryDirectory() as tmp:
-            await test_auto_compact_window_ignores_invalid_usage_tokens(tmp)
         with tempfile.TemporaryDirectory() as tmp:
             await test_update_model_persists_session_meta(tmp)
         with tempfile.TemporaryDirectory() as tmp:

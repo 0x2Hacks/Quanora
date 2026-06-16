@@ -65,10 +65,10 @@ def test_prompt_toolbar_falls_back_to_token_counts(tmp_path) -> None:
     text = prompt_toolbar(
         FakeSession(),
         cwd=tmp_path,
-        usage={"input_tokens": 121300, "effective_context_window_tokens": 245480},
+        usage={"input_tokens": 121300, "context_window_tokens": 258400},
     )
 
-    assert "ctx 121.3k/245.5k" in text
+    assert "ctx 121.3k/258.4k" in text
 
 
 def test_prompt_toolbar_marks_dirty_git_status(tmp_path) -> None:

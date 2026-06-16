@@ -32,16 +32,15 @@ def normalize_sampling_usage(
     *,
     sampling_kind: str,
     context_window_tokens: int,
-    effective_context_window_tokens: int,
 ) -> dict[str, Any] | None:
     extracted = extract_usage_dict(usage)
     if extracted is None:
         return None
     input_tokens = max(0, int(extracted.get("input_tokens") or 0))
     cached_tokens = max(0, int(extracted.get("cached_input_tokens") or 0))
-    effective_window = max(1, int(effective_context_window_tokens or context_window_tokens or 1))
+    context_window = max(1, int(context_window_tokens or 1))
     cache_hit_rate = cached_tokens / input_tokens if input_tokens > 0 else 0.0
-    context_usage_percent = input_tokens / effective_window
+    context_usage_percent = input_tokens / context_window
     return {
         "sampling_kind": sampling_kind,
         "input_tokens": input_tokens,
@@ -50,8 +49,7 @@ def normalize_sampling_usage(
         "output_tokens": max(0, int(extracted.get("output_tokens") or 0)),
         "reasoning_output_tokens": max(0, int(extracted.get("reasoning_output_tokens") or 0)),
         "total_tokens": max(0, int(extracted.get("total_tokens") or 0)),
-        "context_window_tokens": max(1, int(context_window_tokens or effective_window)),
-        "effective_context_window_tokens": effective_window,
+        "context_window_tokens": context_window,
         "context_usage_percent": context_usage_percent,
     }
 

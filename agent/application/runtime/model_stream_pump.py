@@ -10,6 +10,7 @@ from agent.application.ports.async_session_store import AsyncSessionStore
 from agent.application.runtime.cancellation import CancellationToken
 from agent.application.runtime.message_stream_parser import MessageStreamParser
 from agent.application.services import attach_context_anchor, normalize_sampling_usage
+from agent.application.services.context_estimator import DEFAULT_CONTEXT_WINDOW_TOKENS
 from agent.domain import ParsedToolCall
 from agent.domain.events import AssistantDeltaEvent, RuntimeEvent, TokenStatsUpdatedEvent, event_meta
 
@@ -98,10 +99,9 @@ def _normalize_usage(usage: Any, context_stats: dict[str, Any], model: str | Non
     normalized = normalize_sampling_usage(
         usage,
         sampling_kind="assistant",
-        context_window_tokens=_positive_int_or_default(context_stats.get("context_window_tokens"), 258400),
-        effective_context_window_tokens=_positive_int_or_default(
-            context_stats.get("effective_context_window_tokens"),
-            245480,
+        context_window_tokens=_positive_int_or_default(
+            context_stats.get("context_window_tokens"),
+            DEFAULT_CONTEXT_WINDOW_TOKENS,
         ),
     )
     if not normalized:

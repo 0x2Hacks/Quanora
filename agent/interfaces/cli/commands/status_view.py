@@ -80,11 +80,11 @@ async def _latest_assistant_sampling_usage(session) -> dict | None:
 
 
 def _usage_lines(label: str, usage: dict) -> list[str]:
-    effective_window = nonnegative_int(usage.get("effective_context_window_tokens"))
+    context_window = nonnegative_int(usage.get("context_window_tokens"))
     input_tokens = nonnegative_int(usage.get("input_tokens"))
     cached_tokens = nonnegative_int(usage.get("cached_input_tokens"))
     output_tokens = nonnegative_int(usage.get("output_tokens"))
-    limit = f" / {_format_count(effective_window)}" if effective_window > 0 else ""
+    limit = f" / {_format_count(context_window)}" if context_window > 0 else ""
     return [
         "",
         label,

@@ -80,11 +80,9 @@ class ContextManager:
                 break
 
         tool_messages = [dict(message) for message in final_messages if message.get("role") == "tool"]
-        compact_threshold_tokens = budget.resolved_compact_threshold_tokens()
         auto_compact_status = await self._build_token_pressure_status(session, final_estimate)
         context_window_tokens = budget.resolved_context_window_tokens()
-        effective_context_window_tokens = budget.resolved_effective_context_window_tokens()
-        context_usage_percent = final_estimate.estimated_input_tokens / max(1, effective_context_window_tokens)
+        context_usage_percent = final_estimate.estimated_input_tokens / max(1, context_window_tokens)
 
         stats = {
             "message_count": len(messages),
@@ -98,7 +96,7 @@ class ContextManager:
             "conversation_tokens": final_estimate.conversation_tokens,
             "tool_tokens": final_estimate.tool_tokens,
             "context_window_tokens": context_window_tokens,
-            "effective_context_window_tokens": effective_context_window_tokens,
+            "auto_compact_token_limit_percent": budget.resolved_auto_compact_token_limit_percent(),
             "auto_compact_token_limit": budget.resolved_auto_compact_token_limit(),
             "context_usage_percent": context_usage_percent,
             "budget": budget.to_dict(),
@@ -111,11 +109,9 @@ class ContextManager:
             "mode": "session_backed",
             "source": "session_queries",
             "uses_pending_overlay": bool(pending),
-            "over_hard_limit": final_estimate.over_hard_limit,
             "over_conversation_budget": final_estimate.conversation_tokens >= budget.conversation_budget_tokens,
             "over_tool_budget": final_estimate.tool_tokens >= budget.tool_budget_tokens,
             "over_system_budget": final_estimate.system_tokens >= budget.system_budget_tokens,
-            "compact_recommended": final_estimate.estimated_input_tokens >= compact_threshold_tokens,
             "compact_required": final_estimate.over_hard_limit,
             "auto_compact_token_limit_reached": auto_compact_status["auto_compact_token_limit_reached"],
             **plan_decisions,
@@ -124,21 +120,9 @@ class ContextManager:
         }
         return ContextBuildResult(messages=final_messages, stats=stats, decisions=decisions)
 
-    async def _get_auto_compact_window(self, session) -> dict:
-        get_window = getattr(session, "get_auto_compact_window", None)
-        if callable(get_window):
-            try:
-                window = await get_window()
-                if isinstance(window, dict):
-                    return dict(window)
-            except Exception:
-                return {}
-        return {}
-
     async def _build_token_pressure_status(self, session, final_estimate) -> dict:
         budget = self._estimator.budget
-        window = await self._get_auto_compact_window(session)
-        compact_generation = await self._get_compact_generation(session, window)
+        compact_generation = await self._get_compact_generation(session)
         usage = await self._get_latest_assistant_sampling_usage(session)
         anchor = self._resolve_usage_anchor(
             usage=usage,
@@ -158,16 +142,8 @@ class ContextManager:
 
         limit = budget.resolved_auto_compact_token_limit()
         reached = bool(budget.auto_compact_enabled and active_tokens >= limit)
-        scope = budget.resolved_auto_compact_token_limit_scope()
         return {
             "auto_compact_enabled": bool(budget.auto_compact_enabled),
-            "auto_compact_scope_tokens": active_tokens,
-            "auto_compact_scope_limit": limit,
-            "auto_compact_token_limit_scope": scope,
-            "auto_compact_token_limit_scope_deprecated": scope != "total",
-            "auto_compact_window_prefill_tokens": window.get("prefill_input_tokens"),
-            "auto_compact_window_prefill_source": window.get("prefill_source"),
-            "effective_context_window_reached": False,
             "auto_compact_token_limit_reached": reached,
             "auto_compact_active_tokens": active_tokens,
             "auto_compact_token_source": token_source,
@@ -182,7 +158,7 @@ class ContextManager:
             "auto_compact_local_delta_tokens": local_delta,
         }
 
-    async def _get_compact_generation(self, session, window: dict) -> int:
+    async def _get_compact_generation(self, session) -> int:
         get_generation = getattr(session, "get_compact_generation", None)
         if callable(get_generation):
             try:
@@ -191,7 +167,7 @@ class ContextManager:
                     return generation
             except Exception:
                 pass
-        return self._positive_int_or_none(window.get("ordinal")) or 1
+        return 1
 
     def _resolve_usage_anchor(
         self,

@@ -18,12 +18,13 @@ class MockSession:
 
 
 @pytest.mark.asyncio
-async def test_context_manager_step_threshold_only_recommends_compact():
+async def test_context_manager_step_auto_compact_threshold_is_decision_signal():
     budget = ContextBudget(
         conversation_budget_tokens=10,
         tool_budget_tokens=500,
         hard_limit_tokens=2000,
-        compact_threshold_tokens=10,
+        context_window_tokens=100,
+        auto_compact_token_limit_percent=10,
     )
     manager = ContextManager(estimator=ContextEstimator(budget=budget), hot_message_limit=2)
     session = MockSession()
@@ -35,6 +36,7 @@ async def test_context_manager_step_threshold_only_recommends_compact():
 
     assert first.messages == session.messages
     assert second.messages == first.messages
-    assert first.decisions["compact_recommended"] is True
+    assert first.decisions["auto_compact_token_limit_reached"] is True
+    assert "compact_recommended" not in first.decisions
     assert "rolling_summary_generated" not in first.decisions
     assert "cold_compacted_message_count" not in first.stats

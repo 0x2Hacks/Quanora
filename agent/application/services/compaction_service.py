@@ -12,7 +12,7 @@ from typing import Any
 from agent.application.runtime.cancellation import CancellationToken
 from agent.domain.compaction import COMPACT_CONTINUATION_USER_CONTENT
 
-from .context_estimator import DEFAULT_CONTEXT_WINDOW_TOKENS, DEFAULT_EFFECTIVE_CONTEXT_WINDOW_PERCENT
+from .context_estimator import DEFAULT_CONTEXT_WINDOW_TOKENS
 from .token_usage import normalize_sampling_usage
 
 
@@ -251,13 +251,10 @@ class CompactionService:
     def _sampling_usage(self, response: Any, context_stats: dict[str, Any] | None) -> dict[str, Any] | None:
         stats = context_stats or {}
         context_window = self._positive_int(stats.get("context_window_tokens"), DEFAULT_CONTEXT_WINDOW_TOKENS)
-        effective_default = context_window * DEFAULT_EFFECTIVE_CONTEXT_WINDOW_PERCENT // 100
-        effective_window = self._positive_int(stats.get("effective_context_window_tokens"), effective_default)
         return normalize_sampling_usage(
             response,
             sampling_kind="compact",
             context_window_tokens=context_window,
-            effective_context_window_tokens=effective_window,
         )
 
     def _positive_int(self, value: Any, default: int) -> int:
