@@ -132,7 +132,7 @@ export function toolRequestedLine(event) {
   const detail = toolDetail(name, parseJsonObject(event.args_preview));
   const label = toolLabel(name);
   const line = `${accent("•")} ${bold("Tool")} ${dim("·")} ${toolActiveVerb(name)} ${label}`;
-  return detail ? `${line}\n${dim(`  └ ${detail}`)}` : line;
+  return detail ? `${line}\n${dim(toolDetailLine(name, detail))}` : line;
 }
 
 export function toolStartedLine(event) {
@@ -156,7 +156,7 @@ export function toolResultLine(event) {
 export function toolProgressLine(event) {
   const name = event.tool_name || "tool";
   const message = progressMessage(event.payload);
-  return message ? `${accent("•")} ${bold("Tool")} ${dim("·")} ${toolLabel(name)}\n${dim(`  └ ${message}`)}` : "";
+  return message ? `${accent("•")} ${bold("Tool")} ${dim("·")} ${toolLabel(name)}\n${dim(`  ↳ ${message}`)}` : "";
 }
 
 export function tokenStatsLine(event) {
@@ -217,6 +217,10 @@ function toolDetail(name, args) {
     }
   }
   return "";
+}
+
+function toolDetailLine(name, detail) {
+  return name === "bash" ? `  $ ${detail}` : `  ↳ ${detail}`;
 }
 
 function toolLabel(name) {
