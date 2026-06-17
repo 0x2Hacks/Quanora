@@ -267,7 +267,7 @@ function request(method, params = {}) {
 }
 
 function logOutput(text) {
-  flushAssistantText(assistantStreamBuffer.flush());
+  flushAssistantText(assistantStreamBuffer.flush(), { redraw: true });
   withSuspendedPrompt(() => {
     closeOpenAssistantOutputLine();
     process.stdout.write(outputBlockText(text, outputStarted));
@@ -280,7 +280,7 @@ function writeOutput(text) {
   flushAssistantText(assistantStreamBuffer.push(text, holdPartialLine));
 }
 
-function flushAssistantText(text = "") {
+function flushAssistantText(text = "", options = {}) {
   const output = String(text || "");
   if (!output) {
     return;
@@ -289,7 +289,7 @@ function flushAssistantText(text = "") {
     writeAssistantHeader();
     process.stdout.write(output);
     assistantOutputLineOpen = output ? !output.endsWith("\n") : assistantOutputLineOpen;
-  }, { redraw: output.endsWith("\n") });
+  }, { redraw: options.redraw ?? output.endsWith("\n") });
 }
 
 function writeUserInput(text) {
@@ -299,7 +299,7 @@ function writeUserInput(text) {
 }
 
 function writeErrorOutput(text) {
-  flushAssistantText(assistantStreamBuffer.flush());
+  flushAssistantText(assistantStreamBuffer.flush(), { redraw: true });
   withSuspendedPrompt(() => process.stderr.write(String(text || "")));
 }
 
