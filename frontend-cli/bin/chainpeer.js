@@ -106,7 +106,7 @@ runtime.stdout.on("data", (chunk) => {
 });
 
 runtime.stderr.on("data", (chunk) => {
-  process.stderr.write(chunk);
+  writeErrorOutput(chunk);
 });
 
 runtime.on("exit", (code, signal) => {
@@ -146,7 +146,7 @@ try {
 } catch (error) {
   closeAssistant();
   if (!isInputClosed(error)) {
-    console.error(error instanceof Error ? error.message : String(error));
+    writeErrorOutput(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   }
 } finally {
@@ -220,7 +220,7 @@ function submitTurn(text, extra = {}) {
   );
   turnQueue = task.catch((error) => {
     if (!runtimeClosing) {
-      console.error(error instanceof Error ? error.message : String(error));
+      writeErrorOutput(`${error instanceof Error ? error.message : String(error)}\n`);
     }
   });
 }
@@ -297,6 +297,10 @@ function writeUserInput(text) {
   outputStarted = true;
 }
 
+function writeErrorOutput(text) {
+  withSuspendedPrompt(() => process.stderr.write(String(text || "")));
+}
+
 function withSuspendedPrompt(action, options = {}) {
   const shouldRedraw =
     inputActive && process.stdout.isTTY && !runtimeClosing && suspendActiveInput && redrawActiveInput;
@@ -343,7 +347,7 @@ function receive(line) {
   if (message.kind === "event") {
     void renderEvent(message.event).catch((error) => {
       if (!runtimeClosing) {
-        console.error(error instanceof Error ? error.message : String(error));
+        writeErrorOutput(`${error instanceof Error ? error.message : String(error)}\n`);
       }
     });
   }
