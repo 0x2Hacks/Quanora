@@ -16,8 +16,8 @@ export function promptPlaceholderText() {
 }
 
 export function userInputText(text) {
-  const body = singleLine(text);
-  return body ? `${accent("›")} ${bold("You")}\n  ${body}` : "";
+  const lines = messageLines(text);
+  return lines.length ? `${accent("›")} ${bold("You")}\n${lines.map((line) => `  ${line}`).join("\n")}` : "";
 }
 
 export function assistantHeaderText() {
@@ -317,6 +317,11 @@ function middleClip(value, maxLength) {
 
 function singleLine(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function messageLines(value) {
+  const text = String(value || "").replace(/\r/g, "").trim();
+  return text ? text.split("\n").map((line) => line.trimEnd()) : [];
 }
 
 function formatDuration(durationMs) {
