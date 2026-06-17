@@ -293,6 +293,8 @@ function flushAssistantText(text = "", options = {}) {
 }
 
 function writeUserInput(text) {
+  flushAssistantText(assistantStreamBuffer.flush(), { redraw: false });
+  closeOpenAssistantOutputLine();
   const line = userInputText(text);
   process.stdout.write(line ? outputBlockText(line, outputStarted) : "\n");
   outputStarted = true;
