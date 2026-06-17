@@ -382,6 +382,15 @@ test("toolResultLine renders compact success state", () => {
     toolResultLine({
       tool_name: "bash",
       status: "completed",
+      duration_ms: 35,
+      result: JSON.stringify({ ok: true, data: { message: "Background process started: npm run dev" } }),
+    }),
+    "✓ Tool · Ran command in 35ms\n  ↳ Background process started: npm run dev",
+  );
+  assert.equal(
+    toolResultLine({
+      tool_name: "bash",
+      status: "completed",
       duration_ms: 25,
       result: JSON.stringify({ ok: true, data: { stdout: "", stderr: "not found", exit_code: 1 } }),
     }),

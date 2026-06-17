@@ -340,7 +340,7 @@ function toolResultSummary(result) {
   const data = payload.data && typeof payload.data === "object" ? payload.data : {};
   return {
     exitCode: nonZeroExitCode(data.exit_code),
-    output: clipSingleLine(data.stdout || data.stderr, 120),
+    output: clipSingleLine(data.stdout || data.stderr || data.message, 120),
   };
 }
 
