@@ -258,7 +258,13 @@ function toolLabel(name) {
 }
 
 function toolActiveVerb(name) {
-  return name === "bash" || name === "bash_output" ? "Running" : "Calling";
+  if (name === "bash") {
+    return "Running";
+  }
+  if (name === "bash_output") {
+    return "Reading";
+  }
+  return "Calling";
 }
 
 function completedToolText(name, label) {
