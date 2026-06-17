@@ -508,7 +508,7 @@ function startupBannerWidth() {
 
 function questionOptionLine(option, index, recommended) {
   const marker = option === recommended ? bold("›") : " ";
-  const suffix = option === recommended ? dim(" recommended") : "";
+  const suffix = option === recommended ? dim(" · recommended") : "";
   return `  ${marker} ${index + 1}. ${clipSingleLine(option, 70)}${suffix}`;
 }
 

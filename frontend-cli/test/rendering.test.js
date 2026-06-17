@@ -463,7 +463,7 @@ test("status helpers render question, skill, and errors", () => {
       "",
       "  Pick one",
       "",
-      "  › 1. A recommended",
+      "  › 1. A · recommended",
       "    2. B",
       "",
       "  enter number or custom answer · ctrl+c to interrupt",
