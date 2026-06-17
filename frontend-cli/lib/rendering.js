@@ -372,7 +372,7 @@ function toolSummary(tools) {
   const failed = Number(tools.failed || 0);
   const parts = [];
   if (completed > 0) {
-    parts.push(`${completed} tool${completed === 1 ? "" : "s"}`);
+    parts.push(`${completed} completed`);
   }
   if (failed > 0) {
     parts.push(`${failed} failed`);
