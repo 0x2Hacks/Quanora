@@ -211,7 +211,7 @@ async function runSlashCommand(text) {
 
 function submitTurn(text, extra = {}) {
   if (activeTurn || queuedTurns > 0) {
-    logOutput(queuedInputText());
+    logOutput(queuedInputText(text));
   }
   queuedTurns += 1;
   const task = turnQueue.then(

@@ -82,8 +82,14 @@ export function turnStartText() {
   return `${accent("•")} ${bold("Status")} ${dim("·")} Working\n${dim(detailLine("ctrl+c to interrupt"))}`;
 }
 
-export function queuedInputText() {
-  return `${accent("•")} ${bold("Status")} ${dim("·")} Queued follow-up\n${dim("  ↳ runs after the current turn")}`;
+export function queuedInputText(text = "") {
+  const preview = clipSingleLine(text, 96);
+  const lines = [`${accent("•")} ${bold("Status")} ${dim("·")} Queued follow-up`];
+  if (preview) {
+    lines.push(dim(detailLine(preview)));
+  }
+  lines.push(dim(detailLine("runs after the current turn")));
+  return lines.join("\n");
 }
 
 export function turnCompletedLine(event, tools = { completed: 0, failed: 0 }) {
