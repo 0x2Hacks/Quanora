@@ -370,7 +370,7 @@ test("tokenStatsLine renders compact context status", () => {
         output_tokens: 2100,
       },
     }),
-    "• Status · Context 51% left · cache 81.4% · output 2.1k",
+    "• Status · Context 51% left\n  ↳ cache 81.4% · output 2.1k",
   );
   assert.equal(
     tokenStatsLine({
@@ -389,7 +389,7 @@ test("tokenStatsLine renders compact context status", () => {
         output_tokens: 0,
       },
     }),
-    "• Status · Context 80% left · cache 0.0% · output 0",
+    "• Status · Context 80% left\n  ↳ cache 0.0% · output 0",
   );
 });
 

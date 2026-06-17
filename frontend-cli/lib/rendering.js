@@ -169,16 +169,17 @@ export function toolProgressLine(event) {
 
 export function tokenStatsLine(event) {
   const stats = event.stats && typeof event.stats === "object" ? event.stats : {};
-  const parts = [`Context ${contextRemaining(stats)}`];
+  const details = [];
   const cache = formatOptionalPercent(stats.cache_hit_rate);
   if (cache) {
-    parts.push(`cache ${cache}`);
+    details.push(`cache ${cache}`);
   }
   const output = formatOptionalCount(stats.output_tokens);
   if (output) {
-    parts.push(`output ${output}`);
+    details.push(`output ${output}`);
   }
-  return `${accent("•")} ${bold("Status")} ${dim("·")} ${parts.join(" · ")}`;
+  const line = `${accent("•")} ${bold("Status")} ${dim("·")} Context ${contextRemaining(stats)}`;
+  return details.length ? `${line}\n${dim(detailLine(details.join(" · ")))}` : line;
 }
 
 export function skillLine(event) {
