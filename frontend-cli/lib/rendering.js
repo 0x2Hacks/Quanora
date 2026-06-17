@@ -187,12 +187,17 @@ export function errorLine(error) {
 export function questionText(event = {}) {
   const options = Array.isArray(event.options) ? event.options : [];
   const lines = [
-    `${accent("•")} Question ${dim("1/1")}`,
+    `${accent("•")} ${bold("Choice required")}`,
+    "",
     `  ${clipSingleLine(event.question || "Input required", 76)}`,
   ];
+  if (options.length) {
+    lines.push("");
+  }
   for (const [index, option] of options.entries()) {
     lines.push(questionOptionLine(option, index, event.recommended));
   }
+  lines.push("");
   lines.push(dim(questionFooter(options)));
   return lines.join("\n");
 }
