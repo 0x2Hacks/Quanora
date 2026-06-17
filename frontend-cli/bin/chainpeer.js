@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { AssistantRenderer } from "../lib/assistant-renderer.js";
+import { createAssistantStreamBuffer } from "../lib/assistant-stream-buffer.js";
 import { createLineEditor, trailingCellWidth } from "../lib/line-editor.js";
 import { buildRuntimeEnv } from "../lib/runtime-env.js";
 import { createInputHistory } from "../lib/input-history.js";
@@ -77,6 +78,7 @@ let assistantOutputLineOpen = false;
 let assistantHeaderShown = false;
 let outputStarted = false;
 const promptResumeWaiters = [];
+const assistantStreamBuffer = createAssistantStreamBuffer();
 const assistantRenderer = new AssistantRenderer((text) => writeOutput(text));
 const inputHistory = createInputHistory();
 let runtimeStdoutBuffer = "";
@@ -273,7 +275,15 @@ function logOutput(text) {
 }
 
 function writeOutput(text) {
+  const holdPartialLine = inputActive && process.stdout.isTTY;
+  flushAssistantText(assistantStreamBuffer.push(text, holdPartialLine));
+}
+
+function flushAssistantText(text = "") {
   const output = String(text || "");
+  if (!output) {
+    return;
+  }
   withSuspendedPrompt(() => {
     writeAssistantHeader();
     process.stdout.write(output);
@@ -810,6 +820,7 @@ function resumeInput() {
 
 function closeAssistant() {
   assistantRenderer.finish();
+  flushAssistantText(assistantStreamBuffer.flush());
   assistantHeaderShown = false;
 }
 
