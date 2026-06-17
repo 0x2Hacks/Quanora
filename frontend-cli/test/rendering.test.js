@@ -295,7 +295,7 @@ test("toolRequestedLine shows non-shell details as metadata", () => {
 
 test("toolStartedLine renders fallback running state", () => {
   assert.equal(toolStartedLine({ tool_name: "bash" }), "• Tool · Running command");
-  assert.equal(toolStartedLine({ tool_name: "bash_output" }), "• Tool · Running output");
+  assert.equal(toolStartedLine({ tool_name: "bash_output" }), "• Tool · Running command output");
   assert.equal(toolStartedLine({ tool_name: "web_search" }), "• Tool · Calling web search");
   assert.equal(toolStartedLine({ tool_name: "custom_tool" }), "• Tool · Calling custom tool");
 });

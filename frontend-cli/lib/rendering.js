@@ -232,7 +232,7 @@ function toolLabel(name) {
     return "command";
   }
   if (name === "bash_output") {
-    return "output";
+    return "command output";
   }
   const labels = {
     apply_patch: "patch",
