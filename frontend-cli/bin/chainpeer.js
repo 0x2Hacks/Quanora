@@ -31,13 +31,11 @@ import {
   slashMenuText,
   skillLine,
   startupText,
-  tokenStatsLine,
   toolProgressLine,
   toolRequestedLine,
   toolResultLine,
   toolStartedLine,
   turnCompletedLine,
-  turnStartText,
   userInputText,
 } from "../lib/rendering.js";
 
@@ -77,6 +75,8 @@ let suspendActiveInput = null;
 let assistantOutputLineOpen = false;
 let assistantHeaderShown = false;
 let outputStarted = false;
+let activityFrame = 0;
+let activityTimer = null;
 const promptResumeWaiters = [];
 const assistantStreamBuffer = createAssistantStreamBuffer();
 const assistantRenderer = new AssistantRenderer((text) => writeOutput(text));
@@ -159,9 +159,7 @@ async function promptLoop() {
     if (runtimeClosing) {
       return;
     }
-    const text = (
-      await ask(promptText(sessionInfo, latestStats, inputState()), promptPlaceholderText())
-    ).trim();
+    const text = (await ask(mainPromptText, promptPlaceholderText())).trim();
     if (runtimeClosing) {
       return;
     }
@@ -214,6 +212,7 @@ function submitTurn(text, extra = {}) {
     logOutput(queuedInputText(text));
   }
   queuedTurns += 1;
+  refreshInputState();
   const task = turnQueue.then(
     () => runQueuedTurn(text, extra),
     () => runQueuedTurn(text, extra),
@@ -226,7 +225,46 @@ function submitTurn(text, extra = {}) {
 }
 
 function inputState() {
-  return { running: activeTurn || queuedTurns > 0 };
+  return { running: activeTurn || queuedTurns > 0, frame: activityFrame };
+}
+
+function mainPromptText() {
+  return promptText(sessionInfo, latestStats, inputState());
+}
+
+function refreshInputState() {
+  updateActivityTimer();
+  redrawInput();
+}
+
+function redrawInput() {
+  if (inputActive && process.stdout.isTTY && !runtimeClosing && redrawActiveInput) {
+    redrawActiveInput();
+  }
+}
+
+function updateActivityTimer() {
+  if (activeTurn || queuedTurns > 0) {
+    if (activityTimer) {
+      return;
+    }
+    activityTimer = setInterval(() => {
+      activityFrame += 1;
+      redrawInput();
+    }, 180);
+    activityTimer.unref?.();
+    return;
+  }
+  clearActivityTimer();
+}
+
+function clearActivityTimer() {
+  if (!activityTimer) {
+    return;
+  }
+  clearInterval(activityTimer);
+  activityTimer = null;
+  activityFrame = 0;
 }
 
 async function runQueuedTurn(text, extra = {}) {
@@ -237,7 +275,7 @@ async function runQueuedTurn(text, extra = {}) {
   activeTurn = true;
   assistantHeaderShown = false;
   resetTurnTools();
-  logOutput(turnStartText());
+  refreshInputState();
   resumeInput();
   try {
     await request("turn.start", { input: text, ...extra });
@@ -245,6 +283,7 @@ async function runQueuedTurn(text, extra = {}) {
     activeTurn = false;
     interruptRequested = false;
     closeAssistant();
+    refreshInputState();
   }
 }
 
@@ -416,7 +455,7 @@ async function renderEvent(event) {
     case "token_stats_updated":
       closeAssistant();
       latestStats = event.stats && typeof event.stats === "object" ? event.stats : {};
-      logOutput(tokenStatsLine(event));
+      redrawInput();
       return;
     case "skill_activated":
       closeAssistant();
@@ -483,14 +522,15 @@ function selectAnswer(raw, options) {
 }
 
 function ask(prompt, placeholder = "") {
+  const currentPrompt = promptValue(prompt);
   if (!process.stdout.isTTY) {
     if (!input) {
       return Promise.reject(new Error("Input is not available"));
     }
-    return askLine(prompt);
+    return askLine(currentPrompt);
   }
   if (!placeholder || placeholder === answerPlaceholderText()) {
-    return askTtyLine(prompt);
+    return askTtyLine(currentPrompt);
   }
   return askTtyPrompt(prompt, placeholder);
 }
@@ -569,8 +609,10 @@ function askTtyLine(prompt) {
     };
     cancelActiveInput = onCancel;
     inputActive = true;
-    redrawActiveInput = (prefill = editor.input()) => {
-      editor.setInput(prefill);
+    redrawActiveInput = (prefill) => {
+      if (typeof prefill === "string") {
+        editor.setInput(prefill);
+      }
       render();
     };
     suspendActiveInput = () => process.stdout.write("\r\x1b[K");
@@ -581,12 +623,12 @@ function askTtyLine(prompt) {
 }
 
 function askTtyPrompt(prompt, placeholder) {
-  const line = splitPromptLine(prompt);
   return new Promise((resolve) => {
     const editor = createLineEditor(pendingInputPrefill);
     const menuState = createSlashMenuState(slashCommands);
     let rendered = false;
-    const promptRows = countLineBreaks(line.leading);
+    let promptRowsAbove = 0;
+    let promptRowsBelow = 0;
     pendingInputPrefill = "";
     const cleanup = () => {
       inputActive = false;
@@ -646,20 +688,24 @@ function askTtyPrompt(prompt, placeholder) {
     process.stdin.on("keypress", onKeypress);
     cancelActiveInput = onCancel;
     inputActive = true;
-    redrawActiveInput = (prefill = editor.input()) => {
-      editor.setInput(prefill);
+    redrawActiveInput = (prefill) => {
+      if (typeof prefill === "string") {
+        editor.setInput(prefill);
+      }
       renderPrompt();
     };
     suspendActiveInput = clearPromptBlock;
     renderPrompt();
 
     function renderPrompt() {
+      const block = splitPromptBlock(promptValue(prompt));
       closeOpenAssistantOutputLine();
       clearPromptBlock();
-      process.stdout.write(line.leading);
-      writeInputLine();
-      writeMenu();
-      writeInputLine();
+      promptRowsAbove = countLineBreaks(block.leading);
+      process.stdout.write(block.leading);
+      writeInputLine(block.prefix);
+      promptRowsBelow = writeRowsBelow(block.trailing);
+      restoreInputCursor(block.prefix);
       rendered = true;
     }
 
@@ -667,30 +713,48 @@ function askTtyPrompt(prompt, placeholder) {
       if (!rendered) {
         return;
       }
-      if (promptRows) {
-        process.stdout.write(`\x1b[${promptRows}A`);
+      if (promptRowsAbove) {
+        process.stdout.write(`\x1b[${promptRowsAbove}A`);
       }
       process.stdout.write("\r\x1b[J");
       rendered = false;
+      promptRowsBelow = 0;
     }
 
-    function writeInputLine() {
+    function writeInputLine(prefix) {
       process.stdout.write("\r\x1b[K");
-      process.stdout.write(line.prefix);
+      process.stdout.write(prefix);
       process.stdout.write(editor.input() || inputHintText(placeholder));
-      const tailWidth = trailingCellWidth(editor.input(), editor.cursor());
-      if (tailWidth) {
-        process.stdout.write(`\x1b[${tailWidth}D`);
+    }
+
+    function restoreInputCursor(prefix) {
+      if (promptRowsBelow) {
+        process.stdout.write(`\x1b[${promptRowsBelow}A`);
       }
+      process.stdout.write("\r");
+      const width = promptPrefixWidth(prefix) + cursorCellWidth(editor.input(), editor.cursor());
+      if (width) {
+        process.stdout.write(`\x1b[${width}C`);
+      }
+    }
+
+    function writeRowsBelow(trailing) {
+      let rows = writeMenu();
+      const text = String(trailing || "");
+      if (text) {
+        process.stdout.write(`\r\n${text}`);
+        rows += lineCount(text);
+      }
+      return rows;
     }
 
     function writeMenu() {
       const menu = slashMenuText(syncMenu(), menuState.selectedIndex()).trimEnd();
       if (!menu) {
-        return;
+        return 0;
       }
-      const rows = menu.split("\n").length;
-      process.stdout.write(`\r\n${menu}\x1b[${rows}A`);
+      process.stdout.write(`\r\n${menu}`);
+      return lineCount(menu);
     }
 
     function syncMenu() {
@@ -765,15 +829,49 @@ function applyInputPrefill() {
   input.write(text);
 }
 
-function splitPromptLine(prompt) {
-  const index = prompt.lastIndexOf("\n");
+function promptValue(prompt) {
+  return typeof prompt === "function" ? prompt() : prompt;
+}
+
+function splitPromptBlock(prompt) {
+  const text = String(prompt || "");
+  const marker = "\n  › ";
+  const index = text.lastIndexOf(marker);
   if (index === -1) {
-    return { leading: "", prefix: prompt };
+    return { leading: "", prefix: text, trailing: "" };
+  }
+  const inputStart = index + 1;
+  const trailingStart = text.indexOf("\n", inputStart);
+  if (trailingStart === -1) {
+    return {
+      leading: text.slice(0, inputStart),
+      prefix: text.slice(inputStart),
+      trailing: "",
+    };
   }
   return {
-    leading: prompt.slice(0, index + 1),
-    prefix: prompt.slice(index + 1),
+    leading: text.slice(0, inputStart),
+    prefix: text.slice(inputStart, trailingStart),
+    trailing: text.slice(trailingStart + 1),
   };
+}
+
+function lineCount(text) {
+  return String(text || "").split("\n").length;
+}
+
+function cursorCellWidth(text, cursor) {
+  return Array.from(String(text || ""))
+    .slice(0, cursor)
+    .reduce((width, char) => width + cellWidth(char), 0);
+}
+
+function promptPrefixWidth(text) {
+  return String(text || "").replace(/\x1b\[[0-9;]*m/g, "").length;
+}
+
+function cellWidth(char) {
+  return char.codePointAt(0) > 0xff ? 2 : 1;
 }
 
 function handleSigint() {
@@ -837,6 +935,7 @@ function closeRuntime() {
     return;
   }
   runtimeClosing = true;
+  clearActivityTimer();
   if (runtime.exitCode === null && !runtime.killed) {
     if (runtime.stdin.writable) {
       runtime.stdin.end(JSON.stringify({ id: nextId++, method: "shutdown", params: {} }) + "\n");
@@ -848,6 +947,7 @@ function closeRuntime() {
 
 function forceCloseRuntime() {
   runtimeClosing = true;
+  clearActivityTimer();
   clearRuntimeKillTimer();
   closeInput();
   killRuntime();
@@ -875,6 +975,7 @@ async function shutdownRuntime() {
     return;
   }
   runtimeClosing = true;
+  clearActivityTimer();
   scheduleRuntimeKill();
   try {
     await request("shutdown");

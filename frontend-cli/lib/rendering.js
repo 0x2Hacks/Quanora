@@ -8,7 +8,7 @@ export function startupText(info = {}) {
 }
 
 export function promptText(info = {}, stats = {}, state = {}) {
-  return inputPromptFrame(promptHeaderLine(info), promptFooterLine(stats, state));
+  return inputPromptFrame(promptHeaderLine(info), promptFooterLine(stats, state), state);
 }
 
 export function promptPlaceholderText() {
@@ -52,7 +52,7 @@ export function answerPlaceholderText() {
 
 export function inputHintText(placeholder) {
   const text = singleLine(placeholder);
-  return text ? `\x1b[s${dim(text)}\x1b[u` : "";
+  return text ? dim(text) : "";
 }
 
 export function clearInputHintText() {
@@ -76,13 +76,9 @@ export function slashMenuText(items, selectedIndex = 0) {
   return `${lines.join("\n")}\n`;
 }
 
-export function turnStartText() {
-  return `${accent("•")} ${bold("Status")} ${dim("·")} Working\n${dim(detailLine("ctrl+c to interrupt"))}`;
-}
-
 export function queuedInputText(text = "") {
   const preview = clipSingleLine(text, 96);
-  const lines = [`${accent("•")} ${bold("Status")} ${dim("·")} Queued follow-up`];
+  const lines = [`${accent("•")} ${bold("Queued follow-up")}`];
   if (preview) {
     lines.push(dim(detailLine(preview)));
   }
@@ -99,21 +95,21 @@ export function turnCompletedLine(event, tools = { completed: 0, failed: 0 }) {
 }
 
 export function interruptText() {
-  return `${accent("•")} ${bold("Status")} ${dim("·")} Interrupt requested\n${dim(detailLine("ctrl+c again to quit"))}`;
+  return `${accent("•")} ${bold("Interrupt requested")}\n${dim(detailLine("ctrl+c again to quit"))}`;
 }
 
 export function cancelledText() {
-  return `${accent("•")} ${bold("Status")} ${dim("·")} Interrupted\n${dim(detailLine("session preserved; resume with -c"))}`;
+  return `${accent("•")} ${bold("Interrupted")}\n${dim(detailLine("session preserved; resume with -c"))}`;
 }
 
 export function commandResultText(text, detail = "") {
-  const line = `${green("✓")} ${bold("Status")} ${dim("·")} ${clipSingleLine(text, 96)}`;
+  const line = `${green("✓")} ${bold(clipSingleLine(text, 96))}`;
   const extra = clipSingleLine(detail, 96);
   return extra ? `${line}\n${dim(detailLine(extra))}` : line;
 }
 
 export function modelUsageText() {
-  return `${accent("•")} ${bold("Status")} ${dim("·")} Model command\n${dim(detailLine("/model set <name>"))}`;
+  return `${accent("•")} ${bold("Model command")}\n${dim(detailLine("/model set <name>"))}`;
 }
 
 export function contextBuiltLine(event) {
@@ -124,11 +120,11 @@ export function contextBuiltLine(event) {
   const scopes = Array.isArray(decisions.chainpeer_docs_truncated_scopes)
     ? decisions.chainpeer_docs_truncated_scopes.join(", ")
     : "unknown";
-  return `${accent("•")} ${bold("Status")} ${dim("·")} Context trimmed\n${dim(detailLine(`CHAINPEER.md: ${clipSingleLine(scopes, 96)}`))}`;
+  return `${accent("•")} ${bold("Context trimmed")}\n${dim(detailLine(`CHAINPEER.md: ${clipSingleLine(scopes, 96)}`))}`;
 }
 
 export function unknownCommandText() {
-  return `${accent("•")} ${bold("Status")} ${dim("·")} Unknown command\n${dim(detailLine("type ? for shortcuts"))}`;
+  return `${accent("•")} ${bold("Unknown command")}\n${dim(detailLine("type / to browse commands or ? for shortcuts"))}`;
 }
 
 export function toolRequestedLine(event) {
@@ -168,30 +164,15 @@ export function toolProgressLine(event) {
   return message ? `${accent("•")} ${bold("Tool")} ${dim("·")} ${toolLabel(name)}\n${dim(`  ↳ ${message}`)}` : "";
 }
 
-export function tokenStatsLine(event) {
-  const stats = event.stats && typeof event.stats === "object" ? event.stats : {};
-  const details = [];
-  const cache = formatOptionalPercent(stats.cache_hit_rate);
-  if (cache) {
-    details.push(`cache ${cache}`);
-  }
-  const output = formatOptionalCount(stats.output_tokens);
-  if (output) {
-    details.push(`output ${output}`);
-  }
-  const line = `${accent("•")} ${bold("Status")} ${dim("·")} Context ${contextRemaining(stats)}`;
-  return details.length ? `${line}\n${dim(detailLine(details.join(" · ")))}` : line;
-}
-
 export function skillLine(event) {
-  return `${accent("•")} ${bold("Status")} ${dim("·")} Using skill ${dim(event.skill_name || "unknown")}`;
+  return `${accent("•")} ${bold("Using skill")} ${dim(event.skill_name || "unknown")}`;
 }
 
 export function errorLine(error) {
   const detail = clipSingleLine(error, 120);
   return detail
-    ? `${red("×")} ${bold("Status")} ${dim("·")} Turn failed\n${dim(detailLine(detail))}`
-    : `${red("×")} ${bold("Status")} ${dim("·")} Turn failed`;
+    ? `${red("×")} ${bold("Turn failed")}\n${dim(detailLine(detail))}`
+    : `${red("×")} ${bold("Turn failed")}`;
 }
 
 export function questionText(event = {}) {
@@ -524,13 +505,20 @@ function helpRow(leftKey, leftText, rightKey, rightText) {
   return dim(`  ${padRight(left, 33)} ${right}`);
 }
 
-function inputPromptFrame(header = "", footer = "") {
+function inputPromptFrame(header = "", footer = "", state = {}) {
   const lines = ["", inputPromptTitle()];
   if (header) {
     lines.push(header);
   }
-  lines.push(footer, inputDivider());
-  lines.push(`  ${accent("›")} `);
+  const activity = activityLine(state);
+  if (activity) {
+    lines.push(activity);
+  }
+  lines.push(inputDivider());
+  lines.push("  › ");
+  if (footer) {
+    lines.push(footer);
+  }
   return lines.join("\n");
 }
 
@@ -540,6 +528,19 @@ function inputPromptTitle() {
 
 function inputDivider() {
   return dim(`  ${"─".repeat(composerWidth())}`);
+}
+
+function activityLine(state = {}) {
+  if (!state.running) {
+    return "";
+  }
+  return `  ${accent(activityFrame(state.frame))} ${bold("Working")} ${dim("ctrl+c interrupt")}`;
+}
+
+function activityFrame(frame) {
+  const frames = ["◐", "◓", "◑", "◒"];
+  const index = Math.abs(Number(frame) || 0) % frames.length;
+  return frames[index];
 }
 
 function padRight(text, width) {
@@ -559,12 +560,11 @@ function promptFooterLine(stats, state = {}) {
   const parts = state.running
     ? ["enter queue follow-up", "ctrl+c interrupt", "? shortcuts"]
     : ["? shortcuts", "/ commands", "enter send", "ctrl+c quit"];
-  const right = contextLeft(stats);
-  const left = parts.join(" · ");
-  if (!right) {
-    return dim(`  ${clipSingleLine(left, composerWidth())}`);
+  const metrics = bottomMetricsLine(stats);
+  if (!metrics) {
+    return dim(`  ${clipSingleLine(parts.join(" · "), composerWidth())}`);
   }
-  return dim(`  ${footerColumns(left, right)}`);
+  return dim(`  ${footerColumns(parts.join(" · "), metrics)}`);
 }
 
 function composerWidth() {
@@ -575,9 +575,22 @@ function composerWidth() {
   return Math.max(44, Math.min(MAX_COMPOSER_WIDTH, columns - 4));
 }
 
+function bottomMetricsLine(stats) {
+  const parts = [contextLeft(stats)];
+  const cache = formatOptionalPercent(stats?.cache_hit_rate);
+  if (cache) {
+    parts.push(`cached ${cache}`);
+  }
+  const output = formatOptionalCount(stats?.output_tokens);
+  if (output) {
+    parts.push(`output ${output}`);
+  }
+  return parts.filter(Boolean).join(" · ");
+}
+
 function contextLeft(stats) {
   const remaining = contextRemaining(stats);
-  return remaining.endsWith("left") ? remaining.replace(" left", " context left") : "";
+  return remaining === "0/0" ? "" : `Context ${remaining}`;
 }
 
 function footerColumns(left, right) {

@@ -23,13 +23,11 @@ import {
   skillLine,
   slashMenuText,
   startupText,
-  tokenStatsLine,
   toolProgressLine,
   toolRequestedLine,
   toolResultLine,
   toolStartedLine,
   turnCompletedLine,
-  turnStartText,
   unknownCommandText,
   userInputText,
 } from "../lib/rendering.js";
@@ -99,25 +97,24 @@ test("prompt and turn status copy match the compact terminal UI", () => {
     [
       "",
       "  ChainPeer workbench",
-      "  ? shortcuts · / commands · enter send · ctrl+c quit",
       `  ${"─".repeat(78)}`,
       "  › ",
+      "  ? shortcuts · / commands · enter send · ctrl+c quit",
     ].join("\n"),
   );
   assert.equal(promptPlaceholderText(), "Ask ChainPeer to do anything");
   assert.equal(answerPromptText(), "\n  › ");
   assert.equal(answerPlaceholderText(), "Type your answer");
-  assert.equal(inputHintText("Ask ChainPeer to do anything"), "\x1b[sAsk ChainPeer to do anything\x1b[u");
+  assert.equal(inputHintText("Ask ChainPeer to do anything"), "Ask ChainPeer to do anything");
   assert.equal(clearInputHintText(), "\x1b[K");
-  assert.equal(turnStartText(), "• Status · Working\n  ↳ ctrl+c to interrupt");
-  assert.equal(queuedInputText(), "• Status · Queued follow-up\n  ↳ runs after the current turn");
+  assert.equal(queuedInputText(), "• Queued follow-up\n  ↳ runs after the current turn");
   assert.equal(
     queuedInputText("next question"),
-    "• Status · Queued follow-up\n  ↳ next question\n  ↳ runs after the current turn",
+    "• Queued follow-up\n  ↳ next question\n  ↳ runs after the current turn",
   );
   assert.match(queuedInputText(`${"x".repeat(100)}\nsecond line`), /\n  ↳ x{93}\.\.\.\n/);
-  assert.equal(interruptText(), "• Status · Interrupt requested\n  ↳ ctrl+c again to quit");
-  assert.equal(cancelledText(), "• Status · Interrupted\n  ↳ session preserved; resume with -c");
+  assert.equal(interruptText(), "• Interrupt requested\n  ↳ ctrl+c again to quit");
+  assert.equal(cancelledText(), "• Interrupted\n  ↳ session preserved; resume with -c");
   assert.equal(userInputText("hello"), "› You\n  hello");
   assert.equal(userInputText("first\r\nsecond"), "› You\n  first\n  second");
   assert.equal(userInputText(""), "");
@@ -136,22 +133,23 @@ test("promptText includes compact session status when available", () => {
       "",
       "  ChainPeer workbench",
       "  glm-5.1 · E:\\code\\agent\\agent_base-ts-cli-process-split",
-      "  ? shortcuts · / commands · enter send · ctrl+c quit           88% context left",
       `  ${"─".repeat(78)}`,
       "  › ",
+      "  ? shortcuts · / commands · enter send · ctrl+c quit           Context 88% left",
     ].join("\n"),
   );
 });
 
 test("promptText shows queue hint while a turn is running", () => {
   assert.equal(
-    promptText({}, {}, { running: true }),
+    promptText({}, {}, { running: true, frame: 1 }),
     [
       "",
       "  ChainPeer workbench",
-      "  enter queue follow-up · ctrl+c interrupt · ? shortcuts",
+      "  ◓ Working ctrl+c interrupt",
       `  ${"─".repeat(78)}`,
       "  › ",
+      "  enter queue follow-up · ctrl+c interrupt · ? shortcuts",
     ].join("\n"),
   );
 });
@@ -173,7 +171,7 @@ test("promptText keeps composer away from terminal edge", () => {
   const originalColumns = process.stdout.columns;
   process.stdout.columns = 80;
   try {
-    const divider = promptText().split("\n")[3];
+    const divider = promptText().split("\n")[2];
 
     assert.equal(divider.length, 78);
   } finally {
@@ -185,13 +183,20 @@ test("promptText keeps footer status inside composer width", () => {
   const originalColumns = process.stdout.columns;
   process.stdout.columns = 80;
   try {
-    const footer = promptText({}, { context_usage_percent: 0.2 }).split("\n")[2];
+    const footer = promptText({}, { context_usage_percent: 0.2 }).split("\n")[4];
 
     assert.equal(footer.length, 78);
-    assert.match(footer, /80% context left$/);
+    assert.match(footer, /Context 80% left$/);
   } finally {
     process.stdout.columns = originalColumns;
   }
+});
+
+test("promptText keeps the input line separate from the footer", () => {
+  const lines = promptText({}, { context_usage_percent: 0.03 }).split("\n");
+
+  assert.equal(lines.at(-2), "  › ");
+  assert.match(lines.at(-1), /^\s{2}\? shortcuts .*Context 97% left$/);
 });
 
 test("helpText renders compact shortcuts and commands", () => {
@@ -273,22 +278,22 @@ test("slashMenuText keeps the selected command visible", () => {
 });
 
 test("unknownCommandText points to shortcuts help", () => {
-  assert.equal(unknownCommandText(), "• Status · Unknown command\n  ↳ type ? for shortcuts");
+  assert.equal(unknownCommandText(), "• Unknown command\n  ↳ type / to browse commands or ? for shortcuts");
 });
 
 test("modelUsageText renders concrete model command usage", () => {
-  assert.equal(modelUsageText(), "• Status · Model command\n  ↳ /model set <name>");
+  assert.equal(modelUsageText(), "• Model command\n  ↳ /model set <name>");
 });
 
 test("commandResultText renders a compact success line", () => {
-  assert.equal(commandResultText("Model updated: glm-5.1"), "✓ Status · Model updated: glm-5.1");
+  assert.equal(commandResultText("Model updated: glm-5.1"), "✓ Model updated: glm-5.1");
   assert.equal(
     commandResultText("Compact complete", "id abc123"),
-    "✓ Status · Compact complete\n  ↳ id abc123",
+    "✓ Compact complete\n  ↳ id abc123",
   );
   assert.match(
     commandResultText("x".repeat(120), "y".repeat(120)),
-    /^✓ Status · x{93}\.\.\.\n  ↳ y{93}\.\.\.$/,
+    /^✓ x{93}\.\.\.\n  ↳ y{93}\.\.\.$/,
   );
 });
 
@@ -301,7 +306,7 @@ test("contextBuiltLine warns only when ChainPeer docs are truncated", () => {
         chainpeer_docs_truncated_scopes: ["user", "project"],
       },
     }),
-    "• Status · Context trimmed\n  ↳ CHAINPEER.md: user, project",
+    "• Context trimmed\n  ↳ CHAINPEER.md: user, project",
   );
   assert.match(
     contextBuiltLine({
@@ -422,40 +427,6 @@ test("toolProgressLine renders compact progress messages", () => {
   assert.equal(toolProgressLine({ tool_name: "bash", payload: { stdout: "ignored" } }), "");
 });
 
-test("tokenStatsLine renders compact context status", () => {
-  assert.equal(
-    tokenStatsLine({
-      stats: {
-        input_tokens: 121300,
-        effective_context_window_tokens: 245480,
-        context_usage_percent: 121300 / 245480,
-        cache_hit_rate: 98700 / 121300,
-        output_tokens: 2100,
-      },
-    }),
-    "• Status · Context 51% left\n  ↳ cache 81.4% · output 2.1k",
-  );
-  assert.equal(
-    tokenStatsLine({
-      stats: {
-        input_tokens: 1200,
-        effective_context_window_tokens: 4000,
-      },
-    }),
-    "• Status · Context 1.2k/4.0k",
-  );
-  assert.equal(
-    tokenStatsLine({
-      stats: {
-        context_usage_percent: 0.2,
-        cache_hit_rate: 0,
-        output_tokens: 0,
-      },
-    }),
-    "• Status · Context 80% left\n  ↳ cache 0.0% · output 0",
-  );
-});
-
 test("turnCompletedLine renders duration and tool summary", () => {
   assert.equal(
     turnCompletedLine({ duration_ms: 2000 }, { completed: 2, failed: 1 }),
@@ -491,9 +462,9 @@ test("status helpers render question, skill, and errors", () => {
   );
   assert.match(questionText({ question: "q".repeat(120) }), /\n  q{73}\.\.\.\n/);
   assert.match(questionText({ question: "Pick", options: ["x".repeat(120)] }), /\n    1\. x{67}\.\.\.\n/);
-  assert.equal(skillLine({ skill_name: "debugging" }), "• Status · Using skill debugging");
-  assert.equal(errorLine("failed"), "× Status · Turn failed\n  ↳ failed");
-  assert.equal(errorLine(""), "× Status · Turn failed");
+  assert.equal(skillLine({ skill_name: "debugging" }), "• Using skill debugging");
+  assert.equal(errorLine("failed"), "× Turn failed\n  ↳ failed");
+  assert.equal(errorLine(""), "× Turn failed");
 });
 
 test("AssistantRenderer removes markdown markers at message boundary", () => {
