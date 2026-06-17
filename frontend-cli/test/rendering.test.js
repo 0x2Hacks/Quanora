@@ -49,6 +49,7 @@ test("startupText includes resume preview when provided", () => {
       "│ E:\\project                                                                   │",
       `└${"─".repeat(78)}┘`,
       "",
+      "• Recent context",
       "  Resumed session s1",
       "› You · hello",
       "• Assistant · hi",

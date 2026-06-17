@@ -4,7 +4,7 @@ const MAX_COMPOSER_WIDTH = 78;
 export function startupText(info = {}) {
   const header = startupBannerText(info);
   const preview = resumePreviewText(info.resume_preview);
-  return preview ? `${header}\n\n${preview}` : header;
+  return preview ? `${header}\n\n${accent("•")} ${bold("Recent context")}\n${preview}` : header;
 }
 
 export function promptText(info = {}, stats = {}, state = {}) {
