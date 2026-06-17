@@ -79,7 +79,7 @@ export function slashMenuText(items, selectedIndex = 0) {
 }
 
 export function turnStartText() {
-  return `${accent("•")} ${bold("Status")} ${dim("·")} Working ${dim("(ctrl + c to interrupt)")}`;
+  return `${accent("•")} ${bold("Status")} ${dim("·")} Working\n${dim(detailLine("ctrl+c to interrupt"))}`;
 }
 
 export function queuedInputText() {

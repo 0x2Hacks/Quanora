@@ -108,7 +108,7 @@ test("prompt and turn status copy match the compact terminal UI", () => {
   assert.equal(answerPlaceholderText(), "Type your answer");
   assert.equal(inputHintText("Ask ChainPeer to do anything"), "\x1b[sAsk ChainPeer to do anything\x1b[u");
   assert.equal(clearInputHintText(), "\x1b[K");
-  assert.equal(turnStartText(), "• Status · Working (ctrl + c to interrupt)");
+  assert.equal(turnStartText(), "• Status · Working\n  ↳ ctrl+c to interrupt");
   assert.equal(queuedInputText(), "• Status · Queued follow-up\n  ↳ runs after the current turn");
   assert.equal(interruptText(), "• Status · Interrupt requested\n  ↳ ctrl+c again to quit");
   assert.equal(cancelledText(), "• Status · Interrupted\n  ↳ session preserved; resume with -c");
