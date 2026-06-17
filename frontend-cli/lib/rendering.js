@@ -95,11 +95,11 @@ export function turnCompletedLine(event, tools = { completed: 0, failed: 0 }) {
 }
 
 export function interruptText() {
-  return `${accent("•")} ${bold("Status")} ${dim("·")} Interrupt requested ${dim("(ctrl + c again to quit)")}`;
+  return `${accent("•")} ${bold("Status")} ${dim("·")} Interrupt requested\n${dim(detailLine("ctrl+c again to quit"))}`;
 }
 
 export function cancelledText() {
-  return `${accent("•")} ${bold("Status")} ${dim("·")} Interrupted ${dim("session state preserved; resume with -c")}`;
+  return `${accent("•")} ${bold("Status")} ${dim("·")} Interrupted\n${dim(detailLine("session preserved; resume with -c"))}`;
 }
 
 export function commandResultText(text, detail = "") {
